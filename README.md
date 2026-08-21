@@ -1,4 +1,4 @@
-# unraid-fan-control
+# unraid-vsock-sensors
 
 Expose les températures de disques déjà mises en cache par Unraid à l'hôte
 Proxmox via `AF_VSOCK`. Aucun appel SMART n'est effectué, donc l'outil ne
@@ -20,8 +20,10 @@ réveille pas les disques en veille.
 ## Compiler
 
 ```sh
-go build -trimpath -ldflags='-s -w' -o unraid-fan-control .
+make build
 ```
+
+Le binaire statique est créé dans `bin/unraid-vsock-sensors`.
 
 Le même binaire Linux amd64 peut être copié dans la VM et sur l'hôte. Go 1.23
 ou plus récent est nécessaire uniquement pour compiler.
@@ -40,7 +42,7 @@ Après redémarrage, vérifier `lsmod | grep vsock` dans les deux systèmes.
 ## Exécuter dans Unraid
 
 ```sh
-unraid-fan-control serve --port 19090
+unraid-vsock-sensors serve --port 19090
 ```
 
 Le serveur exécute la commande fixe
@@ -54,13 +56,13 @@ premier essai, le script de démarrage `/boot/config/go` suffit.
 ## Interroger depuis Proxmox
 
 ```sh
-unraid-fan-control get --cid 42 hdd
-unraid-fan-control get --cid 42 nvme
-unraid-fan-control get --cid 42 disk1
-unraid-fan-control get --cid 42 nvme0n1
-unraid-fan-control get --cid 42 hba
-unraid-fan-control get --cid 42 hba0
-unraid-fan-control get --cid 42 --json
+unraid-vsock-sensors get --cid 42 hdd
+unraid-vsock-sensors get --cid 42 nvme
+unraid-vsock-sensors get --cid 42 disk1
+unraid-vsock-sensors get --cid 42 nvme0n1
+unraid-vsock-sensors get --cid 42 hba
+unraid-vsock-sensors get --cid 42 hba0
+unraid-vsock-sensors get --cid 42 --json
 ```
 
 Les commandes autres que `--json` écrivent uniquement un nombre en degrés
@@ -68,8 +70,8 @@ Celsius. Elles conviennent donc à une source `cmd` de fan2go ou CoolerControl.
 
 ## Fraîcheur et sécurité
 
-La fraîcheur des disques dépend de `Tunable (poll_attributes)` dans les réglages disque
-d'Unraid. Avec 30 secondes, une commande exécutée plus souvent renverra
+La fraîcheur des disques dépend de `Tunable (poll_attributes)` dans les réglages
+disque d'Unraid. Avec 30 secondes, une commande exécutée plus souvent renverra
 simplement la même valeur mise en cache. L'outil ne lance volontairement jamais
 `smartctl`.
 

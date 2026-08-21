@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 
 GO := go
-BINARY := bin/unraid-fan-control
+BINARY := bin/unraid-vsock-sensors
 
 .PHONY: help build test vet fmt tidy check clean
 

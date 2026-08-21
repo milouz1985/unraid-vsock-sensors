@@ -1,4 +1,4 @@
-// unraid-fan-control exports Unraid's cached disk temperatures over AF_VSOCK.
+// unraid-vsock-sensors exports Unraid's cached disk temperatures over AF_VSOCK.
 package main
 
 import (

@@ -1,4 +1,4 @@
-module unraid-fan-control
+module unraid-vsock-sensors
 
 go 1.23.0
 
