@@ -9,12 +9,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"golang.org/x/sys/unix"
+	"github.com/mdlayher/vsock"
 )
 
 const defaultPort = 19090
@@ -53,31 +54,25 @@ func serve(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	// SOCK_STREAM provides a reliable, ordered byte stream, similar to TCP.
-	// SOCK_CLOEXEC prevents the socket from leaking into child processes such as storcli.
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	listener, err := vsock.Listen(uint32(*port), nil)
 	if err != nil {
-		return fmt.Errorf("create vsock: %w", err)
+		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
 	}
-	defer unix.Close(fd)
-	if err := unix.Bind(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_ANY, Port: uint32(*port)}); err != nil {
-		return fmt.Errorf("bind vsock port %d: %w", *port, err)
-	}
-	if err := unix.Listen(fd, 16); err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
+	defer listener.Close()
 	log.Printf("listening on vsock port %d", *port)
 	hbas := &hbaCollector{maxAge: *storcliCache}
 	for {
-		client, address, err := unix.Accept(fd)
+		client, err := listener.Accept()
 		if err != nil {
 			return fmt.Errorf("accept: %w", err)
 		}
 
 		// Only the Proxmox host (the well-known vsock CID 2) may query the server.
-		peer, ok := address.(*unix.SockaddrVM)
-		if !ok || peer.CID != unix.VMADDR_CID_HOST {
-			_ = unix.Close(client)
+		// RemoteAddr returns the generic net.Addr interface; this type assertion
+		// verifies that it contains the concrete *vsock.Addr needed to read the CID.
+		peer, ok := client.RemoteAddr().(*vsock.Addr)
+		if !ok || peer.ContextID != vsock.Host {
+			_ = client.Close()
 			continue
 		}
 
@@ -85,15 +80,10 @@ func serve(args []string) error {
 	}
 }
 
-func handle(fd int, path string, collector *hbaCollector) {
-	f := os.NewFile(uintptr(fd), "vsock-client")
-	if f == nil {
-		_ = unix.Close(fd)
-		return
-	}
-	defer f.Close()
-	_ = f.SetReadDeadline(time.Now().Add(3 * time.Second))
-	line, err := bufio.NewReader(io.LimitReader(f, 1024)).ReadString('\n')
+func handle(conn net.Conn, path string, collector *hbaCollector) {
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	line, err := bufio.NewReader(io.LimitReader(conn, 1024)).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return
 	}
@@ -109,7 +99,7 @@ func handle(fd int, path string, collector *hbaCollector) {
 	if err != nil {
 		r.HBAError = err.Error()
 	}
-	_ = json.NewEncoder(f).Encode(r)
+	_ = json.NewEncoder(conn).Encode(r)
 }
 
 func get(args []string) error {
@@ -167,26 +157,16 @@ func get(args []string) error {
 
 func fetch(cid, port uint32) (response, error) {
 	var out response
-	// Use the same reliable, close-on-exec socket semantics as the server.
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	conn, err := vsock.Dial(cid, port, nil)
 	if err != nil {
-		return out, fmt.Errorf("create vsock: %w", err)
-	}
-	if err := unix.Connect(fd, &unix.SockaddrVM{CID: cid, Port: port}); err != nil {
-		_ = unix.Close(fd)
 		return out, fmt.Errorf("connect to vsock %d:%d: %w", cid, port, err)
 	}
-	f := os.NewFile(uintptr(fd), "vsock")
-	if f == nil {
-		_ = unix.Close(fd)
-		return out, errors.New("open vsock")
-	}
-	defer f.Close()
-	_ = f.SetDeadline(time.Now().Add(3 * time.Second))
-	if _, err := io.WriteString(f, "GET\n"); err != nil {
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := io.WriteString(conn, "GET\n"); err != nil {
 		return out, err
 	}
-	if err := json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(conn, 1<<20)).Decode(&out); err != nil {
 		return out, err
 	}
 	return out, nil

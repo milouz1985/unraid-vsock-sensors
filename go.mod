@@ -1,9 +1,15 @@
 module unraid-vsock-sensors
 
-go 1.23.0
+go 1.27.0
 
-toolchain go1.23.12
+require (
+	github.com/mdlayher/vsock v1.3.0
+	gopkg.in/ini.v1 v1.67.3
+)
 
-require golang.org/x/sys v0.35.0
-
-require gopkg.in/ini.v1 v1.67.3
+require (
+	github.com/mdlayher/socket v0.6.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+)
