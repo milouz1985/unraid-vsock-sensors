@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,32 +20,93 @@ type hba struct {
 }
 
 type hbaCollector struct {
-	maxAge   time.Duration
-	mu       sync.Mutex
-	readAt   time.Time
+	interval time.Duration
+	mu       sync.RWMutex
 	readings []hba
 	err      error
+	failures int
+	// collect is replaceable in tests to simulate a slow StorCLI command.
+	collect func(context.Context) ([]hba, error)
 }
 
-// read returns the cached HBA temperatures when they are still recent.
-// Otherwise, it runs StorCLI once and refreshes the cache.
-func (c *hbaCollector) read() ([]hba, error) {
-	// Only one request may read or refresh the shared cache at a time.
-	c.mu.Lock()
-	defer c.mu.Unlock()
+const (
+	storcliTimeout     = 10 * time.Second
+	maxFailedRefreshes = 3
+)
 
-	if !c.readAt.IsZero() && time.Since(c.readAt) < c.maxAge {
-		// Return a copy so callers cannot modify the collector's cached slice.
-		return append([]hba(nil), c.readings...), c.err
+func newHBACollector(interval time.Duration) *hbaCollector {
+	return &hbaCollector{
+		interval: interval,
+		err:      errors.New("HBA temperatures have not been collected yet"),
+		collect:  collectHBAs,
 	}
+}
 
-	c.readAt = time.Now()
-	c.readings = nil
+// `(c *hbaCollector)` is the method receiver: it means that run belongs to the
+// hbaCollector type. Inside the method, `c` refers to the specific collector on
+// which `hbas.run(ctx)` was called. The asterisk means that the receiver is a
+// pointer, so the method works with the collector's actual shared state
+// (readings, error, and mutex) rather than with a copy.
+//
+// run owns the refresh loop. It is the only goroutine that calls StorCLI.
+func (c *hbaCollector) run(ctx context.Context) {
+	// Collect immediately so the first value is available as soon as possible.
+	c.refresh(ctx)
+	// Use a timer rather than a ticker so the interval starts after each refresh.
+	// A ticker could queue a tick while StorCLI is slow and trigger another call
+	// immediately after the first one completes.
+	timer := time.NewTimer(c.interval)
+	defer timer.Stop()
 
-	// Stop StorCLI if it has not answered after ten seconds.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			c.refresh(ctx)
+			timer.Reset(c.interval)
+		}
+	}
+}
+
+func (c *hbaCollector) refresh(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, storcliTimeout)
 	defer cancel()
 
+	// Do not hold the lock here: StorCLI may take up to ten seconds, while
+	// incoming vsock requests must remain able to read the current snapshot.
+	readings, err := c.collect(ctx)
+
+	// Publishing the values and their error under the same short lock prevents
+	// readers from observing parts of two different refreshes.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.err = err
+	if err == nil {
+		c.readings = readings
+		c.failures = 0
+		return
+	}
+
+	// Keep the last known temperatures through brief StorCLI failures. After
+	// three consecutive failures, discard them rather than serving stale sensor
+	// values indefinitely. A successful refresh resets the counter above.
+	c.failures++
+	if c.failures >= maxFailedRefreshes {
+		c.readings = nil
+	}
+}
+
+// read never invokes StorCLI. The copy keeps callers from modifying the slice
+// shared by the collector and other requests.
+func (c *hbaCollector) read() ([]hba, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	// Return another clone so callers cannot modify the collector's snapshot.
+	return slices.Clone(c.readings), c.err
+}
+
+func collectHBAs(ctx context.Context) ([]hba, error) {
 	command := exec.CommandContext(
 		ctx,
 		"storcli",
@@ -55,18 +117,17 @@ func (c *hbaCollector) read() ([]hba, error) {
 		"nolog",
 	)
 	out, err := command.Output()
-	if err == nil {
-		c.readings, err = parseStorCLI(out)
-		if err == nil && len(c.readings) == 0 {
-			err = errors.New("storcli returned no ROC temperature sensor")
-		}
-	}
 	if ctx.Err() != nil {
-		err = fmt.Errorf("storcli timeout: %w", ctx.Err())
+		return nil, fmt.Errorf("storcli timeout: %w", ctx.Err())
 	}
-
-	c.err = err
-	return append([]hba(nil), c.readings...), c.err
+	if err != nil {
+		return nil, err
+	}
+	readings, err := parseStorCLI(out)
+	if err == nil && len(readings) == 0 {
+		err = errors.New("storcli returned no ROC temperature sensor")
+	}
+	return readings, err
 }
 
 func parseStorCLI(data []byte) ([]hba, error) {

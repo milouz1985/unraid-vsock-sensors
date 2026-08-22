@@ -25,7 +25,7 @@ make build
 
 Le binaire statique est créé dans `bin/unraid-vsock-sensors`.
 
-Le même binaire Linux amd64 peut être copié dans la VM et sur l'hôte. Go 1.23
+Le même binaire Linux amd64 peut être copié dans la VM et sur l'hôte. Go 1.25
 ou plus récent est nécessaire uniquement pour compiler.
 
 ## Ajouter vsock à la VM Proxmox
@@ -45,10 +45,11 @@ Après redémarrage, vérifier `lsmod | grep vsock` dans les deux systèmes.
 unraid-vsock-sensors serve --port 19090
 ```
 
-Le serveur exécute la commande fixe
-`storcli /cALL show temperature J nolog`. Son résultat est conservé 30 secondes
-par défaut, même si plusieurs clients interrogent le serveur.
-`--storcli-cache 1m` ajuste le cache.
+Le serveur exécute en arrière-plan la commande fixe
+`storcli /cALL show temperature J nolog`, immédiatement au démarrage puis toutes
+les 30 secondes par défaut. Les requêtes utilisent uniquement le dernier état
+en mémoire et n'attendent donc jamais StorCLI. `--storcli-cache 1m` ajuste
+l'intervalle de rafraîchissement.
 
 Le lancement persistant pourra être emballé dans un plugin Unraid ; pour un
 premier essai, le script de démarrage `/boot/config/go` suffit.
@@ -76,9 +77,11 @@ simplement la même valeur mise en cache. L'outil ne lance volontairement jamais
 `smartctl`.
 
 La température HBA ne vient pas d'Unraid : elle correspond au champ
-`ROC temperature(Degree Celsius)` de StorCLI. Une sonde absente, une commande
-en erreur ou dépassant dix secondes rend uniquement la famille HBA
-indisponible ; les températures des disques restent utilisables.
+`ROC temperature(Degree Celsius)` de StorCLI. En cas d'erreur, la dernière
+mesure valide reste disponible pendant deux tentatives supplémentaires, puis
+est supprimée au troisième échec consécutif. Un succès remet ce compteur à
+zéro. Une sonde absente ou une commande en erreur ne concerne que la famille
+HBA ; les températures des disques restent utilisables.
 
 Le transport vsock n'est pas un mécanisme d'authentification. Le serveur accepte
 uniquement les connexions provenant du CID hôte standard `2`. Il accepte

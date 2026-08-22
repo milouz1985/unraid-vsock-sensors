@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,7 +19,10 @@ import (
 	"github.com/mdlayher/vsock"
 )
 
-const defaultPort = 19090
+const (
+	defaultPort    = 19090
+	requestTimeout = 3 * time.Second
+)
 
 func main() {
 	// Keep stderr concise: service managers already add timestamps, while sensor
@@ -50,9 +54,12 @@ func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	path := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
 	port := fs.Uint("port", defaultPort, "vsock port")
-	storcliCache := fs.Duration("storcli-cache", 30*time.Second, "minimum interval between storcli calls")
+	storcliCache := fs.Duration("storcli-cache", 30*time.Second, "interval between storcli refreshes")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *storcliCache <= 0 {
+		return errors.New("storcli-cache must be greater than zero")
 	}
 	listener, err := vsock.Listen(uint32(*port), nil)
 	if err != nil {
@@ -60,7 +67,13 @@ func serve(args []string) error {
 	}
 	defer listener.Close()
 	log.Printf("listening on vsock port %d", *port)
-	hbas := &hbaCollector{maxAge: *storcliCache}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hbas := newHBACollector(*storcliCache)
+	// The `go` keyword starts run in a new goroutine, a lightweight concurrent
+	// task managed by Go. This lets the server accept requests immediately while
+	// StorCLI is refreshed independently in the background.
+	go hbas.run(ctx)
 	for {
 		client, err := listener.Accept()
 		if err != nil {
@@ -76,13 +89,15 @@ func serve(args []string) error {
 			continue
 		}
 
+		// Start one goroutine per accepted connection so a slow client does not
+		// prevent the accept loop from receiving and serving other clients.
 		go handle(client, *path, hbas)
 	}
 }
 
 func handle(conn net.Conn, path string, collector *hbaCollector) {
 	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(requestTimeout))
 	line, err := bufio.NewReader(io.LimitReader(conn, 1024)).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return
@@ -99,6 +114,7 @@ func handle(conn net.Conn, path string, collector *hbaCollector) {
 	if err != nil {
 		r.HBAError = err.Error()
 	}
+	_ = conn.SetWriteDeadline(time.Now().Add(requestTimeout))
 	_ = json.NewEncoder(conn).Encode(r)
 }
 
@@ -162,10 +178,11 @@ func fetch(cid, port uint32) (response, error) {
 		return out, fmt.Errorf("connect to vsock %d:%d: %w", cid, port, err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	_ = conn.SetWriteDeadline(time.Now().Add(requestTimeout))
 	if _, err := io.WriteString(conn, "GET\n"); err != nil {
 		return out, err
 	}
+	_ = conn.SetReadDeadline(time.Now().Add(requestTimeout))
 	if err := json.NewDecoder(io.LimitReader(conn, 1<<20)).Decode(&out); err != nil {
 		return out, err
 	}
