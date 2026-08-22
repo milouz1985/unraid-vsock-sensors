@@ -3,12 +3,31 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestReadAndSelect(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "disks.ini")
-	data := "[\"disk1\"]\nname=\"disk1\"\ndevice=\"sdb\"\ntemp=\"35\"\nrotational=\"1\"\ntransport=\"ata\"\n\n[\"fast\"]\ndevice=\"nvme0n1\"\ntemp=\"48\"\nrotational=\"0\"\ntransport=\"nvme\"\n\n[\"disk2\"]\ndevice=\"sdc\"\ntemp=\"*\"\nrotational=\"1\"\n"
+	data := strings.ReplaceAll(strings.TrimSpace(`
+		["disk1"]
+		name="disk1"
+		device="sdb"
+		temp="35"
+		rotational="1"
+		transport="ata"
+
+		["fast"]
+		device="nvme0n1"
+		temp="48"
+		rotational="0"
+		transport="nvme"
+
+		["disk2"]
+		device="sdc"
+		temp="*"
+		rotational="1"
+	`), "\n\t\t", "\n")
 	if err := os.WriteFile(p, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
