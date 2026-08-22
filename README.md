@@ -81,5 +81,6 @@ en erreur ou dépassant dix secondes rend uniquement la famille HBA
 indisponible ; les températures des disques restent utilisables.
 
 Le transport vsock n'est pas un mécanisme d'authentification. Le serveur accepte
-uniquement `GET`, ne reçoit aucun chemin ni commande, limite les requêtes à 1 Kio
-et ne renvoie que le contenu structuré attendu.
+uniquement les connexions provenant du CID hôte standard `2`. Il accepte
+uniquement `GET`, ne reçoit aucun chemin ni commande, limite les requêtes à
+1 Kio et ne renvoie que le contenu structuré attendu.

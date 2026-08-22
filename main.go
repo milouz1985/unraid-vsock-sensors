@@ -69,10 +69,18 @@ func serve(args []string) error {
 	log.Printf("listening on vsock port %d", *port)
 	hbas := &hbaCollector{maxAge: *storcliCache}
 	for {
-		client, _, err := unix.Accept(fd)
+		client, address, err := unix.Accept(fd)
 		if err != nil {
 			return fmt.Errorf("accept: %w", err)
 		}
+
+		// Only the Proxmox host (the well-known vsock CID 2) may query the server.
+		peer, ok := address.(*unix.SockaddrVM)
+		if !ok || peer.CID != unix.VMADDR_CID_HOST {
+			_ = unix.Close(client)
+			continue
+		}
+
 		go handle(client, *path, hbas)
 	}
 }
