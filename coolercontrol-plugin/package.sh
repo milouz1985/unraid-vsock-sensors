@@ -29,7 +29,7 @@ mkdir -p "$package_dir/ui" "$output_dir"
 )
 install -m 0644 "$script_dir/manifest.toml" "$package_dir/manifest.toml"
 install -m 0644 "$script_dir/ui/index.html" "$package_dir/ui/index.html"
-install -m 0644 "$script_dir/README.md" "$package_dir/README.md"
+install -m 0644 "$script_dir/PACKAGE.md" "$package_dir/README.md"
 install -m 0755 "$script_dir/install.sh" "$package_dir/install.sh"
 
 archive="$output_dir/$package_name.tar.gz"
