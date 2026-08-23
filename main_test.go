@@ -38,10 +38,10 @@ func TestReadAndSelect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(disks) != 2 {
+	if len(disks) != 3 {
 		t.Fatalf("got %d disks", len(disks))
 	}
-	if got := selectDisks(disks, "hdd"); len(got) != 1 || got[0].Temp != 35 {
+	if got := selectDisks(disks, "hdd"); len(got) != 2 || got[0].Temp != 35 || got[1].Temp != 0 {
 		t.Fatalf("hdd: %#v", got)
 	}
 	if got := selectDisks(disks, "nvme"); len(got) != 1 || got[0].Temp != 48 {
@@ -49,6 +49,16 @@ func TestReadAndSelect(t *testing.T) {
 	}
 	if got := selectDisks(disks, "fast"); len(got) != 1 || got[0].Device != "nvme0n1" {
 		t.Fatalf("name: %#v", got)
+	}
+}
+
+func TestReadDisksRejectsInvalidTemperature(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "disks.ini")
+	if err := os.WriteFile(p, []byte("[disk1]\ndevice=sdb\ntemp=broken\nrotational=1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readDisks(p); err == nil {
+		t.Fatal("invalid temperature should remain an error")
 	}
 }
 

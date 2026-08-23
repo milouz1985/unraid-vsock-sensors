@@ -14,8 +14,11 @@ réveille pas les disques en veille.
   d'interroger un disque indépendamment.
 - `hba` retourne la température ROC maximale rapportée par StorCLI ; `hba0`,
   `hba1`, etc. permettent de sélectionner chaque contrôleur.
-- Une température absente ou `*` (HDD en veille) est ignorée. La commande
-  échoue si aucune température du groupe n'est disponible.
+- Pour un HDD en veille (`temp="*"`), le serveur renvoie `0 °C`, qui signifie
+  que la sonde est inactive. Le spindown ne provoque donc pas une fausse alerte
+  à `100 °C` dans CoolerControl et aucune ancienne mesure ne reste figée.
+- Une vraie erreur de lecture ou une température invalide fait toujours échouer
+  la commande, afin que CoolerControl puisse la traiter comme une panne.
 
 ## Compiler
 

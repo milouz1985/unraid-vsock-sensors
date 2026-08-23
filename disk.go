@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/ini.v1"
@@ -30,10 +32,13 @@ func readDisks(path string) ([]disk, error) {
 		}
 		name := strings.Trim(section.Name(), "\"")
 
-		temp, err := section.Key("temp").Float64()
-		if err != nil {
-			// Unraid uses "*" when a sleeping disk has no temperature.
-			continue
+		rawTemp := strings.TrimSpace(section.Key("temp").String())
+		temp := 0.0
+		if rawTemp != "*" {
+			temp, err = strconv.ParseFloat(rawTemp, 64)
+			if err != nil {
+				return nil, fmt.Errorf("disk %q has invalid temperature %q", name, rawTemp)
+			}
 		}
 		rotational, _ := section.Key("rotational").Bool()
 		result = append(result, disk{
