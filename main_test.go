@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"unraid-vsock-sensors/internal/sensors"
 )
 
 func TestReadAndSelect(t *testing.T) {
@@ -88,7 +90,7 @@ func TestReadDisksRejectsMissingTemperatureOnActiveDisk(t *testing.T) {
 }
 
 func TestJSONIncludesDiskError(t *testing.T) {
-	r := response{Error: "disks.ini failed", HBAs: []hba{{Name: "hba0", Temp: 46}}}
+	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{Name: "hba0", Temp: 46}}}
 	var out bytes.Buffer
 	if err := writeResponse(&out, r, "", true); err != nil {
 		t.Fatal(err)
@@ -99,7 +101,7 @@ func TestJSONIncludesDiskError(t *testing.T) {
 }
 
 func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {
-	r := response{Error: "disks.ini failed", HBAs: []hba{{Name: "hba0", Temp: 46}}}
+	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{Name: "hba0", Temp: 46}}}
 	var out bytes.Buffer
 	if err := writeResponse(&out, r, "hba0", false); err != nil {
 		t.Fatal(err)
@@ -110,7 +112,7 @@ func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {
 }
 
 func TestDiskSelectorStillReturnsDiskError(t *testing.T) {
-	r := response{Error: "disks.ini failed", HBAs: []hba{{Name: "hba0", Temp: 46}}}
+	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{Name: "hba0", Temp: 46}}}
 	if err := writeResponse(&bytes.Buffer{}, r, "hdd", false); err == nil || err.Error() != r.Error {
 		t.Fatalf("got %v, want disk error", err)
 	}
@@ -120,10 +122,10 @@ func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	collector := newHBACollector(time.Minute)
-	collector.collect = func(context.Context) ([]hba, error) {
+	collector.collect = func(context.Context) ([]sensors.HBA, error) {
 		close(started)
 		<-release
-		return []hba{{Name: "hba0", Temp: 42}}, nil
+		return []sensors.HBA{{Name: "hba0", Temp: 42}}, nil
 	}
 
 	done := make(chan struct{})
@@ -150,13 +152,13 @@ func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 func TestHBACollectorFailurePolicy(t *testing.T) {
 	collector := newHBACollector(time.Minute)
 	setSuccessfulRefresh := func(temp float64) {
-		collector.collect = func(context.Context) ([]hba, error) {
-			return []hba{{Name: "hba0", Temp: temp}}, nil
+		collector.collect = func(context.Context) ([]sensors.HBA, error) {
+			return []sensors.HBA{{Name: "hba0", Temp: temp}}, nil
 		}
 		collector.refresh(context.Background())
 	}
 	setFailedRefresh := func() {
-		collector.collect = func(context.Context) ([]hba, error) {
+		collector.collect = func(context.Context) ([]sensors.HBA, error) {
 			return nil, errors.New("storcli failed")
 		}
 		collector.refresh(context.Background())

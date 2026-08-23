@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mdlayher/vsock"
+	"unraid-vsock-sensors/internal/sensors"
 )
 
 const (
@@ -132,7 +133,7 @@ func handle(conn net.Conn, path string, collector *hbaCollector) {
 		return
 	}
 	disks, err := readDisks(path)
-	r := response{Timestamp: time.Now().UTC(), Disks: disks}
+	r := sensors.Response{Timestamp: time.Now().UTC(), Disks: disks}
 	if err != nil {
 		r.Error = err.Error()
 	}
@@ -155,14 +156,14 @@ func get(args []string) error {
 	if fs.NArg() != 1 && !*all {
 		return errors.New("a selector is required (hdd, nvme, all, name, or device)")
 	}
-	r, err := fetch(uint32(*cid), uint32(*port))
+	r, err := sensors.Fetch(uint32(*cid), uint32(*port), requestTimeout)
 	if err != nil {
 		return err
 	}
 	return writeResponse(os.Stdout, r, fs.Arg(0), *all)
 }
 
-func writeResponse(out io.Writer, r response, selector string, all bool) error {
+func writeResponse(out io.Writer, r sensors.Response, selector string, all bool) error {
 	if all {
 		return json.NewEncoder(out).Encode(r)
 	}
@@ -198,22 +199,4 @@ func writeResponse(out io.Writer, r response, selector string, all bool) error {
 	}
 	fmt.Fprintln(out, strconv.FormatFloat(max, 'f', -1, 64))
 	return nil
-}
-
-func fetch(cid, port uint32) (response, error) {
-	var out response
-	conn, err := vsock.Dial(cid, port, nil)
-	if err != nil {
-		return out, fmt.Errorf("connect to vsock %d:%d: %w", cid, port, err)
-	}
-	defer conn.Close()
-	_ = conn.SetWriteDeadline(time.Now().Add(requestTimeout))
-	if _, err := io.WriteString(conn, "GET\n"); err != nil {
-		return out, err
-	}
-	_ = conn.SetReadDeadline(time.Now().Add(requestTimeout))
-	if err := json.NewDecoder(io.LimitReader(conn, 1<<20)).Decode(&out); err != nil {
-		return out, err
-	}
-	return out, nil
 }

@@ -16,16 +16,17 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	device "unraid-vsock-sensors/coolercontrol-plugin/gen/device_service"
 	models "unraid-vsock-sensors/coolercontrol-plugin/gen/models"
+	"unraid-vsock-sensors/internal/sensors"
 )
 
-func sampleResponse() unraidResponse {
-	return unraidResponse{
-		Disks: []diskReading{
+func sampleResponse() sensors.Response {
+	return sensors.Response{
+		Disks: []sensors.Disk{
 			{Name: "disk1", Device: "sdb", Transport: "ata", Rotational: true, Temp: 35},
 			{Name: "disk2", Device: "sdc", Transport: "ata", Rotational: true, Temp: 0},
 			{Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 48},
 		},
-		HBAs: []hbaReading{{Name: "hba0", Temp: 49}},
+		HBAs: []sensors.HBA{{Name: "hba0", Temp: 49}},
 	}
 }
 
@@ -76,8 +77,8 @@ func TestTransientHBAErrorKeepsCachedReading(t *testing.T) {
 
 func TestRealFetchErrorIsUnavailable(t *testing.T) {
 	service := newUnraidService(42, 19090)
-	service.fetch = func(uint32, uint32) (unraidResponse, error) {
-		return unraidResponse{}, errors.New("transport failed")
+	service.fetch = func(uint32, uint32) (sensors.Response, error) {
+		return sensors.Response{}, errors.New("transport failed")
 	}
 	_, err := service.Status(context.Background(), &device.StatusRequest{DeviceId: deviceID})
 	if status.Code(err) != codes.Unavailable {

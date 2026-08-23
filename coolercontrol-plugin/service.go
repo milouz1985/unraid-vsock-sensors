@@ -8,6 +8,7 @@ import (
 
 	device "unraid-vsock-sensors/coolercontrol-plugin/gen/device_service"
 	models "unraid-vsock-sensors/coolercontrol-plugin/gen/models"
+	"unraid-vsock-sensors/internal/sensors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -18,11 +19,11 @@ const deviceID = "unraid-storage"
 type diskGroup struct {
 	id    string
 	label string
-	match func(diskReading) bool
+	match func(sensors.Disk) bool
 }
 
 var diskGroups = []diskGroup{
-	{id: "hdd", label: "HDD maximum", match: func(d diskReading) bool { return d.Rotational }},
+	{id: "hdd", label: "HDD maximum", match: func(d sensors.Disk) bool { return d.Rotational }},
 	{id: "ssd", label: "SSD maximum", match: isSSD},
 	{id: "nvme", label: "NVMe maximum", match: isNVMe},
 }
@@ -32,11 +33,14 @@ type unraidService struct {
 	cid     uint32
 	port    uint32
 	started time.Time
-	fetch   func(uint32, uint32) (unraidResponse, error)
+	fetch   func(uint32, uint32) (sensors.Response, error)
 }
 
 func newUnraidService(cid, port uint32) *unraidService {
-	return &unraidService{cid: cid, port: port, started: time.Now(), fetch: fetchUnraid}
+	return &unraidService{
+		cid: cid, port: port, started: time.Now(),
+		fetch: func(cid, port uint32) (sensors.Response, error) { return sensors.Fetch(cid, port, 3*time.Second) },
+	}
 }
 
 func (s *unraidService) Health(context.Context, *device.HealthRequest) (*device.HealthResponse, error) {
@@ -72,13 +76,13 @@ func (s *unraidService) Status(_ context.Context, request *device.StatusRequest)
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
-	if state.DiskError != "" {
-		return nil, status.Error(codes.Unavailable, state.DiskError)
+	if state.Error != "" {
+		return nil, status.Error(codes.Unavailable, state.Error)
 	}
 	return &device.StatusResponse{Status: makeStatus(state)}, nil
 }
 
-func makeDevice(state unraidResponse, cid, port uint32) *models.Device {
+func makeDevice(state sensors.Response, cid, port uint32) *models.Device {
 	temps := make(map[string]*models.TempInfo)
 	number := uint32(1)
 	for _, group := range diskGroups {
@@ -110,7 +114,7 @@ func makeDevice(state unraidResponse, cid, port uint32) *models.Device {
 	}
 }
 
-func makeStatus(state unraidResponse) []*models.Status {
+func makeStatus(state sensors.Response) []*models.Status {
 	var result []*models.Status
 	addDiskMaximum := func(group diskGroup) {
 		var maximum float64
@@ -146,7 +150,7 @@ func tempStatus(id string, temperature float64) *models.Status {
 	return &models.Status{Id: id, Metric: &models.Status_Temp{Temp: temperature}}
 }
 
-func countDisks(disks []diskReading, match func(diskReading) bool) int {
+func countDisks(disks []sensors.Disk, match func(sensors.Disk) bool) int {
 	count := 0
 	for _, disk := range disks {
 		if match(disk) {

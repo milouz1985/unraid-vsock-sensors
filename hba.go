@@ -12,21 +12,18 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-type hba struct {
-	Name string  `json:"name"`
-	Temp float64 `json:"temp_c"`
-}
+	"unraid-vsock-sensors/internal/sensors"
+)
 
 type hbaCollector struct {
 	interval time.Duration
 	mu       sync.RWMutex
-	readings []hba
+	readings []sensors.HBA
 	err      error
 	failures int
 	// collect is replaceable in tests to simulate a slow StorCLI command.
-	collect func(context.Context) ([]hba, error)
+	collect func(context.Context) ([]sensors.HBA, error)
 }
 
 const (
@@ -99,14 +96,14 @@ func (c *hbaCollector) refresh(parent context.Context) {
 
 // read never invokes StorCLI. The copy keeps callers from modifying the slice
 // shared by the collector and other requests.
-func (c *hbaCollector) read() ([]hba, error) {
+func (c *hbaCollector) read() ([]sensors.HBA, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	// Return another clone so callers cannot modify the collector's snapshot.
 	return slices.Clone(c.readings), c.err
 }
 
-func collectHBAs(ctx context.Context) ([]hba, error) {
+func collectHBAs(ctx context.Context) ([]sensors.HBA, error) {
 	command := exec.CommandContext(
 		ctx,
 		"storcli",
@@ -130,7 +127,7 @@ func collectHBAs(ctx context.Context) ([]hba, error) {
 	return readings, err
 }
 
-func parseStorCLI(data []byte) ([]hba, error) {
+func parseStorCLI(data []byte) ([]sensors.HBA, error) {
 	var root struct {
 		Controllers []struct {
 			CommandStatus struct {
@@ -149,7 +146,7 @@ func parseStorCLI(data []byte) ([]hba, error) {
 		return nil, fmt.Errorf("parse storcli JSON: %w", err)
 	}
 
-	var result []hba
+	var result []sensors.HBA
 	for _, controller := range root.Controllers {
 		id := controller.CommandStatus.Controller
 		if controller.CommandStatus.Status != "Success" {
@@ -165,7 +162,7 @@ func parseStorCLI(data []byte) ([]hba, error) {
 			if err != nil {
 				return nil, fmt.Errorf("storcli controller %d invalid temperature %q", id, property.Value)
 			}
-			result = append(result, hba{Name: fmt.Sprintf("hba%d", id), Temp: temp})
+			result = append(result, sensors.HBA{Name: fmt.Sprintf("hba%d", id), Temp: temp})
 			found = true
 			break
 		}
@@ -178,9 +175,9 @@ func parseStorCLI(data []byte) ([]hba, error) {
 	return result, nil
 }
 
-func selectHBAs(hbas []hba, selector string) []hba {
+func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {
 	selector = strings.ToLower(selector)
-	var result []hba
+	var result []sensors.HBA
 	for _, sensor := range hbas {
 		if selector == "hba" || strings.EqualFold(sensor.Name, selector) {
 			result = append(result, sensor)

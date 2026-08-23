@@ -7,25 +7,18 @@ import (
 	"strings"
 
 	"gopkg.in/ini.v1"
+	"unraid-vsock-sensors/internal/sensors"
 )
-
-type disk struct {
-	Name       string  `json:"name"`
-	Device     string  `json:"device"`
-	Transport  string  `json:"transport,omitempty"`
-	Rotational bool    `json:"rotational"`
-	Temp       float64 `json:"temp_c"`
-}
 
 // readDisks reads the temperatures already cached by Unraid in disks.ini.
 // It does not call smartctl and therefore does not wake sleeping disks.
-func readDisks(path string) ([]disk, error) {
+func readDisks(path string) ([]sensors.Disk, error) {
 	config, err := ini.Load(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var result []disk
+	var result []sensors.Disk
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
@@ -52,7 +45,7 @@ func readDisks(path string) ([]disk, error) {
 			}
 		}
 		rotational, _ := section.Key("rotational").Bool()
-		result = append(result, disk{
+		result = append(result, sensors.Disk{
 			Name:       name,
 			Device:     device,
 			Transport:  strings.ToLower(section.Key("transport").String()),
@@ -65,9 +58,9 @@ func readDisks(path string) ([]disk, error) {
 	return result, nil
 }
 
-func selectDisks(disks []disk, selector string) []disk {
+func selectDisks(disks []sensors.Disk, selector string) []sensors.Disk {
 	selector = strings.ToLower(selector)
-	var result []disk
+	var result []sensors.Disk
 
 	for _, disk := range disks {
 		match := selector == "all" || strings.EqualFold(disk.Name, selector) || strings.EqualFold(disk.Device, selector)
