@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,18 +35,11 @@ func loadConfig(path string) (runtimeConfig, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return runtimeConfig{}, fmt.Errorf("decode %s: %w", path, err)
 	}
-	if err := validateConfig(config); err != nil {
-		return runtimeConfig{}, fmt.Errorf("invalid %s: %w", path, err)
-	}
-	return config, nil
-}
-
-func validateConfig(config runtimeConfig) error {
 	if config.CID < 3 {
-		return errors.New("cid must be at least 3")
+		return runtimeConfig{}, fmt.Errorf("invalid %s: cid must be at least 3", path)
 	}
 	if config.Port == 0 {
-		return errors.New("port must be greater than zero")
+		return runtimeConfig{}, fmt.Errorf("invalid %s: port must be greater than zero", path)
 	}
-	return nil
+	return config, nil
 }
