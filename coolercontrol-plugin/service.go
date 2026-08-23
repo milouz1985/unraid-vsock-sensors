@@ -100,14 +100,12 @@ func makeDevice(state unraidResponse, cid, port uint32) *models.Device {
 	}
 
 	location := fmt.Sprintf("vsock:%d:%d", cid, port)
-	name, model, driver, uid := "Unraid Storage", "Unraid disks and HBAs over AF_VSOCK", "unraid-vsock-sensors", location
-	minTemp, maxTemp := 0.0, 100.0
 	return &models.Device{
-		Id: deviceID, Name: name, UidInfo: &uid,
+		Id: deviceID, Name: "Unraid Storage", UidInfo: pointer(location),
 		Info: &models.DeviceInfo{
 			Channels: map[string]*models.ChannelInfo{}, Temps: temps,
-			TempMin: &minTemp, TempMax: &maxTemp, Model: &model,
-			DriverInfo: &models.DriverInfo{Name: &driver, Version: stringPointer(version), Locations: []string{location}},
+			TempMin: pointer(0.0), TempMax: pointer(100.0), Model: pointer("Unraid disks and HBAs over AF_VSOCK"),
+			DriverInfo: &models.DriverInfo{Name: pointer("unraid-vsock-sensors"), Version: pointer(version), Locations: []string{location}},
 		},
 	}
 }
@@ -158,4 +156,4 @@ func countDisks(disks []diskReading, match func(diskReading) bool) int {
 	return count
 }
 
-func stringPointer(value string) *string { return &value }
+func pointer[T any](value T) *T { return &value }
