@@ -15,6 +15,18 @@ import (
 
 const deviceID = "unraid-storage"
 
+type diskGroup struct {
+	id    string
+	label string
+	match func(diskReading) bool
+}
+
+var diskGroups = []diskGroup{
+	{id: "hdd", label: "HDD maximum", match: func(d diskReading) bool { return d.Rotational }},
+	{id: "ssd", label: "SSD maximum", match: isSSD},
+	{id: "nvme", label: "NVMe maximum", match: isNVMe},
+}
+
 type unraidService struct {
 	device.UnimplementedDeviceServiceServer
 	cid     uint32
@@ -69,12 +81,10 @@ func (s *unraidService) Status(_ context.Context, request *device.StatusRequest)
 func makeDevice(state unraidResponse, cid, port uint32) *models.Device {
 	temps := make(map[string]*models.TempInfo)
 	number := uint32(1)
-	groups := []struct{ id, label string }{
-		{"hdd", "HDD maximum"},
-		{"ssd", "SSD maximum"},
-		{"nvme", "NVMe maximum"},
-	}
-	for _, group := range groups {
+	for _, group := range diskGroups {
+		if countDisks(state.Disks, group.match) < 2 {
+			continue
+		}
 		temps[group.id] = &models.TempInfo{Label: group.label, Number: number}
 		number++
 	}
@@ -104,21 +114,24 @@ func makeDevice(state unraidResponse, cid, port uint32) *models.Device {
 
 func makeStatus(state unraidResponse) []*models.Status {
 	var result []*models.Status
-	addDiskMaximum := func(id string, match func(diskReading) bool) {
+	addDiskMaximum := func(group diskGroup) {
 		var maximum float64
-		found := false
+		count := 0
 		for _, disk := range state.Disks {
-			if match(disk) && (!found || disk.Temp > maximum) {
-				maximum, found = disk.Temp, true
+			if group.match(disk) {
+				if count == 0 || disk.Temp > maximum {
+					maximum = disk.Temp
+				}
+				count++
 			}
 		}
-		if found {
-			result = append(result, tempStatus(id, maximum))
+		if count >= 2 {
+			result = append(result, tempStatus(group.id, maximum))
 		}
 	}
-	addDiskMaximum("hdd", func(d diskReading) bool { return d.Rotational })
-	addDiskMaximum("ssd", isSSD)
-	addDiskMaximum("nvme", isNVMe)
+	for _, group := range diskGroups {
+		addDiskMaximum(group)
+	}
 	for _, disk := range state.Disks {
 		result = append(result, tempStatus(sensorID("disk", disk.Name), disk.Temp))
 	}
@@ -133,6 +146,16 @@ func makeStatus(state unraidResponse) []*models.Status {
 
 func tempStatus(id string, temperature float64) *models.Status {
 	return &models.Status{Id: id, Metric: &models.Status_Temp{Temp: temperature}}
+}
+
+func countDisks(disks []diskReading, match func(diskReading) bool) int {
+	count := 0
+	for _, disk := range disks {
+		if match(disk) {
+			count++
+		}
+	}
+	return count
 }
 
 func stringPointer(value string) *string { return &value }

@@ -35,8 +35,11 @@ func TestGroupMaximumAndSleepingDisk(t *testing.T) {
 	for _, reading := range readings {
 		values[reading.Id] = reading.Metric.(*models.Status_Temp).Temp
 	}
-	if values["hdd"] != 35 || values["disk-disk2"] != 0 || values["nvme"] != 48 {
+	if values["hdd"] != 35 || values["disk-disk2"] != 0 || values["disk-cache"] != 48 {
 		t.Fatalf("unexpected readings: %#v", values)
+	}
+	if _, exists := values["nvme"]; exists {
+		t.Fatal("single NVMe should not have an aggregate sensor")
 	}
 }
 
@@ -50,6 +53,9 @@ func TestDeviceListsIndividualSensors(t *testing.T) {
 	}
 	if temps["all"] != nil {
 		t.Fatal("cross-family disk aggregate should not be exposed")
+	}
+	if temps["hdd"] == nil || temps["nvme"] != nil || temps["ssd"] != nil {
+		t.Fatalf("unexpected family aggregates: %#v", temps)
 	}
 }
 

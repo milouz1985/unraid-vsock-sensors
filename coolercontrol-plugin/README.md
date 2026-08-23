@@ -7,7 +7,8 @@ AF_VSOCK.
 
 ## Sondes
 
-- Groupes de disques : `hdd`, `ssd` et `nvme` (maximum de chaque famille).
+- Groupes de disques : `hdd`, `ssd` et `nvme` (maximum de chaque famille),
+  affichés uniquement lorsque la famille contient au moins deux disques.
 - Une sonde par disque et par contrôleur HBA découvert au démarrage de
   CoolerControl.
 - Les HBA ne sont pas agrégés, afin que chaque radiateur puisse piloter son
