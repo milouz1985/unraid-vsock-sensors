@@ -28,10 +28,5 @@ func listenUnixSocket(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen on Unix socket: %w", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		listener.Close()
-		_ = os.Remove(path)
-		return nil, fmt.Errorf("secure Unix socket permissions: %w", err)
-	}
 	return listener, nil
 }

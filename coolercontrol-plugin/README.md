@@ -18,8 +18,8 @@ AF_VSOCK.
   indisponible. Une erreur StorCLI masque seulement les mesures HBA.
 
 Le service gRPC n'écoute pas sur TCP. Il utilise exclusivement un socket Unix
-local créé avec les permissions `0600`; TLS n'est donc ni nécessaire ni attendu
-par le client plugin de CoolerControl.
+local accessible uniquement par son propriétaire ; TLS n'est donc ni nécessaire
+ni attendu par le client plugin de CoolerControl.
 
 Les ajouts ou suppressions de disques nécessitent un redémarrage de
 `coolercontrold` pour renouveler la liste des sondes.
