@@ -36,14 +36,14 @@ fmt: ## Formate le code source
 tidy: ## Synchronise les dépendances Go
 	$(GO) mod tidy
 
-check: vet test build plugin-test plugin-build ## Vérifie et compile le serveur et le plugin
+check: vet test build plugin-build ## Vérifie et compile le serveur et le plugin
 
 plugin-build: ## Compile le plugin CoolerControl
 	mkdir -p bin
-	cd coolercontrol-plugin && CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o ../$(PLUGIN_BINARY) .
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o $(PLUGIN_BINARY) ./coolercontrol-plugin
 
 plugin-test: ## Teste le plugin CoolerControl
-	cd coolercontrol-plugin && $(GO) test ./...
+	$(GO) test ./coolercontrol-plugin/...
 
 plugin-generate: ## Régénère les fichiers Go depuis le protocole CoolerControl
 	cd coolercontrol-plugin && ./generate.sh
