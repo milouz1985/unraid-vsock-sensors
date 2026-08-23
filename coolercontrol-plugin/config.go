@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 )
@@ -25,23 +24,17 @@ func configPath() (string, error) {
 }
 
 func loadConfig(path string) (runtimeConfig, error) {
-	file, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
 		return defaultConfig, nil
 	}
 	if err != nil {
 		return runtimeConfig{}, err
 	}
-	defer file.Close()
 
 	var config runtimeConfig
-	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&config); err != nil {
+	if err := json.Unmarshal(data, &config); err != nil {
 		return runtimeConfig{}, fmt.Errorf("decode %s: %w", path, err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return runtimeConfig{}, fmt.Errorf("decode %s: trailing JSON data", path)
 	}
 	if err := validateConfig(config); err != nil {
 		return runtimeConfig{}, fmt.Errorf("invalid %s: %w", path, err)
