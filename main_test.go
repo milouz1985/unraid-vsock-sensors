@@ -30,6 +30,20 @@ func TestReadAndSelect(t *testing.T) {
 		device="sdc"
 		temp="*"
 		rotational="1"
+		spundown="1"
+
+		["disk13"]
+		device=""
+		status="DISK_NP"
+		temp="*"
+		spundown="0"
+
+		["flash"]
+		device="sdi"
+		transport="usb"
+		rotational="1"
+		temp="*"
+		spundown="0"
 	`), "\n\t\t", "\n")
 	if err := os.WriteFile(p, []byte(data), 0600); err != nil {
 		t.Fatal(err)
@@ -59,6 +73,16 @@ func TestReadDisksRejectsInvalidTemperature(t *testing.T) {
 	}
 	if _, err := readDisks(p); err == nil {
 		t.Fatal("invalid temperature should remain an error")
+	}
+}
+
+func TestReadDisksRejectsMissingTemperatureOnActiveDisk(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "disks.ini")
+	if err := os.WriteFile(p, []byte("[disk1]\ndevice=sdb\ntemp=*\nrotational=1\nspundown=0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readDisks(p); err == nil {
+		t.Fatal("missing temperature on an active disk should remain an error")
 	}
 }
 

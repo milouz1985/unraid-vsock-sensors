@@ -2,8 +2,9 @@
 
 GO := go
 BINARY := bin/unraid-vsock-sensors
+PLUGIN_BINARY := bin/unraid-vsock-sensors-cc
 
-.PHONY: help build test vet fmt tidy check clean
+.PHONY: help build test vet fmt tidy check plugin-build plugin-test plugin-generate plugin-package clean
 
 help: ## Affiche les commandes disponibles
 	@echo "Commandes disponibles :"
@@ -12,7 +13,11 @@ help: ## Affiche les commandes disponibles
 	@echo "  make vet    - Recherche les erreurs Go courantes"
 	@echo "  make fmt    - Formate les fichiers Go"
 	@echo "  make tidy   - Met à jour go.mod et go.sum"
-	@echo "  make check  - Exécute vet, les tests et la compilation"
+	@echo "  make check  - Vérifie et compile le serveur et le plugin"
+	@echo "  make plugin-build - Compile le plugin CoolerControl"
+	@echo "  make plugin-test  - Teste le plugin CoolerControl"
+	@echo "  make plugin-generate - Régénère le protocole Go du plugin"
+	@echo "  make plugin-package - Crée l'archive autonome du plugin"
 	@echo "  make clean  - Supprime le binaire compilé"
 
 build: ## Compile un binaire Linux statique
@@ -31,7 +36,21 @@ fmt: ## Formate le code source
 tidy: ## Synchronise les dépendances Go
 	$(GO) mod tidy
 
-check: vet test build ## Vérifie et compile le projet
+check: vet test build plugin-test plugin-build ## Vérifie et compile le serveur et le plugin
+
+plugin-build: ## Compile le plugin CoolerControl
+	mkdir -p bin
+	cd coolercontrol-plugin && CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o ../$(PLUGIN_BINARY) .
+
+plugin-test: ## Teste le plugin CoolerControl
+	cd coolercontrol-plugin && $(GO) test ./...
+
+plugin-generate: ## Régénère les fichiers Go depuis le protocole CoolerControl
+	cd coolercontrol-plugin && ./generate.sh
+
+plugin-package: ## Crée une archive du plugin installable sans Go ni Git
+	./coolercontrol-plugin/package.sh
 
 clean: ## Supprime les fichiers générés
-	$(RM) $(BINARY)
+	$(RM) $(BINARY) $(PLUGIN_BINARY)
+	$(RM) -r dist

@@ -17,6 +17,8 @@ réveille pas les disques en veille.
 - Pour un HDD en veille (`temp="*"`), le serveur renvoie `0 °C`, qui signifie
   que la sonde est inactive. Le spindown ne provoque donc pas une fausse alerte
   à `100 °C` dans CoolerControl et aucune ancienne mesure ne reste figée.
+- Les slots Unraid non assignés (`DISK_NP`) et la clé de démarrage `flash` ne
+  sont pas exposés comme des sondes.
 - Une vraie erreur de lecture ou une température invalide fait toujours échouer
   la commande, afin que CoolerControl puisse la traiter comme une panne.
 
@@ -71,6 +73,15 @@ unraid-vsock-sensors get --cid 42 --json
 
 Les commandes autres que `--json` écrivent uniquement un nombre en degrés
 Celsius. Elles conviennent donc à une source `cmd` de fan2go ou CoolerControl.
+
+## Plugin CoolerControl natif
+
+Un service gRPC natif est disponible dans `coolercontrol-plugin`. Contrairement
+à une collection de sondes `cmd`, il effectue une seule requête vsock par cycle
+et présente automatiquement les groupes, les disques et les HBA comme un
+appareil **Unraid Storage**. Consultez
+[`coolercontrol-plugin/README.md`](coolercontrol-plugin/README.md) pour
+l'installation.
 
 ## Fraîcheur et sécurité
 

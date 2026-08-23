@@ -31,10 +31,21 @@ func readDisks(path string) ([]disk, error) {
 			continue
 		}
 		name := strings.Trim(section.Name(), "\"")
+		device := strings.TrimSpace(section.Key("device").String())
+		status := strings.TrimSpace(section.Key("status").String())
+		// disks.ini contains sections for every possible array slot, including
+		// unassigned DISK_NP entries, plus the Unraid boot flash device.
+		if device == "" || strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") {
+			continue
+		}
 
 		rawTemp := strings.TrimSpace(section.Key("temp").String())
 		temp := 0.0
-		if rawTemp != "*" {
+		if rawTemp == "*" {
+			if strings.TrimSpace(section.Key("spundown").String()) != "1" {
+				return nil, fmt.Errorf("disk %q temperature unavailable while not spun down", name)
+			}
+		} else {
 			temp, err = strconv.ParseFloat(rawTemp, 64)
 			if err != nil {
 				return nil, fmt.Errorf("disk %q has invalid temperature %q", name, rawTemp)
@@ -43,7 +54,7 @@ func readDisks(path string) ([]disk, error) {
 		rotational, _ := section.Key("rotational").Bool()
 		result = append(result, disk{
 			Name:       name,
-			Device:     section.Key("device").String(),
+			Device:     device,
 			Transport:  strings.ToLower(section.Key("transport").String()),
 			Rotational: rotational,
 			Temp:       temp,

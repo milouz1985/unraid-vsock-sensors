@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unraid VSOCK Sensors</title>
+  <script src="../../lib/cc-plugin-lib.js"></script>
+  <style>
+    .card { background: rgb(var(--colors-bg-one)); border: 1px solid rgb(var(--colors-border-one)); border-radius: .5rem; padding: 1rem; }
+    .field { margin-top: 1rem; }
+    .field label { display: block; font-weight: 500; margin-bottom: .25rem; }
+    .field input { box-sizing: border-box; width: 100%; padding: .55rem; border-radius: .375rem; border: 1px solid rgb(var(--colors-border-one)); background: rgb(var(--colors-bg-two)); color: inherit; }
+    .error { color: rgb(var(--colors-red)); min-height: 1.5rem; margin-top: .5rem; }
+  </style>
+</head>
+<body class="min-h-full bg-bg-two text-text-color p-3">
+  <h1 class="text-lg font-semibold mb-2">Unraid VSOCK Sensors</h1>
+  <p class="text-sm opacity-80 mb-4">Connexion à la VM Unraid. L’enregistrement redémarre CoolerControl pour appliquer les valeurs.</p>
+  <main class="card">
+    <div class="field">
+      <label for="cid">CID VSOCK de la VM Unraid</label>
+      <input id="cid" type="number" min="3" max="4294967295" step="1" required>
+    </div>
+    <div class="field">
+      <label for="port">Port de unraid-vsock-sensors</label>
+      <input id="port" type="number" min="1" max="4294967295" step="1" required>
+    </div>
+    <p id="error" class="error text-sm" role="alert"></p>
+    <div class="flex justify-end mt-3">
+      <button id="save" class="bg-accent/80 hover:!bg-accent px-5 py-2 border-2 border-border-one rounded-lg">Enregistrer et redémarrer</button>
+    </div>
+  </main>
+  <script>
+    runPluginScript(async () => {
+      const config = await getPluginConfig();
+      document.getElementById('cid').value = config.cid ?? 42;
+      document.getElementById('port').value = config.port ?? 19090;
+
+      document.getElementById('save').addEventListener('click', async () => {
+        const cid = Number(document.getElementById('cid').value);
+        const port = Number(document.getElementById('port').value);
+        const error = document.getElementById('error');
+        if (!Number.isInteger(cid) || cid < 3 || cid > 4294967295 ||
+            !Number.isInteger(port) || port < 1 || port > 4294967295) {
+          error.textContent = 'Le CID et le port doivent être des nombres entiers valides.';
+          return;
+        }
+        error.textContent = '';
+        await savePluginConfig({cid, port});
+        await restart();
+      });
+    });
+  </script>
+</body>
+</html>
