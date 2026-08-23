@@ -159,13 +159,13 @@ func get(args []string) error {
 	if err != nil {
 		return err
 	}
-	if r.Error != "" {
-		return errors.New(r.Error)
+	return writeResponse(os.Stdout, r, fs.Arg(0), *all)
+}
+
+func writeResponse(out io.Writer, r response, selector string, all bool) error {
+	if all {
+		return json.NewEncoder(out).Encode(r)
 	}
-	if *all {
-		return json.NewEncoder(os.Stdout).Encode(r)
-	}
-	selector := fs.Arg(0)
 	if strings.EqualFold(selector, "hba") || strings.HasPrefix(strings.ToLower(selector), "hba") {
 		selected := selectHBAs(r.HBAs, selector)
 		if len(selected) == 0 {
@@ -180,12 +180,15 @@ func get(args []string) error {
 				max = sensor.Temp
 			}
 		}
-		fmt.Println(strconv.FormatFloat(max, 'f', -1, 64))
+		fmt.Fprintln(out, strconv.FormatFloat(max, 'f', -1, 64))
 		return nil
+	}
+	if r.Error != "" {
+		return errors.New(r.Error)
 	}
 	selected := selectDisks(r.Disks, selector)
 	if len(selected) == 0 {
-		return fmt.Errorf("no available temperature for selector %q", fs.Arg(0))
+		return fmt.Errorf("no available temperature for selector %q", selector)
 	}
 	max := selected[0].Temp
 	for _, d := range selected[1:] {
@@ -193,7 +196,7 @@ func get(args []string) error {
 			max = d.Temp
 		}
 	}
-	fmt.Println(strconv.FormatFloat(max, 'f', -1, 64))
+	fmt.Fprintln(out, strconv.FormatFloat(max, 'f', -1, 64))
 	return nil
 }
 

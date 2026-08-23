@@ -48,6 +48,11 @@ Le plugin est installé par défaut dans
 `UNRAID_VSOCK_CID`, `UNRAID_VSOCK_PORT` et `CC_PLUGINS_DIR` permettent aussi de
 modifier ces valeurs.
 
+Une réinstallation sans option conserve le `config.json` existant. Fournir
+explicitement `--cid`, `--port`, `UNRAID_VSOCK_CID` ou `UNRAID_VSOCK_PORT`
+modifie seulement la valeur correspondante. Les valeurs par défaut `42:19090`
+ne sont utilisées que lors de la première installation.
+
 Après installation, le CID et le port peuvent être modifiés dans
 **Plugins → Unraid VSOCK Sensors** dans l'interface CoolerControl. Le formulaire
 écrit le `config.json` du plugin et redémarre le daemon pour appliquer la

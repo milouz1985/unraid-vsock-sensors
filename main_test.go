@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -83,6 +84,35 @@ func TestReadDisksRejectsMissingTemperatureOnActiveDisk(t *testing.T) {
 	}
 	if _, err := readDisks(p); err == nil {
 		t.Fatal("missing temperature on an active disk should remain an error")
+	}
+}
+
+func TestJSONIncludesDiskError(t *testing.T) {
+	r := response{Error: "disks.ini failed", HBAs: []hba{{Name: "hba0", Temp: 46}}}
+	var out bytes.Buffer
+	if err := writeResponse(&out, r, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"error":"disks.ini failed"`) {
+		t.Fatalf("JSON response omitted the error: %s", out.String())
+	}
+}
+
+func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {
+	r := response{Error: "disks.ini failed", HBAs: []hba{{Name: "hba0", Temp: 46}}}
+	var out bytes.Buffer
+	if err := writeResponse(&out, r, "hba0", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "46\n" {
+		t.Fatalf("got %q, want HBA temperature", got)
+	}
+}
+
+func TestDiskSelectorStillReturnsDiskError(t *testing.T) {
+	r := response{Error: "disks.ini failed", HBAs: []hba{{Name: "hba0", Temp: 46}}}
+	if err := writeResponse(&bytes.Buffer{}, r, "hdd", false); err == nil || err.Error() != r.Error {
+		t.Fatalf("got %v, want disk error", err)
 	}
 }
 

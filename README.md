@@ -71,6 +71,10 @@ unraid-vsock-sensors get --cid 42 hba0
 unraid-vsock-sensors get --cid 42 --json
 ```
 
+`--json` renvoie toujours la réponse structurée complète, y compris les champs
+`error` et `hba_error`, afin de permettre le diagnostic d'une famille de sondes
+sans masquer les mesures encore disponibles dans l'autre.
+
 Les commandes autres que `--json` écrivent uniquement un nombre en degrés
 Celsius. Elles conviennent donc à une source `cmd` de fan2go ou CoolerControl.
 
