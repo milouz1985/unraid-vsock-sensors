@@ -9,9 +9,9 @@ port_explicit=0
 [[ -v UNRAID_VSOCK_PORT ]] && port_explicit=1
 plugins_root="${CC_PLUGINS_DIR:-/var/lib/coolercontrol/plugins}"
 plugin_dir="$plugins_root/unraid-vsock-sensors-cc"
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-build_dir="$(mktemp -d)"
-trap 'rm -rf "$build_dir"' EXIT
+package_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+temporary_dir="$(mktemp -d)"
+trap 'rm -rf "$temporary_dir"' EXIT
 
 if (( EUID == 0 )); then
     elevate=()
@@ -55,17 +55,19 @@ if (( 10#$cid < 3 || 10#$cid > 4294967295 || 10#$port < 1 || 10#$port > 42949672
     exit 2
 fi
 
-(
-    cd "$script_dir"
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$build_dir/unraid-vsock-sensors-cc" .
-)
-"${elevate[@]}" install -d -m 0755 "$plugin_dir"
-"${elevate[@]}" install -m 0755 "$build_dir/unraid-vsock-sensors-cc" "$plugin_dir/unraid-vsock-sensors-cc"
-"${elevate[@]}" install -m 0644 "$script_dir/manifest.toml" "$plugin_dir/manifest.toml"
-"${elevate[@]}" install -d -m 0755 "$plugin_dir/ui"
-"${elevate[@]}" install -m 0644 "$script_dir/ui/index.html" "$plugin_dir/ui/index.html"
+for required in unraid-vsock-sensors-cc manifest.toml ui/index.html; do
+    if [[ ! -e "$package_dir/$required" ]]; then
+        echo "Fichier absent du paquet : $required" >&2
+        exit 1
+    fi
+done
 
-config_tmp="$build_dir/config.json"
+"${elevate[@]}" install -d -m 0755 "$plugin_dir" "$plugin_dir/ui"
+"${elevate[@]}" install -m 0755 "$package_dir/unraid-vsock-sensors-cc" "$plugin_dir/unraid-vsock-sensors-cc"
+"${elevate[@]}" install -m 0644 "$package_dir/manifest.toml" "$plugin_dir/manifest.toml"
+"${elevate[@]}" install -m 0644 "$package_dir/ui/index.html" "$plugin_dir/ui/index.html"
+
+config_tmp="$temporary_dir/config.json"
 if (( write_config == 1 )); then
     printf '{"cid":%s,"port":%s}\n' "$cid" "$port" > "$config_tmp"
     "${elevate[@]}" install -m 0644 "$config_tmp" "$installed_config"

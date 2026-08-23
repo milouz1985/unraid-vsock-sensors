@@ -30,7 +30,7 @@ mkdir -p "$package_dir/ui" "$output_dir"
 install -m 0644 "$script_dir/manifest.toml" "$package_dir/manifest.toml"
 install -m 0644 "$script_dir/ui/index.html" "$package_dir/ui/index.html"
 install -m 0644 "$script_dir/README.md" "$package_dir/README.md"
-install -m 0755 "$script_dir/install-prebuilt.sh" "$package_dir/install.sh"
+install -m 0755 "$script_dir/install.sh" "$package_dir/install.sh"
 
 archive="$output_dir/$package_name.tar.gz"
 tar -C "$build_dir" -czf "$archive" "$package_name"
@@ -39,4 +39,3 @@ tar -C "$build_dir" -czf "$archive" "$package_name"
     sha256sum "$package_name.tar.gz" > "$package_name.tar.gz.sha256"
 )
 echo "$archive"
-

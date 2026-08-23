@@ -24,53 +24,9 @@ par le client plugin de CoolerControl.
 Les ajouts ou suppressions de disques nécessitent un redémarrage de
 `coolercontrold` pour renouveler la liste des sondes.
 
-## Installer depuis les sources
+## Créer et installer le paquet
 
-Prérequis : CoolerControl avec support des plugins et Go 1.25 ou plus récent.
-Les fichiers Go générés depuis le protocole gRPC sont inclus dans le dépôt :
-`protoc` n'est pas nécessaire pour compiler ou installer le plugin.
-
-Les fichiers `.proto` sont une copie non modifiée de la spécification officielle
-CoolerControl. Leur dépôt, commit et licence sont consignés dans
-[`proto/UPSTREAM.md`](proto/UPSTREAM.md). Pour régénérer les fichiers Go après
-une mise à jour de cette copie, installer `protoc`, `protoc-gen-go` et
-`protoc-gen-go-grpc`, puis exécuter `./generate.sh`.
-
-Depuis la racine du dépôt :
-
-```sh
-coolercontrol-plugin/install.sh --cid=42 --port=19090
-sudo systemctl restart coolercontrold
-```
-
-Le plugin est installé par défaut dans
-`/var/lib/coolercontrol/plugins/unraid-vsock-sensors-cc`. Les variables
-`UNRAID_VSOCK_CID`, `UNRAID_VSOCK_PORT` et `CC_PLUGINS_DIR` permettent aussi de
-modifier ces valeurs.
-
-Une réinstallation sans option conserve le `config.json` existant. Fournir
-explicitement `--cid`, `--port`, `UNRAID_VSOCK_CID` ou `UNRAID_VSOCK_PORT`
-modifie seulement la valeur correspondante. Les valeurs par défaut `42:19090`
-ne sont utilisées que lors de la première installation.
-
-Après installation, le CID et le port peuvent être modifiés dans
-**Plugins → Unraid VSOCK Sensors** dans l'interface CoolerControl. Le formulaire
-écrit le `config.json` du plugin et redémarre le daemon pour appliquer la
-nouvelle connexion. La configuration peut aussi être éditée directement dans :
-
-```text
-/var/lib/coolercontrol/plugins/unraid-vsock-sensors-cc/config.json
-```
-
-Pour diagnostiquer le service :
-
-```sh
-journalctl -u cc-plugin-unraid-vsock-sensors-cc
-```
-
-## Installer le paquet précompilé
-
-La machine de compilation peut produire une archive autonome Linux amd64 :
+Go 1.25 ou plus récent est nécessaire sur la machine de compilation :
 
 ```sh
 make plugin-package
@@ -87,3 +43,21 @@ sudo systemctl restart coolercontrold
 ```
 
 Cette installation ne nécessite ni Git ni Go sur Proxmox.
+
+Le plugin est installé dans
+`/var/lib/coolercontrol/plugins/unraid-vsock-sensors-cc`. Une réinstallation
+sans option conserve sa configuration. Le CID et le port peuvent ensuite être
+modifiés dans **Plugins → Unraid VSOCK Sensors**.
+
+Pour diagnostiquer le service :
+
+```sh
+journalctl -u cc-plugin-unraid-vsock-sensors-cc
+```
+
+## Développement du protocole
+
+Les fichiers `.proto` officiels sont documentés dans
+[`proto/UPSTREAM.md`](proto/UPSTREAM.md). Le code Go généré est inclus ; sa
+régénération nécessite `protoc`, `protoc-gen-go` et `protoc-gen-go-grpc`, puis
+`./generate.sh`.
