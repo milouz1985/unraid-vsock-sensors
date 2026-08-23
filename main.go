@@ -46,7 +46,33 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage: %s serve [options] | get [options] SELECTOR\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, `Usage:
+  %[1]s serve [options]
+  %[1]s get [options] SELECTOR
+  %[1]s get [options] --json
+
+Commands:
+  serve                     Serve sensor data over AF_VSOCK
+  get                       Read sensor data from an AF_VSOCK server
+
+Serve options:
+  --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
+  --port PORT               AF_VSOCK port (default: 19090)
+  --storcli-cache DURATION  Interval between StorCLI refreshes (default: 30s)
+
+Get options:
+  --cid CID                 Guest AF_VSOCK CID (default: 3)
+  --port PORT               AF_VSOCK port (default: 19090)
+  --json                    Print the complete JSON response
+
+Selectors:
+  hdd, ssd, nvme, all, hba, hba0, disk name, or device name
+
+Examples:
+  %[1]s serve --port 990
+  %[1]s get --cid 42 hdd
+  %[1]s get --cid 42 --json
+`, os.Args[0])
 	os.Exit(2)
 }
 
