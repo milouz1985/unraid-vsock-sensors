@@ -121,7 +121,7 @@ func TestLoadConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"cid":57,"port":20000}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	config, err := loadConfig(path, runtimeConfig{CID: 3, Port: 19090})
+	config, err := loadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,8 +135,18 @@ func TestLoadConfigRejectsInvalidValues(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"cid":0,"port":19090}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadConfig(path, runtimeConfig{}); err == nil {
+	if _, err := loadConfig(path); err == nil {
 		t.Fatal("invalid CID should be rejected")
+	}
+}
+
+func TestLoadConfigUsesDefaultsWhenMissing(t *testing.T) {
+	config, err := loadConfig(filepath.Join(t.TempDir(), "missing.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config != defaultConfig {
+		t.Fatalf("got %#v, want %#v", config, defaultConfig)
 	}
 }
 

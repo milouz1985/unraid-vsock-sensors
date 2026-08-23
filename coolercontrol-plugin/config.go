@@ -14,10 +14,9 @@ type runtimeConfig struct {
 	Port uint32 `json:"port"`
 }
 
-func configPath(explicit string) (string, error) {
-	if explicit != "" {
-		return explicit, nil
-	}
+var defaultConfig = runtimeConfig{CID: 42, Port: 19090}
+
+func configPath() (string, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("locate plugin executable: %w", err)
@@ -25,10 +24,10 @@ func configPath(explicit string) (string, error) {
 	return filepath.Join(filepath.Dir(executable), "config.json"), nil
 }
 
-func loadConfig(path string, fallback runtimeConfig) (runtimeConfig, error) {
+func loadConfig(path string) (runtimeConfig, error) {
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return fallback, validateConfig(fallback)
+		return defaultConfig, nil
 	}
 	if err != nil {
 		return runtimeConfig{}, err
