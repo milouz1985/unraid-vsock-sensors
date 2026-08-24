@@ -21,12 +21,12 @@ if ! git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 1
 fi
 
-tag="$(git -C "$repo_dir" describe --tags --exact-match 2>/dev/null || true)"
+tag="$(git -C "$repo_dir" describe --tags --match 'v[0-9]*' --exact-match 2>/dev/null || true)"
 dirty="$(git -C "$repo_dir" status --porcelain --untracked-files=normal)"
 if [[ -n "$tag" && -z "$dirty" ]]; then
     version="${tag#v}"
 else
-    base_tag="$(git -C "$repo_dir" describe --tags --abbrev=0 2>/dev/null || true)"
+    base_tag="$(git -C "$repo_dir" describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || true)"
     if [[ -n "$base_tag" ]]; then
         base_version="${base_tag#v}"
         commit_count="$(git -C "$repo_dir" rev-list "$base_tag"..HEAD --count)"

@@ -36,8 +36,9 @@ L'archive et sa somme SHA-256 sont créées dans `dist/`. Copier l'archive sur
 Proxmox, puis :
 
 ```sh
-tar -xzf unraid-vsock-sensors-cc-0.1.0-linux-amd64.tar.gz
-cd unraid-vsock-sensors-cc-0.1.0-linux-amd64
+archive="$(find . -maxdepth 1 -name 'unraid-vsock-sensors-cc-*-linux-amd64.tar.gz' -print -quit)"
+tar -xzf "$archive"
+cd "${archive%.tar.gz}"
 ./install.sh --cid=3 --port=990
 sudo systemctl restart coolercontrold
 ```
