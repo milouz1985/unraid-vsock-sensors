@@ -18,8 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mdlayher/vsock"
 	"unraid-vsock-sensors/internal/sensors"
+
+	"github.com/mdlayher/vsock"
 )
 
 const (
@@ -169,7 +170,7 @@ func writeResponse(out io.Writer, r sensors.Response, selector string, all bool)
 	if all {
 		return json.NewEncoder(out).Encode(r)
 	}
-	if strings.EqualFold(selector, "hba") || strings.HasPrefix(strings.ToLower(selector), "hba") {
+	if strings.HasPrefix(strings.ToLower(selector), "hba") {
 		selected := selectHBAs(r.HBAs, selector)
 		if len(selected) == 0 {
 			if r.HBAError != "" {
