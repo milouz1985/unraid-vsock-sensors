@@ -132,12 +132,21 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestLoadConfigRejectsInvalidValues(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"cid":0,"port":19090}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadConfig(path); err == nil {
-		t.Fatal("invalid CID should be rejected")
+	for name, config := range map[string]string{
+		"CID below guest range": `{"cid":0,"port":19090}`,
+		"CID any":               `{"cid":4294967295,"port":19090}`,
+		"zero port":             `{"cid":42,"port":0}`,
+		"port any":              `{"cid":42,"port":4294967295}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadConfig(path); err == nil {
+				t.Fatal("invalid configuration should be rejected")
+			}
+		})
 	}
 }
 
