@@ -103,6 +103,36 @@ func TestJSONIncludesDiskError(t *testing.T) {
 	}
 }
 
+func TestValidateVsockAddresses(t *testing.T) {
+	for _, cid := range []uint{3, uint(maxVsockAddress)} {
+		if err := validateVsockCID(cid); err != nil {
+			t.Fatalf("valid CID %d rejected: %v", cid, err)
+		}
+	}
+	for _, cid := range []uint{0, 2} {
+		if err := validateVsockCID(cid); err == nil {
+			t.Fatalf("invalid CID %d accepted", cid)
+		}
+	}
+	for _, port := range []uint{1, uint(maxVsockAddress)} {
+		if err := validateVsockPort(port); err != nil {
+			t.Fatalf("valid port %d rejected: %v", port, err)
+		}
+	}
+	if err := validateVsockPort(0); err == nil {
+		t.Fatal("zero port accepted")
+	}
+	if ^uint(0) > uint(maxVsockAddress) {
+		overflow := uint(maxVsockAddress + 1)
+		if err := validateVsockCID(overflow); err == nil {
+			t.Fatalf("reserved CID %d accepted", overflow)
+		}
+		if err := validateVsockPort(overflow); err == nil {
+			t.Fatalf("reserved port %d accepted", overflow)
+		}
+	}
+}
+
 func TestServerResponseIncludesVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "disks.ini")
 	if err := os.WriteFile(path, []byte("[disk1]\ndevice=sdb\ntemp=35\nrotational=1\n"), 0600); err != nil {

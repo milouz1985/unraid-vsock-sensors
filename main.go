@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	defaultPort    = 19090
-	requestTimeout = 3 * time.Second
+	defaultPort     = 19090
+	requestTimeout  = 3 * time.Second
+	maxVsockAddress = uint64(1<<32 - 2)
 )
 
 var version = "dev"
@@ -98,6 +99,9 @@ func serve(args []string) error {
 	if *storcliCache <= 0 {
 		return errors.New("storcli-cache must be greater than zero")
 	}
+	if err := validateVsockPort(*port); err != nil {
+		return err
+	}
 	listener, err := vsock.Listen(uint32(*port), nil)
 	if err != nil {
 		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
@@ -166,11 +170,31 @@ func get(args []string) error {
 	if fs.NArg() != 1 && !*all {
 		return errors.New("a selector is required (hdd, nvme, all, name, or device)")
 	}
+	if err := validateVsockCID(*cid); err != nil {
+		return err
+	}
+	if err := validateVsockPort(*port); err != nil {
+		return err
+	}
 	r, err := sensors.Fetch(uint32(*cid), uint32(*port), requestTimeout)
 	if err != nil {
 		return err
 	}
 	return writeResponse(os.Stdout, r, fs.Arg(0), *all)
+}
+
+func validateVsockCID(cid uint) error {
+	if cid < 3 || uint64(cid) > maxVsockAddress {
+		return fmt.Errorf("cid must be between 3 and %d", maxVsockAddress)
+	}
+	return nil
+}
+
+func validateVsockPort(port uint) error {
+	if port == 0 || uint64(port) > maxVsockAddress {
+		return fmt.Errorf("port must be between 1 and %d", maxVsockAddress)
+	}
+	return nil
 }
 
 func writeResponse(out io.Writer, r sensors.Response, selector string, all bool) error {
