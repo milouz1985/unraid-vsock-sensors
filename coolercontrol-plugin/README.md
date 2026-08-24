@@ -59,6 +59,10 @@ Le plugin est installé dans
 sans option conserve sa configuration. Le CID et le port peuvent ensuite être
 modifiés dans **Plugins → Unraid VSOCK Sensors**.
 
+CoolerControl découvre les sondes au démarrage du plugin. Après l'ajout, le
+retrait ou le renommage d'un disque dans Unraid, redémarrer `coolercontrold`
+pour renouveler cette liste.
+
 Pour diagnostiquer le service :
 
 ```sh

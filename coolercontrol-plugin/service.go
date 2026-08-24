@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	device "unraid-vsock-sensors/coolercontrol-plugin/gen/device_service"
@@ -55,7 +54,10 @@ func (s *unraidService) Health(context.Context, *device.HealthRequest) (*device.
 func (s *unraidService) ListDevices(context.Context, *device.ListDevicesRequest) (*device.ListDevicesResponse, error) {
 	state, err := s.fetch(s.cid, s.port)
 	if err != nil {
-		log.Printf("initial Unraid discovery failed: %v", err)
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	if state.Error != "" {
+		return nil, status.Error(codes.Unavailable, state.Error)
 	}
 	return &device.ListDevicesResponse{Devices: []*models.Device{makeDevice(state, s.cid, s.port)}}, nil
 }

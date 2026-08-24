@@ -99,6 +99,26 @@ func TestRealFetchErrorIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDiscoveryErrorDoesNotRegisterEmptyDevice(t *testing.T) {
+	for name, fetch := range map[string]func(uint32, uint32) (sensors.Response, error){
+		"transport": func(uint32, uint32) (sensors.Response, error) {
+			return sensors.Response{}, errors.New("transport failed")
+		},
+		"disks": func(uint32, uint32) (sensors.Response, error) {
+			return sensors.Response{Error: "disks.ini failed"}, nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service := newUnraidService(42, 19090)
+			service.fetch = fetch
+			_, err := service.ListDevices(context.Background(), &device.ListDevicesRequest{})
+			if status.Code(err) != codes.Unavailable {
+				t.Fatalf("got %v, want unavailable", err)
+			}
+		})
+	}
+}
+
 func TestDiskErrorDoesNotBlockHBAStatus(t *testing.T) {
 	service := newUnraidService(42, 19090)
 	service.fetch = func(uint32, uint32) (sensors.Response, error) {
