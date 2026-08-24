@@ -12,7 +12,7 @@ help: ## Affiche les commandes disponibles
 		/^[a-zA-Z0-9_-]+:.*## / { printf "  make %-16s %s\n", $$1, $$2 }' \
 		$(MAKEFILE_LIST)
 
-.PHONY: fmt tidy vet test check
+.PHONY: fmt tidy vet test check all
 
 fmt: ## Formate tous les fichiers Go
 	$(GO) fmt ./...
@@ -26,7 +26,9 @@ vet: ## Recherche les erreurs Go courantes
 test: ## Exécute tous les tests, y compris ceux du plugin
 	$(GO) test ./...
 
-check: vet test build plugin-package ## Vérifie le projet et crée le package du plugin
+check: vet test ## Vérifie le projet sans créer d'artefacts
+
+all: check build plugin-package ## Vérifie, compile et crée le package du plugin
 
 .PHONY: build
 
