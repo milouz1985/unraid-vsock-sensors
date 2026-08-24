@@ -76,9 +76,8 @@ func (s *unraidService) Status(_ context.Context, request *device.StatusRequest)
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
-	if state.Error != "" {
-		return nil, status.Error(codes.Unavailable, state.Error)
-	}
+	// Disk and HBA collection fail independently. Return every available
+	// reading so one source cannot hide valid sensors from CoolerControl.
 	return &device.StatusResponse{Status: makeStatus(state)}, nil
 }
 

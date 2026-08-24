@@ -99,6 +99,26 @@ func TestRealFetchErrorIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDiskErrorDoesNotBlockHBAStatus(t *testing.T) {
+	service := newUnraidService(42, 19090)
+	service.fetch = func(uint32, uint32) (sensors.Response, error) {
+		return sensors.Response{
+			Error: "disks.ini failed",
+			HBAs:  []sensors.HBA{{Name: "hba0", Temp: 46}},
+		}, nil
+	}
+	reply, err := service.Status(context.Background(), &device.StatusRequest{DeviceId: deviceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reply.Status) != 1 || reply.Status[0].Id != "hba-hba0" {
+		t.Fatalf("unexpected status: %#v", reply.Status)
+	}
+	if got := reply.Status[0].Metric.(*models.Status_Temp).Temp; got != 46 {
+		t.Fatalf("got HBA temperature %v, want 46", got)
+	}
+}
+
 func TestSensorID(t *testing.T) {
 	if got := sensorID("disk", "Cache Pool"); got != "disk-cache-pool" {
 		t.Fatalf("got %q", got)
