@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -175,13 +177,9 @@ func writeResponse(out io.Writer, r sensors.Response, selector string, all bool)
 			}
 			return fmt.Errorf("no available temperature for selector %q", selector)
 		}
-		max := selected[0].Temp
-		for _, sensor := range selected[1:] {
-			if sensor.Temp > max {
-				max = sensor.Temp
-			}
-		}
-		fmt.Fprintln(out, strconv.FormatFloat(max, 'f', -1, 64))
+		fmt.Fprintln(out, strconv.FormatFloat(maxTemperature(selected, func(hba sensors.HBA) float64 {
+			return hba.Temp
+		}), 'f', -1, 64))
 		return nil
 	}
 	if r.Error != "" {
@@ -191,12 +189,19 @@ func writeResponse(out io.Writer, r sensors.Response, selector string, all bool)
 	if len(selected) == 0 {
 		return fmt.Errorf("no available temperature for selector %q", selector)
 	}
-	max := selected[0].Temp
-	for _, d := range selected[1:] {
-		if d.Temp > max {
-			max = d.Temp
-		}
-	}
-	fmt.Fprintln(out, strconv.FormatFloat(max, 'f', -1, 64))
+	fmt.Fprintln(out, strconv.FormatFloat(maxTemperature(selected, func(disk sensors.Disk) float64 {
+		return disk.Temp
+	}), 'f', -1, 64))
 	return nil
+}
+
+// maxTemperature returns the highest temperature among items. The temperature
+// function lets it work with any sensor type by extracting its temperature.
+// Callers must pass a non-empty slice because slices.MaxFunc panics otherwise.
+func maxTemperature[T any](items []T, temperature func(T) float64) float64 {
+	// MaxFunc returns the item ordered last by this temperature comparison.
+	hottest := slices.MaxFunc(items, func(a, b T) int {
+		return cmp.Compare(temperature(a), temperature(b))
+	})
+	return temperature(hottest)
 }
