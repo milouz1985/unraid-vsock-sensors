@@ -16,6 +16,7 @@ type HBA struct {
 }
 
 type Response struct {
+	Version   string    `json:"version"`
 	Timestamp time.Time `json:"timestamp"`
 	Disks     []Disk    `json:"disks"`
 	HBAs      []HBA     `json:"hbas,omitempty"`

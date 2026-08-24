@@ -1,6 +1,6 @@
 id = "unraid-vsock-sensors-cc"
 type = "device"
-version = "0.1.0"
+version = "0.0.0-dev"
 description = "Températures des disques et contrôleurs HBA Unraid via AF_VSOCK."
 executable = "unraid-vsock-sensors-cc"
 address = "/tmp/unraid-vsock-sensors-cc.sock"

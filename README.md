@@ -30,6 +30,14 @@ make build
 
 Le binaire statique est créé dans `bin/unraid-vsock-sensors`.
 
+La version, dérivée du tag Git, est disponible dans le binaire et dans les
+réponses JSON du serveur :
+
+```sh
+unraid-vsock-sensors version
+unraid-vsock-sensors get --cid 42 --json
+```
+
 Le même binaire Linux amd64 peut être copié dans la VM et sur l'hôte. Go 1.25
 ou plus récent est nécessaire uniquement pour compiler.
 

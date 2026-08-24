@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,6 +100,33 @@ func TestJSONIncludesDiskError(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"error":"disks.ini failed"`) {
 		t.Fatalf("JSON response omitted the error: %s", out.String())
+	}
+}
+
+func TestServerResponseIncludesVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	if err := os.WriteFile(path, []byte("[disk1]\ndevice=sdb\ntemp=35\nrotational=1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		handle(server, path, newHBACollector(time.Minute))
+		close(done)
+	}()
+	if _, err := io.WriteString(client, "GET\n"); err != nil {
+		t.Fatal(err)
+	}
+	var response sensors.Response
+	if err := json.NewDecoder(client).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	<-done
+
+	if response.Version != version {
+		t.Fatalf("got version %q, want %q", response.Version, version)
 	}
 }
 

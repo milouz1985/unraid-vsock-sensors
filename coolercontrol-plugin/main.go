@@ -14,9 +14,10 @@ import (
 
 const (
 	serviceID  = "unraid-vsock-sensors-cc"
-	version    = "0.1.0"
 	socketPath = "/tmp/unraid-vsock-sensors-cc.sock"
 )
+
+var version = "dev"
 
 func main() {
 	path, err := configPath()

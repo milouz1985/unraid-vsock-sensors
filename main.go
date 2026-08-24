@@ -28,6 +28,8 @@ const (
 	requestTimeout = 3 * time.Second
 )
 
+var version = "dev"
+
 func main() {
 	// Keep stderr concise: service managers already add timestamps, while sensor
 	// values are written separately to stdout for cmd-based consumers.
@@ -41,6 +43,9 @@ func main() {
 		err = serve(os.Args[2:])
 	case "get":
 		err = get(os.Args[2:])
+	case "version", "--version":
+		fmt.Fprintln(os.Stdout, version)
+		return
 	default:
 		usage()
 	}
@@ -54,10 +59,12 @@ func usage() {
   %[1]s serve [options]
   %[1]s get [options] SELECTOR
   %[1]s get [options] --json
+  %[1]s version
 
 Commands:
   serve                     Serve sensor data over AF_VSOCK
   get                       Read sensor data from an AF_VSOCK server
+  version                   Print the build version
 
 Serve options:
   --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
@@ -96,7 +103,7 @@ func serve(args []string) error {
 		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
 	}
 	defer listener.Close()
-	log.Printf("listening on vsock port %d", *port)
+	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	hbas := newHBACollector(*storcliCache)
@@ -136,7 +143,7 @@ func handle(conn net.Conn, path string, collector *hbaCollector) {
 		return
 	}
 	disks, err := readDisks(path)
-	r := sensors.Response{Timestamp: time.Now().UTC(), Disks: disks}
+	r := sensors.Response{Version: version, Timestamp: time.Now().UTC(), Disks: disks}
 	if err != nil {
 		r.Error = err.Error()
 	}

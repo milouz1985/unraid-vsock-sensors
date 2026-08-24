@@ -8,7 +8,7 @@ read_config_value() { sed -nE "s/.*\"$1\"[[:space:]]*:[[:space:]]*([0-9]+).*/\\1
 validate_number() {
     local name="$1" value="$2" minimum="$3"
     [[ "$value" =~ ^[0-9]+$ ]] || fail "$name invalide : $value" 2
-    (( 10#$value >= minimum && 10#$value <= 4294967295 )) || fail "$name doit être compris entre $minimum et 4294967295" 2
+    (( 10#$value >= minimum && 10#$value <= 4294967294 )) || fail "$name doit être compris entre $minimum et 4294967294" 2
 }
 
 install_file() {

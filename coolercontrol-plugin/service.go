@@ -104,12 +104,16 @@ func makeDevice(state sensors.Response, cid, port uint32) *models.Device {
 	}
 
 	location := fmt.Sprintf("vsock:%d:%d", cid, port)
+	driverInfo := &models.DriverInfo{Name: pointer("unraid-vsock-sensors"), Locations: []string{location}}
+	if state.Version != "" {
+		driverInfo.Version = pointer(state.Version)
+	}
 	return &models.Device{
 		Id: deviceID, Name: "Unraid Storage", UidInfo: pointer(location),
 		Info: &models.DeviceInfo{
 			Channels: map[string]*models.ChannelInfo{}, Temps: temps,
 			TempMin: pointer(0.0), TempMax: pointer(100.0), Model: pointer("Unraid disks and HBAs over AF_VSOCK"),
-			DriverInfo: &models.DriverInfo{Name: pointer("unraid-vsock-sensors"), Version: pointer(version), Locations: []string{location}},
+			DriverInfo: driverInfo,
 		},
 	}
 }

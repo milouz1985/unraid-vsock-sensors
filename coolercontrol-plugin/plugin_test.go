@@ -21,6 +21,7 @@ import (
 
 func sampleResponse() sensors.Response {
 	return sensors.Response{
+		Version: "server-test-version",
 		Disks: []sensors.Disk{
 			{Name: "disk1", Device: "sdb", Transport: "ata", Rotational: true, Temp: 35},
 			{Name: "disk2", Device: "sdc", Transport: "ata", Rotational: true, Temp: 0},
@@ -45,7 +46,8 @@ func TestGroupMaximumAndSleepingDisk(t *testing.T) {
 }
 
 func TestDeviceListsIndividualSensors(t *testing.T) {
-	temps := makeDevice(sampleResponse(), 42, 19090).Info.Temps
+	device := makeDevice(sampleResponse(), 42, 19090)
+	temps := device.Info.Temps
 	if temps["disk-disk1"] == nil || temps["hba-hba0"] == nil {
 		t.Fatalf("missing individual sensors: %#v", temps)
 	}
@@ -57,6 +59,17 @@ func TestDeviceListsIndividualSensors(t *testing.T) {
 	}
 	if temps["hdd"] == nil || temps["nvme"] != nil || temps["ssd"] != nil {
 		t.Fatalf("unexpected family aggregates: %#v", temps)
+	}
+	if device.Info.DriverInfo.Version == nil || *device.Info.DriverInfo.Version != "server-test-version" {
+		t.Fatalf("unexpected server version: %#v", device.Info.DriverInfo.Version)
+	}
+}
+
+func TestDeviceOmitsUnknownServerVersion(t *testing.T) {
+	state := sampleResponse()
+	state.Version = ""
+	if version := makeDevice(state, 42, 19090).Info.DriverInfo.Version; version != nil {
+		t.Fatalf("unexpected server version: %q", *version)
 	}
 }
 
@@ -112,7 +125,7 @@ func TestGRPCHealthEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reply.Name != serviceID || reply.Status != device.HealthResponse_STATUS_OK {
+	if reply.Name != serviceID || reply.Version != version || reply.Status != device.HealthResponse_STATUS_OK {
 		t.Fatalf("unexpected health response: %#v", reply)
 	}
 }
