@@ -38,6 +38,10 @@ func readDisks(path string) ([]sensors.Disk, error) {
 			if strings.TrimSpace(section.Key("spundown").String()) != "1" {
 				return nil, fmt.Errorf("disk %q temperature unavailable while not spun down", name)
 			}
+			// Report a spun-down disk as 0°C instead of omitting its sensor.
+			// CoolerControl treats repeated missing readings as a sensor failure and
+			// eventually substitutes its 100°C failsafe value, which could drive a
+			// fan curve to maximum while the disk is intentionally asleep.
 		} else {
 			temp, err = strconv.ParseFloat(rawTemp, 64)
 			if err != nil {
