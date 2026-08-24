@@ -42,12 +42,10 @@ cd unraid-vsock-sensors-cc-0.1.0-linux-amd64
 sudo systemctl restart coolercontrold
 ```
 
-La version d'un package officiel provient du tag Git courant. Par exemple :
-
-```sh
-git tag -a v0.1.0 -m "Release v0.1.0"
-make plugin-package
-```
+La version d'un package officiel provient du tag Git courant. La création et
+la publication du tag sont documentées dans la section
+[`Versionner une release`](../README.md#versionner-une-release) du README
+principal.
 
 En dehors d'un tag exact, le build reçoit automatiquement une version de
 développement contenant le nombre de commits et le hash Git. `VERSION=0.1.0`

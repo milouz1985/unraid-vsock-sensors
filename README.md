@@ -41,6 +41,16 @@ unraid-vsock-sensors get --cid 42 --json
 Le même binaire Linux amd64 peut être copié dans la VM et sur l'hôte. Go 1.25
 ou plus récent est nécessaire uniquement pour compiler.
 
+## Versionner une release
+
+Une fois les changements commités et le dépôt propre, créer un tag annoté puis
+pousser la branche et les tags associés :
+
+```sh
+git tag -a v0.1.1 -m "Release v0.1.1"
+git push --follow-tags
+```
+
 ## Ajouter vsock à la VM Proxmox
 
 Choisir un CID unique (exemple : `42`) et ajouter le périphérique QEMU à la VM :
