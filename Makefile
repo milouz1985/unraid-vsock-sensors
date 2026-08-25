@@ -35,12 +35,12 @@ all: check build plugin-package ## Vérifie, compile et crée le package du plug
 .PHONY: build
 
 build: ## Compile un binaire Linux statique
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) .
+	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) .
 
 .PHONY: plugin-build plugin-test plugin-generate plugin-package
 
-plugin-build: ## Compile le plugin CoolerControl
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(PLUGIN_BINARY) ./coolercontrol-plugin
+plugin-build: ## Compile le plugin CoolerControl pour Linux
+	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(PLUGIN_BINARY) ./coolercontrol-plugin
 
 plugin-test: ## Teste le plugin CoolerControl
 	$(GO) test ./coolercontrol-plugin/...
