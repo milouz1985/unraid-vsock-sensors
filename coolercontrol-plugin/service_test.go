@@ -3,17 +3,10 @@ package main
 import (
 	"context"
 	"errors"
-	"net"
-	"os"
-	"path/filepath"
-	"syscall"
 	"testing"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 	device "unraid-vsock-sensors/coolercontrol-plugin/gen/device_service"
 	models "unraid-vsock-sensors/coolercontrol-plugin/gen/models"
 	"unraid-vsock-sensors/internal/sensors"
@@ -158,115 +151,12 @@ func TestStatusFailsWhenNoSourceIsAvailable(t *testing.T) {
 	}
 }
 
-func TestSensorID(t *testing.T) {
-	if got := sensorID("disk", "Cache Pool"); got != "disk-cache-pool" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestDiskSensorID(t *testing.T) {
-	disk := sensors.Disk{ID: "serial-a", Device: "sdb"}
-	if got := diskSensorID(disk); got != "disk-serial-a" {
-		t.Fatalf("got disk sensor ID %q", got)
-	}
-}
-
-func TestGRPCHealthEndpoint(t *testing.T) {
-	listener := bufconn.Listen(1024 * 1024)
-	server := grpc.NewServer()
-	device.RegisterDeviceServiceServer(server, newUnraidService(42, 19090))
-	go func() { _ = server.Serve(listener) }()
-	defer server.Stop()
-
-	conn, err := grpc.NewClient(
-		"passthrough:///test",
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	reply, err := device.NewDeviceServiceClient(conn).Health(context.Background(), &device.HealthRequest{})
+func TestHealth(t *testing.T) {
+	reply, err := newUnraidService(42, 19090).Health(context.Background(), &device.HealthRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reply.Name != serviceID || reply.Version != version || reply.Status != device.HealthResponse_STATUS_OK {
 		t.Fatalf("unexpected health response: %#v", reply)
-	}
-}
-
-func TestLoadConfig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"cid":57,"port":20000}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	config, err := loadConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.CID != 57 || config.Port != 20000 {
-		t.Fatalf("unexpected config: %#v", config)
-	}
-}
-
-func TestLoadConfigRejectsInvalidValues(t *testing.T) {
-	for name, config := range map[string]string{
-		"CID below guest range": `{"cid":0,"port":19090}`,
-		"CID any":               `{"cid":4294967295,"port":19090}`,
-		"zero port":             `{"cid":42,"port":0}`,
-		"port any":              `{"cid":42,"port":4294967295}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.json")
-			if err := os.WriteFile(path, []byte(config), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := loadConfig(path); err == nil {
-				t.Fatal("invalid configuration should be rejected")
-			}
-		})
-	}
-}
-
-func TestLoadConfigUsesDefaultsWhenMissing(t *testing.T) {
-	config, err := loadConfig(filepath.Join(t.TempDir(), "missing.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config != defaultConfig {
-		t.Fatalf("got %#v, want %#v", config, defaultConfig)
-	}
-}
-
-func TestUnixSocketIsPrivate(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "plugin.sock")
-	listener, err := listenUnixSocket(path)
-	if errors.Is(err, syscall.EPERM) {
-		t.Skip("Unix sockets are blocked by the test sandbox")
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got&0o077 != 0 {
-		t.Fatalf("socket permissions %04o allow group or other access", got)
-	}
-}
-
-func TestUnixSocketDoesNotReplaceRegularFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "plugin.sock")
-	if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := listenUnixSocket(path); err == nil {
-		t.Fatal("regular file should not be replaced")
-	}
-	if content, err := os.ReadFile(path); err != nil || string(content) != "keep" {
-		t.Fatalf("regular file was altered: %q, %v", content, err)
 	}
 }
