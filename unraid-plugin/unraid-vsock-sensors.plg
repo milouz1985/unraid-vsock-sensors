@@ -2,23 +2,27 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "unraid-vsock-sensors">
 <!ENTITY author "francois">
-<!ENTITY version "0.1.3">
+<!ENTITY version "0.1.4">
 <!ENTITY pluginURL "https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg">
-<!ENTITY package "unraid-vsock-sensors-0.1.3-x86_64-1.txz">
-<!ENTITY packageURL "https://git.lan.home/francois/unraid-vsock-sensors/releases/download/v0.1.3/unraid-vsock-sensors-0.1.3-x86_64-1.txz">
-<!ENTITY packageMD5 "974d1d525d5f7a1e133d0f30a2c61381">
-<!ENTITY packageSHA256 "094ee76abcbaa1d8a41bea469547ebca911815c6a4ed8831b2da8300e131e425">
+<!ENTITY package "unraid-vsock-sensors-0.1.4-x86_64-1.txz">
+<!ENTITY packageURL "https://git.lan.home/francois/unraid-vsock-sensors/releases/download/v0.1.4/unraid-vsock-sensors-0.1.4-x86_64-1.txz">
+<!ENTITY packageMD5 "cbcc5510829804b078fbbe2100d377f5">
+<!ENTITY packageSHA256 "3aed16cb1e12a5262ecf9a6acd22b3acd56f410371081d684649c8d5003c241e">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
 ]>
 
 <PLUGIN name="&name;" author="&author;" version="&version;"
         pluginURL="&pluginURL;" launch="UnraidVsockSensors"
-        min="6.12.0" icon="hdd-o">
+        min="6.12.0" icon="fan">
+<DESCRIPTION>
+Exposes cached Unraid disk and HBA temperatures over AF_VSOCK to Proxmox
+guests and the CoolerControl plugin without waking sleeping disks.
+</DESCRIPTION>
 <CHANGES>
 ### &version;
 
 - Package the VSOCK sensor server as an Unraid plugin.
-- Add service status, version, restart, port and StorCLI cache settings.
+- Add service status, version, start, stop, restart, port and StorCLI cache settings.
 </CHANGES>
 
 <FILE Name="&cfgdir;/&package;" Run="/sbin/upgradepkg --install-new --reinstall">
@@ -33,7 +37,7 @@ set -e
 name="unraid-vsock-sensors"
 cfgdir="/boot/config/plugins/$name"
 mkdir -p "$cfgdir"
-find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-0.1.3-x86_64-1.txz" -delete 2>/dev/null || true
+find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-0.1.4-x86_64-1.txz" -delete 2>/dev/null || true
 if [[ ! -f "$cfgdir/$name.cfg" ]]; then
     install -m 0644 "/usr/local/emhttp/plugins/$name/default.cfg" "$cfgdir/$name.cfg"
 fi
