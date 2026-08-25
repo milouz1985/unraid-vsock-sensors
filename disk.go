@@ -50,6 +50,7 @@ func readDisks(path string) ([]sensors.Disk, error) {
 				return nil, fmt.Errorf("disk %q has invalid temperature %q", name, rawTemp)
 			}
 		}
+		// Unraid writes rotational as 0 or 1 in disks.ini, so trust its value.
 		rotational, _ := section.Key("rotational").Bool()
 		result = append(result, sensors.Disk{
 			ID:         id,
