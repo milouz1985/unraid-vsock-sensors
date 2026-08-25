@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	device "unraid-vsock-sensors/coolercontrol-plugin/gen/device_service"
@@ -86,9 +87,24 @@ func (s *unraidService) Status(ctx context.Context, request *device.StatusReques
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
+	readings := makeStatus(state)
+	if len(readings) == 0 {
+		// TODO: Expose disks and HBAs as separate CoolerControl devices so each
+		// source can report Unavailable independently.
+		var failures []string
+		if state.Error != "" {
+			failures = append(failures, "disks: "+state.Error)
+		}
+		if state.HBAError != "" {
+			failures = append(failures, "HBA: "+state.HBAError)
+		}
+		if len(failures) > 0 {
+			return nil, status.Error(codes.Unavailable, strings.Join(failures, "; "))
+		}
+	}
 	// Disk and HBA collection fail independently. Return every available
 	// reading so one source cannot hide valid sensors from CoolerControl.
-	return &device.StatusResponse{Status: makeStatus(state)}, nil
+	return &device.StatusResponse{Status: readings}, nil
 }
 
 func makeDevice(state sensors.Response, cid, port uint32) *models.Device {

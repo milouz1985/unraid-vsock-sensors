@@ -139,6 +139,25 @@ func TestDiskErrorDoesNotBlockHBAStatus(t *testing.T) {
 	}
 }
 
+func TestStatusFailsWhenNoSourceIsAvailable(t *testing.T) {
+	for name, state := range map[string]sensors.Response{
+		"disks": {Error: "disks.ini failed"},
+		"HBA":   {HBAError: "storcli failed"},
+		"both":  {Error: "disks.ini failed", HBAError: "storcli failed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service := newUnraidService(42, 19090)
+			service.fetch = func(context.Context, uint32, uint32) (sensors.Response, error) {
+				return state, nil
+			}
+			_, err := service.Status(context.Background(), &device.StatusRequest{DeviceId: deviceID})
+			if status.Code(err) != codes.Unavailable {
+				t.Fatalf("got %v, want unavailable", err)
+			}
+		})
+	}
+}
+
 func TestSensorID(t *testing.T) {
 	if got := sensorID("disk", "Cache Pool"); got != "disk-cache-pool" {
 		t.Fatalf("got %q", got)
