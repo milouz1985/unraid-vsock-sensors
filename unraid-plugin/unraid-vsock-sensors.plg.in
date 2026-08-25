@@ -12,8 +12,8 @@
 ]>
 
 <PLUGIN name="&name;" author="&author;" version="&version;"
-        pluginURL="&pluginURL;" launch="UnraidVsockSensors"
-        min="6.12.0" icon="fan">
+        pluginURL="&pluginURL;" launch="Settings/UnraidVsockSensors"
+        min="6.12.0" icon="refresh">
 <DESCRIPTION>
 Exposes cached Unraid disk and HBA temperatures over AF_VSOCK to Proxmox
 guests and the CoolerControl plugin without waking sleeping disks.
