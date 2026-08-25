@@ -30,7 +30,7 @@ test: ## Exécute tous les tests, y compris ceux du plugin
 
 check: vet test ## Vérifie le projet sans créer d'artefacts
 
-all: check build plugin-package ## Vérifie, compile et crée le package du plugin
+all: check build plugin-package unraid-package ## Vérifie, compile et crée les packages CoolerControl et Unraid
 
 .PHONY: build
 

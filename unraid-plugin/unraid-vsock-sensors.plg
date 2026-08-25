@@ -1,0 +1,55 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name "unraid-vsock-sensors">
+<!ENTITY author "francois">
+<!ENTITY version "0.1.2-dev.1.g1d7a6c56cf06">
+<!ENTITY pluginURL "https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg">
+<!ENTITY package "unraid-vsock-sensors-0.1.2_dev.1.g1d7a6c56cf06-x86_64-1.txz">
+<!ENTITY packageURL "https://git.lan.home/francois/unraid-vsock-sensors/releases/download/v0.1.2-dev.1.g1d7a6c56cf06/unraid-vsock-sensors-0.1.2_dev.1.g1d7a6c56cf06-x86_64-1.txz">
+<!ENTITY packageMD5 "db048eb199eceae88c4f8521da564898">
+<!ENTITY packageSHA256 "cbef5d2294366173cf22f719249ef25fcccb1de6526b9c45ed5c7a6ccfcca12a">
+<!ENTITY cfgdir "/boot/config/plugins/&name;">
+]>
+
+<PLUGIN name="&name;" author="&author;" version="&version;"
+        pluginURL="&pluginURL;" launch="UnraidVsockSensors"
+        min="6.12.0" icon="hdd-o">
+<CHANGES>
+### &version;
+
+- Package the VSOCK sensor server as an Unraid plugin.
+- Add service status, version, restart, port and StorCLI cache settings.
+</CHANGES>
+
+<FILE Name="&cfgdir;/&package;" Run="/sbin/upgradepkg --install-new --reinstall">
+<URL>&packageURL;</URL>
+<MD5>&packageMD5;</MD5>
+<SHA256>&packageSHA256;</SHA256>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE><![CDATA[
+set -e
+name="unraid-vsock-sensors"
+cfgdir="/boot/config/plugins/$name"
+mkdir -p "$cfgdir"
+find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-0.1.2_dev.1.g1d7a6c56cf06-x86_64-1.txz" -delete 2>/dev/null || true
+if [[ ! -f "$cfgdir/$name.cfg" ]]; then
+    install -m 0644 "/usr/local/emhttp/plugins/$name/default.cfg" "$cfgdir/$name.cfg"
+fi
+chmod 0755 "/etc/rc.d/rc.$name"
+"/etc/rc.d/rc.$name" restart
+]]></INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE><![CDATA[
+name="unraid-vsock-sensors"
+cfgdir="/boot/config/plugins/$name"
+"/etc/rc.d/rc.$name" stop 2>/dev/null || true
+/sbin/removepkg "$name" >/dev/null 2>&1 || true
+rm -f "$cfgdir/$name.cfg" "$cfgdir"/$name-*.txz
+rmdir "$cfgdir" 2>/dev/null || true
+]]></INLINE>
+</FILE>
+</PLUGIN>

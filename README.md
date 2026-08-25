@@ -43,18 +43,23 @@ ou plus récent est nécessaire uniquement pour compiler.
 
 ## Versionner une release
 
-Pour une release qui inclut le plugin Unraid, générer d'abord son descripteur,
-le commiter, puis créer le tag :
+Pour une release qui inclut le plugin Unraid, partir d'un commit propre, le
+taguer, puis générer le package et commiter son descripteur :
 
 ```sh
-VERSION=0.1.3 make unraid-package
-git add unraid-plugin/unraid-vsock-sensors.plg
-git commit -m "Prépare la release 0.1.3"
 git tag -a v0.1.3 -m "Release v0.1.3"
-git push --follow-tags
+make unraid-package
+git add unraid-plugin/unraid-vsock-sensors.plg
+git commit -m "Publie le descripteur Unraid 0.1.3"
+git push origin main v0.1.3
 ```
 
-Créer ensuite la release `v0.1.3` dans Forgejo et y joindre le fichier `.txz`
+Le tag doit être créé depuis un arbre de travail propre. `make unraid-package`
+en dérive automatiquement la version ; `VERSION` n'est utile que pour construire
+hors d'un dépôt Git. La commande modifie ensuite le descripteur `.plg`, d'où son
+commit après la création du tag.
+
+Créer ensuite la release `v0.1.3` dans Gitea et y joindre le fichier `.txz`
 présent dans `dist/`. Le `.plg` commité fournit à Unraid une URL stable pour
 l'installation et les mises à jour.
 
@@ -79,7 +84,7 @@ l'intervalle du cache StorCLI.
 Construire les deux fichiers à publier :
 
 ```sh
-VERSION=0.1.3 make unraid-package
+make unraid-package
 ```
 
 La commande produit dans `dist/` :
