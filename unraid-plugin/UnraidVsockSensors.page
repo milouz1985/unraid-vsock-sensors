@@ -1,6 +1,6 @@
 Menu="Settings"
 Title="Unraid VSOCK Sensors"
-Icon="icon-hdd"
+Icon="fan"
 ---
 <?php
 $plugin = 'unraid-vsock-sensors';
@@ -26,11 +26,16 @@ _(Status)_:
 _(Version)_:
 : <?=htmlspecialchars($version, ENT_QUOTES)?>
 
-<form method="POST" action="/update.php" target="progressFrame">
+<form markdown="1" method="POST" action="/update.php" target="progressFrame">
 <input type="hidden" name="#command" value="/etc/rc.d/rc.unraid-vsock-sensors">
-<input type="hidden" name="#arg[1]" value="restart">
 
-: <input type="submit" value="_(Restart)_">
+_(Actions)_:
+: <?php if ($running): ?>
+  <button type="submit" name="#arg[1]" value="stop">_(Stop)_</button>
+  <button type="submit" name="#arg[1]" value="restart">_(Restart)_</button>
+  <?php else: ?>
+  <button type="submit" name="#arg[1]" value="start">_(Start)_</button>
+  <?php endif; ?>
 </form>
 
 ### Configuration

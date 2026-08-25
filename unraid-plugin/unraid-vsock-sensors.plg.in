@@ -13,12 +13,16 @@
 
 <PLUGIN name="&name;" author="&author;" version="&version;"
         pluginURL="&pluginURL;" launch="UnraidVsockSensors"
-        min="6.12.0" icon="hdd-o">
+        min="6.12.0" icon="fan">
+<DESCRIPTION>
+Exposes cached Unraid disk and HBA temperatures over AF_VSOCK to Proxmox
+guests and the CoolerControl plugin without waking sleeping disks.
+</DESCRIPTION>
 <CHANGES>
 ### &version;
 
 - Package the VSOCK sensor server as an Unraid plugin.
-- Add service status, version, restart, port and StorCLI cache settings.
+- Add service status, version, start, stop, restart, port and StorCLI cache settings.
 </CHANGES>
 
 <FILE Name="&cfgdir;/&package;" Run="/sbin/upgradepkg --install-new --reinstall">
