@@ -118,7 +118,7 @@ func makeDevice(state sensors.Response, cid, port uint32) *models.Device {
 		number++
 	}
 	for _, disk := range state.Disks {
-		temps[sensorID("disk", disk.Name)] = &models.TempInfo{
+		temps[diskSensorID(disk)] = &models.TempInfo{
 			Label: fmt.Sprintf("%s (%s)", disk.Name, disk.Device), Number: number,
 		}
 		number++
@@ -164,7 +164,7 @@ func makeStatus(state sensors.Response) []*models.Status {
 		addDiskMaximum(group)
 	}
 	for _, disk := range state.Disks {
-		result = append(result, tempStatus(sensorID("disk", disk.Name), disk.Temp))
+		result = append(result, tempStatus(diskSensorID(disk), disk.Temp))
 	}
 	// The Unraid server deliberately keeps the last valid HBA readings through
 	// two transient StorCLI failures. Publish every reading it still provides;

@@ -21,18 +21,21 @@ func TestReadAndSelect(t *testing.T) {
 	data := strings.ReplaceAll(strings.TrimSpace(`
 		["disk1"]
 		name="disk1"
+		id="WDC_disk1_serial"
 		device="sdb"
 		temp="35"
 		rotational="1"
 		transport="ata"
 
 		["fast"]
+		id="NVME_fast_serial"
 		device="nvme0n1"
 		temp="48"
 		rotational="0"
 		transport="nvme"
 
 		["disk2"]
+		id="WDC_disk2_serial"
 		device="sdc"
 		temp="*"
 		rotational="1"
@@ -61,6 +64,9 @@ func TestReadAndSelect(t *testing.T) {
 	if len(disks) != 3 {
 		t.Fatalf("got %d disks", len(disks))
 	}
+	if disks[0].ID != "WDC_disk1_serial" {
+		t.Fatalf("got disk ID %q", disks[0].ID)
+	}
 	if got := selectDisks(disks, "hdd"); len(got) != 2 || got[0].Temp != 35 || got[1].Temp != 0 {
 		t.Fatalf("hdd: %#v", got)
 	}
@@ -76,7 +82,7 @@ func TestReadDisksRejectsInvalidTemperature(t *testing.T) {
 	for _, temperature := range []string{"broken", "NaN", "+Inf", "-Inf"} {
 		t.Run(temperature, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), "disks.ini")
-			data := "[disk1]\ndevice=sdb\ntemp=" + temperature + "\nrotational=1\n"
+			data := "[disk1]\nid=serial\ndevice=sdb\ntemp=" + temperature + "\nrotational=1\n"
 			if err := os.WriteFile(p, []byte(data), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +95,7 @@ func TestReadDisksRejectsInvalidTemperature(t *testing.T) {
 
 func TestReadDisksRejectsMissingTemperatureOnActiveDisk(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "disks.ini")
-	if err := os.WriteFile(p, []byte("[disk1]\ndevice=sdb\ntemp=*\nrotational=1\nspundown=0\n"), 0600); err != nil {
+	if err := os.WriteFile(p, []byte("[disk1]\nid=serial\ndevice=sdb\ntemp=*\nrotational=1\nspundown=0\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readDisks(p); err == nil {
@@ -140,7 +146,7 @@ func TestValidateVsockAddresses(t *testing.T) {
 
 func TestServerResponseIncludesVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "disks.ini")
-	if err := os.WriteFile(path, []byte("[disk1]\ndevice=sdb\ntemp=35\nrotational=1\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("[disk1]\nid=serial\ndevice=sdb\ntemp=35\nrotational=1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 

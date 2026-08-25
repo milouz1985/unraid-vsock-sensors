@@ -3,6 +3,7 @@ package sensors
 import "time"
 
 type Disk struct {
+	ID         string  `json:"id"`
 	Name       string  `json:"name"`
 	Device     string  `json:"device"`
 	Transport  string  `json:"transport,omitempty"`

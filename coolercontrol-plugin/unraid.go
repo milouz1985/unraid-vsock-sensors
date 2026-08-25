@@ -20,6 +20,10 @@ func sensorID(prefix, name string) string {
 	return id.String()
 }
 
+func diskSensorID(disk sensors.Disk) string {
+	return "disk-" + disk.ID
+}
+
 func isNVMe(d sensors.Disk) bool {
 	return strings.EqualFold(d.Transport, "nvme") || strings.HasPrefix(d.Device, "nvme")
 }

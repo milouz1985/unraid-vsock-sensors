@@ -25,11 +25,12 @@ func readDisks(path string) ([]sensors.Disk, error) {
 			continue
 		}
 		name := strings.Trim(section.Name(), "\"")
+		id := strings.TrimSpace(section.Key("id").String())
 		device := strings.TrimSpace(section.Key("device").String())
 		status := strings.TrimSpace(section.Key("status").String())
 		// disks.ini contains sections for every possible array slot, including
 		// unassigned DISK_NP entries, plus the Unraid boot flash device.
-		if device == "" || strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") {
+		if id == "" || device == "" || strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") {
 			continue
 		}
 
@@ -51,6 +52,7 @@ func readDisks(path string) ([]sensors.Disk, error) {
 		}
 		rotational, _ := section.Key("rotational").Bool()
 		result = append(result, sensors.Disk{
+			ID:         id,
 			Name:       name,
 			Device:     device,
 			Transport:  strings.ToLower(section.Key("transport").String()),

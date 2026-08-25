@@ -23,9 +23,9 @@ func sampleResponse() sensors.Response {
 	return sensors.Response{
 		Version: "server-test-version",
 		Disks: []sensors.Disk{
-			{Name: "disk1", Device: "sdb", Transport: "ata", Rotational: true, Temp: 35},
-			{Name: "disk2", Device: "sdc", Transport: "ata", Rotational: true, Temp: 0},
-			{Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 48},
+			{ID: "serial-disk1", Name: "disk1", Device: "sdb", Transport: "ata", Rotational: true, Temp: 35},
+			{ID: "serial-disk2", Name: "disk2", Device: "sdc", Transport: "ata", Rotational: true, Temp: 0},
+			{ID: "serial-cache", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 48},
 		},
 		HBAs: []sensors.HBA{{Name: "hba0", Temp: 49}},
 	}
@@ -37,7 +37,7 @@ func TestGroupMaximumAndSleepingDisk(t *testing.T) {
 	for _, reading := range readings {
 		values[reading.Id] = reading.Metric.(*models.Status_Temp).Temp
 	}
-	if values["hdd"] != 35 || values["disk-disk2"] != 0 || values["disk-cache"] != 48 {
+	if values["hdd"] != 35 || values["disk-serial-disk2"] != 0 || values["disk-serial-cache"] != 48 {
 		t.Fatalf("unexpected readings: %#v", values)
 	}
 	if _, exists := values["nvme"]; exists {
@@ -48,7 +48,7 @@ func TestGroupMaximumAndSleepingDisk(t *testing.T) {
 func TestDeviceListsIndividualSensors(t *testing.T) {
 	device := makeDevice(sampleResponse(), 42, 19090)
 	temps := device.Info.Temps
-	if temps["disk-disk1"] == nil || temps["hba-hba0"] == nil {
+	if temps["disk-serial-disk1"] == nil || temps["hba-hba0"] == nil {
 		t.Fatalf("missing individual sensors: %#v", temps)
 	}
 	if temps["hba"] != nil {
@@ -161,6 +161,13 @@ func TestStatusFailsWhenNoSourceIsAvailable(t *testing.T) {
 func TestSensorID(t *testing.T) {
 	if got := sensorID("disk", "Cache Pool"); got != "disk-cache-pool" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestDiskSensorID(t *testing.T) {
+	disk := sensors.Disk{ID: "serial-a", Device: "sdb"}
+	if got := diskSensorID(disk); got != "disk-serial-a" {
+		t.Fatalf("got disk sensor ID %q", got)
 	}
 }
 
