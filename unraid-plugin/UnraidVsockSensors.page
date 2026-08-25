@@ -27,7 +27,7 @@ _(Version)_:
 : <?=htmlspecialchars($version, ENT_QUOTES)?>
 
 <form markdown="1" method="POST" action="/update.php" target="progressFrame">
-<input type="hidden" name="#command" value="/etc/rc.d/rc.unraid-vsock-sensors">
+<input type="hidden" name="#command" value="/plugins/unraid-vsock-sensors/service.sh">
 
 _(Actions)_:
 : <?php if ($running): ?>
@@ -42,7 +42,7 @@ _(Actions)_:
 
 <form markdown="1" method="POST" action="/update.php" target="progressFrame">
 <input type="hidden" name="#file" value="unraid-vsock-sensors/unraid-vsock-sensors.cfg">
-<input type="hidden" name="#command" value="/etc/rc.d/rc.unraid-vsock-sensors">
+<input type="hidden" name="#command" value="/plugins/unraid-vsock-sensors/service.sh">
 <input type="hidden" name="#arg[1]" value="restart">
 
 _(VSOCK port)_:
