@@ -176,7 +176,9 @@ func get(args []string) error {
 	if err := validateVsockPort(*port); err != nil {
 		return err
 	}
-	r, err := sensors.Fetch(uint32(*cid), uint32(*port), requestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+	r, err := sensors.Fetch(ctx, uint32(*cid), uint32(*port))
 	if err != nil {
 		return err
 	}

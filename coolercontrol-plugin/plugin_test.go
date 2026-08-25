@@ -90,7 +90,7 @@ func TestTransientHBAErrorKeepsCachedReading(t *testing.T) {
 
 func TestRealFetchErrorIsUnavailable(t *testing.T) {
 	service := newUnraidService(42, 19090)
-	service.fetch = func(uint32, uint32) (sensors.Response, error) {
+	service.fetch = func(context.Context, uint32, uint32) (sensors.Response, error) {
 		return sensors.Response{}, errors.New("transport failed")
 	}
 	_, err := service.Status(context.Background(), &device.StatusRequest{DeviceId: deviceID})
@@ -100,11 +100,11 @@ func TestRealFetchErrorIsUnavailable(t *testing.T) {
 }
 
 func TestDiscoveryErrorDoesNotRegisterEmptyDevice(t *testing.T) {
-	for name, fetch := range map[string]func(uint32, uint32) (sensors.Response, error){
-		"transport": func(uint32, uint32) (sensors.Response, error) {
+	for name, fetch := range map[string]func(context.Context, uint32, uint32) (sensors.Response, error){
+		"transport": func(context.Context, uint32, uint32) (sensors.Response, error) {
 			return sensors.Response{}, errors.New("transport failed")
 		},
-		"disks": func(uint32, uint32) (sensors.Response, error) {
+		"disks": func(context.Context, uint32, uint32) (sensors.Response, error) {
 			return sensors.Response{Error: "disks.ini failed"}, nil
 		},
 	} {
@@ -121,7 +121,7 @@ func TestDiscoveryErrorDoesNotRegisterEmptyDevice(t *testing.T) {
 
 func TestDiskErrorDoesNotBlockHBAStatus(t *testing.T) {
 	service := newUnraidService(42, 19090)
-	service.fetch = func(uint32, uint32) (sensors.Response, error) {
+	service.fetch = func(context.Context, uint32, uint32) (sensors.Response, error) {
 		return sensors.Response{
 			Error: "disks.ini failed",
 			HBAs:  []sensors.HBA{{Name: "hba0", Temp: 46}},

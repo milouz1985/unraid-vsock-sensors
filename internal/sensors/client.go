@@ -1,28 +1,51 @@
 package sensors
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"time"
 
-	"github.com/mdlayher/vsock"
+	"github.com/mdlayher/socket"
+	"golang.org/x/sys/unix"
 )
 
-func Fetch(cid, port uint32, timeout time.Duration) (Response, error) {
+func Fetch(ctx context.Context, cid, port uint32) (Response, error) {
 	var response Response
-	conn, err := vsock.Dial(cid, port, nil)
+	conn, err := dialContext(ctx, cid, port)
 	if err != nil {
 		return response, fmt.Errorf("connect to vsock %d:%d: %w", cid, port, err)
 	}
 	defer conn.Close()
-	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
-	if _, err := io.WriteString(conn, "GET\n"); err != nil {
-		return response, err
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return response, fmt.Errorf("set vsock deadline: %w", err)
+		}
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	// Moving the deadline to now interrupts a pending read or write on cancel.
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = conn.SetDeadline(time.Now())
+	})
+	defer stopCancel()
+
+	if _, err := io.WriteString(conn, "GET\n"); err != nil {
+		return response, fmt.Errorf("write Unraid request: %w", err)
+	}
 	if err := json.NewDecoder(io.LimitReader(conn, 1<<20)).Decode(&response); err != nil {
 		return response, fmt.Errorf("decode Unraid response: %w", err)
 	}
 	return response, nil
+}
+
+func dialContext(ctx context.Context, cid, port uint32) (*socket.Conn, error) {
+	conn, err := socket.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0, "vsock", nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Connect(ctx, &unix.SockaddrVM{CID: cid, Port: port}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }

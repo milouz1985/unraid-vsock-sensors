@@ -15,6 +15,8 @@ import (
 
 const deviceID = "unraid-storage"
 
+const vsockRequestTimeout = 3 * time.Second
+
 type diskGroup struct {
 	id    string
 	label string
@@ -32,14 +34,20 @@ type unraidService struct {
 	cid     uint32
 	port    uint32
 	started time.Time
-	fetch   func(uint32, uint32) (sensors.Response, error)
+	fetch   func(context.Context, uint32, uint32) (sensors.Response, error)
 }
 
 func newUnraidService(cid, port uint32) *unraidService {
 	return &unraidService{
 		cid: cid, port: port, started: time.Now(),
-		fetch: func(cid, port uint32) (sensors.Response, error) { return sensors.Fetch(cid, port, 3*time.Second) },
+		fetch: sensors.Fetch,
 	}
+}
+
+func (s *unraidService) fetchState(parent context.Context) (sensors.Response, error) {
+	ctx, cancel := context.WithTimeout(parent, vsockRequestTimeout)
+	defer cancel()
+	return s.fetch(ctx, s.cid, s.port)
 }
 
 func (s *unraidService) Health(context.Context, *device.HealthRequest) (*device.HealthResponse, error) {
@@ -51,8 +59,8 @@ func (s *unraidService) Health(context.Context, *device.HealthRequest) (*device.
 	}, nil
 }
 
-func (s *unraidService) ListDevices(context.Context, *device.ListDevicesRequest) (*device.ListDevicesResponse, error) {
-	state, err := s.fetch(s.cid, s.port)
+func (s *unraidService) ListDevices(ctx context.Context, _ *device.ListDevicesRequest) (*device.ListDevicesResponse, error) {
+	state, err := s.fetchState(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
@@ -70,11 +78,11 @@ func (s *unraidService) Shutdown(context.Context, *device.ShutdownRequest) (*dev
 	return &device.ShutdownResponse{}, nil
 }
 
-func (s *unraidService) Status(_ context.Context, request *device.StatusRequest) (*device.StatusResponse, error) {
+func (s *unraidService) Status(ctx context.Context, request *device.StatusRequest) (*device.StatusResponse, error) {
 	if request.DeviceId != deviceID {
 		return nil, status.Error(codes.NotFound, "unknown device")
 	}
-	state, err := s.fetch(s.cid, s.port)
+	state, err := s.fetchState(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
