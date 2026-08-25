@@ -4,7 +4,7 @@ GO ?= go
 BIN_DIR := bin
 BINARY := $(BIN_DIR)/unraid-vsock-sensors
 PLUGIN_BINARY := $(BIN_DIR)/unraid-vsock-sensors-cc
-VERSION = $(shell ./version.sh)
+VERSION ?= $(shell ./version.sh)
 LDFLAGS = -s -w -X main.version=$(VERSION)
 
 .PHONY: help
@@ -37,7 +37,7 @@ all: check build plugin-package ## Vérifie, compile et crée le package du plug
 build: ## Compile un binaire Linux statique
 	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) .
 
-.PHONY: plugin-build plugin-test plugin-generate plugin-package
+.PHONY: plugin-build plugin-test plugin-generate plugin-package unraid-package
 
 plugin-build: ## Compile le plugin CoolerControl pour Linux
 	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(PLUGIN_BINARY) ./coolercontrol-plugin
@@ -50,6 +50,9 @@ plugin-generate: ## Régénère les fichiers Go depuis le protocole CoolerContro
 
 plugin-package: ## Crée une archive du plugin installable sans Go ni Git
 	GO="$(GO)" VERSION="$(VERSION)" ./coolercontrol-plugin/package.sh
+
+unraid-package: ## Crée le plugin serveur installable dans Unraid
+	GO="$(GO)" VERSION="$(VERSION)" ./unraid-plugin/package.sh
 
 build plugin-build: | $(BIN_DIR)
 

@@ -43,13 +43,20 @@ ou plus récent est nécessaire uniquement pour compiler.
 
 ## Versionner une release
 
-Une fois les changements commités et le dépôt propre, créer un tag annoté puis
-pousser la branche et les tags associés :
+Pour une release qui inclut le plugin Unraid, générer d'abord son descripteur,
+le commiter, puis créer le tag :
 
 ```sh
-git tag -a v0.1.1 -m "Release v0.1.1"
+VERSION=0.1.3 make unraid-package
+git add unraid-plugin/unraid-vsock-sensors.plg
+git commit -m "Prépare la release 0.1.3"
+git tag -a v0.1.3 -m "Release v0.1.3"
 git push --follow-tags
 ```
+
+Créer ensuite la release `v0.1.3` dans Forgejo et y joindre le fichier `.txz`
+présent dans `dist/`. Le `.plg` commité fournit à Unraid une URL stable pour
+l'installation et les mises à jour.
 
 ## Ajouter vsock à la VM Proxmox
 
@@ -62,7 +69,38 @@ args: -device vhost-vsock-pci,guest-cid=42
 Si la VM possède déjà une ligne `args:`, y ajouter seulement l'option ci-dessus.
 Après redémarrage, vérifier `lsmod | grep vsock` dans les deux systèmes.
 
-## Exécuter dans Unraid
+## Plugin Unraid
+
+Le serveur peut être installé comme plugin natif depuis **Plugins → Install
+Plugin**. La page **Settings → Unraid VSOCK Sensors** affiche son état et sa
+version, permet de le redémarrer et configure le port VSOCK ainsi que
+l'intervalle du cache StorCLI.
+
+Construire les deux fichiers à publier :
+
+```sh
+VERSION=0.1.3 make unraid-package
+```
+
+La commande produit dans `dist/` :
+
+- `unraid-vsock-sensors-0.1.3-x86_64-1.txz`, le package serveur ;
+- `unraid-vsock-sensors.plg`, le descripteur à donner au gestionnaire de
+  plugins Unraid.
+
+Elle met également à jour `unraid-plugin/unraid-vsock-sensors.plg`, qui doit
+être commité sur la branche `main`. Le package `.txz` doit être joint à la
+release `v0.1.3` sur `git.lan.home`. Les URL peuvent être adaptées avec
+`REPOSITORY_URL`, `PLUGIN_URL` et `PACKAGE_URL` si l'emplacement de publication
+change.
+
+Installation avec l'URL stable du dépôt :
+
+```text
+https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg
+```
+
+## Exécuter manuellement dans Unraid
 
 ```sh
 unraid-vsock-sensors serve --port 19090
@@ -74,8 +112,8 @@ les 30 secondes par défaut. Les requêtes utilisent uniquement le dernier état
 en mémoire et n'attendent donc jamais StorCLI. `--storcli-cache 1m` ajuste
 l'intervalle de rafraîchissement.
 
-Le lancement persistant pourra être emballé dans un plugin Unraid ; pour un
-premier essai, le script de démarrage `/boot/config/go` suffit.
+Sans le plugin, le script de démarrage `/boot/config/go` peut servir pour un
+essai ponctuel.
 
 ## Interroger depuis Proxmox
 

@@ -1,0 +1,55 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name "unraid-vsock-sensors">
+<!ENTITY author "francois">
+<!ENTITY version "@VERSION@">
+<!ENTITY pluginURL "@PLUGIN_URL@">
+<!ENTITY package "@PACKAGE_NAME@">
+<!ENTITY packageURL "@PACKAGE_URL@">
+<!ENTITY packageMD5 "@PACKAGE_MD5@">
+<!ENTITY packageSHA256 "@PACKAGE_SHA256@">
+<!ENTITY cfgdir "/boot/config/plugins/&name;">
+]>
+
+<PLUGIN name="&name;" author="&author;" version="&version;"
+        pluginURL="&pluginURL;" launch="UnraidVsockSensors"
+        min="6.12.0" icon="hdd-o">
+<CHANGES>
+### &version;
+
+- Package the VSOCK sensor server as an Unraid plugin.
+- Add service status, version, restart, port and StorCLI cache settings.
+</CHANGES>
+
+<FILE Name="&cfgdir;/&package;" Run="/sbin/upgradepkg --install-new --reinstall">
+<URL>&packageURL;</URL>
+<MD5>&packageMD5;</MD5>
+<SHA256>&packageSHA256;</SHA256>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE><![CDATA[
+set -e
+name="unraid-vsock-sensors"
+cfgdir="/boot/config/plugins/$name"
+mkdir -p "$cfgdir"
+find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "@PACKAGE_NAME@" -delete 2>/dev/null || true
+if [[ ! -f "$cfgdir/$name.cfg" ]]; then
+    install -m 0644 "/usr/local/emhttp/plugins/$name/default.cfg" "$cfgdir/$name.cfg"
+fi
+chmod 0755 "/etc/rc.d/rc.$name"
+"/etc/rc.d/rc.$name" restart
+]]></INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE><![CDATA[
+name="unraid-vsock-sensors"
+cfgdir="/boot/config/plugins/$name"
+"/etc/rc.d/rc.$name" stop 2>/dev/null || true
+/sbin/removepkg "$name" >/dev/null 2>&1 || true
+rm -f "$cfgdir/$name.cfg" "$cfgdir"/$name-*.txz
+rmdir "$cfgdir" 2>/dev/null || true
+]]></INLINE>
+</FILE>
+</PLUGIN>

@@ -1,0 +1,11 @@
+unraid-vsock-sensors: unraid-vsock-sensors
+unraid-vsock-sensors:
+unraid-vsock-sensors: Exposes Unraid disk and HBA temperatures over AF_VSOCK.
+unraid-vsock-sensors: Disk temperatures come from Unraid's cache and do not wake drives.
+unraid-vsock-sensors:
+unraid-vsock-sensors: Project: https://git.lan.home/francois/unraid-vsock-sensors
+unraid-vsock-sensors:
+unraid-vsock-sensors:
+unraid-vsock-sensors:
+unraid-vsock-sensors:
+unraid-vsock-sensors:

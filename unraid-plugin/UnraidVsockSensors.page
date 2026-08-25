@@ -1,0 +1,61 @@
+Menu="Settings"
+Title="Unraid VSOCK Sensors"
+Icon="icon-hdd"
+---
+<?php
+$plugin = 'unraid-vsock-sensors';
+$cfg = parse_plugin_cfg($plugin);
+$port = htmlspecialchars($cfg['PORT'] ?? '19090', ENT_QUOTES);
+$cache = $cfg['STORCLI_CACHE'] ?? '30s';
+
+$statusOutput = [];
+exec('/etc/rc.d/rc.unraid-vsock-sensors status 2>/dev/null', $statusOutput, $statusCode);
+$running = $statusCode === 0;
+$status = $running ? implode(' ', $statusOutput) : 'stopped';
+$version = trim((string)shell_exec('/usr/local/sbin/unraid-vsock-sensors version 2>/dev/null'));
+if ($version === '') {
+    $version = 'unavailable';
+}
+?>
+
+### Service
+
+_(Status)_:
+: <span class="<?=$running ? 'green' : 'red'?>"><?=htmlspecialchars($status, ENT_QUOTES)?></span>
+
+_(Version)_:
+: <?=htmlspecialchars($version, ENT_QUOTES)?>
+
+<form method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#command" value="/etc/rc.d/rc.unraid-vsock-sensors">
+<input type="hidden" name="#arg[1]" value="restart">
+
+: <input type="submit" value="_(Restart)_">
+</form>
+
+### Configuration
+
+<form markdown="1" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#file" value="unraid-vsock-sensors/unraid-vsock-sensors.cfg">
+<input type="hidden" name="#command" value="/etc/rc.d/rc.unraid-vsock-sensors">
+<input type="hidden" name="#arg[1]" value="restart">
+
+_(VSOCK port)_:
+: <input type="number" name="PORT" value="<?=$port?>" min="1" max="4294967294" required>
+
+> The Proxmox client and the CoolerControl plugin must use the same port.
+
+_(StorCLI cache)_:
+: <select name="STORCLI_CACHE">
+<option value="10s" <?=$cache === '10s' ? 'selected' : ''?>>10 seconds</option>
+<option value="30s" <?=$cache === '30s' ? 'selected' : ''?>>30 seconds</option>
+<option value="1m" <?=$cache === '1m' ? 'selected' : ''?>>1 minute</option>
+<option value="5m" <?=$cache === '5m' ? 'selected' : ''?>>5 minutes</option>
+</select>
+
+> Interval between two StorCLI temperature refreshes. VSOCK requests always use the cached value.
+
+&nbsp;
+
+: <input type="submit" name="Apply" value="_(Apply)_">
+</form>

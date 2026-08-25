@@ -1,0 +1,95 @@
+#!/bin/bash
+
+name="unraid-vsock-sensors"
+binary="/usr/local/sbin/$name"
+config="/boot/config/plugins/$name/$name.cfg"
+pid_file="/var/run/$name.pid"
+log_file="/var/log/$name.log"
+
+load_config() {
+    PORT="19090"
+    STORCLI_CACHE="30s"
+    [[ ! -r "$config" ]] || source "$config"
+
+    if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( 10#$PORT < 1 || 10#$PORT > 4294967294 )); then
+        echo "Invalid VSOCK port: $PORT" >&2
+        return 1
+    fi
+    case "$STORCLI_CACHE" in
+        10s|30s|1m|5m) ;;
+        *) echo "Invalid StorCLI cache interval: $STORCLI_CACHE" >&2; return 1 ;;
+    esac
+}
+
+running_pid() {
+    [[ -r "$pid_file" ]] || return 1
+    local pid
+    read -r pid < "$pid_file"
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+    printf '%s\n' "$pid"
+}
+
+start() {
+    local pid
+    if pid="$(running_pid)"; then
+        echo "$name is already running (PID $pid)"
+        return 0
+    fi
+    rm -f "$pid_file"
+    load_config || return 1
+    if [[ ! -x "$binary" ]]; then
+        echo "Missing executable: $binary" >&2
+        return 1
+    fi
+
+    nohup "$binary" serve --port "$PORT" --storcli-cache "$STORCLI_CACHE" \
+        </dev/null >>"$log_file" 2>&1 &
+    pid=$!
+    printf '%s\n' "$pid" > "$pid_file"
+    sleep 1
+    if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$pid_file"
+        echo "$name failed to start; see $log_file" >&2
+        return 1
+    fi
+    echo "$name started (PID $pid)"
+}
+
+stop() {
+    local pid
+    if ! pid="$(running_pid)"; then
+        rm -f "$pid_file"
+        echo "$name is not running"
+        return 0
+    fi
+
+    kill "$pid"
+    for _ in {1..50}; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$pid_file"
+            echo "$name stopped"
+            return 0
+        fi
+        sleep 0.1
+    done
+    echo "$name did not stop within 5 seconds" >&2
+    return 1
+}
+
+status() {
+    local pid
+    if pid="$(running_pid)"; then
+        echo "running (PID $pid)"
+        return 0
+    fi
+    echo "stopped"
+    return 3
+}
+
+case "${1:-}" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop && start ;;
+    status) status ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+esac
