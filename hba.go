@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os/exec"
 	"slices"
 	"sort"
@@ -159,7 +160,7 @@ func parseStorCLI(data []byte) ([]sensors.HBA, error) {
 				continue
 			}
 			temp, err := strconv.ParseFloat(property.Value, 64)
-			if err != nil {
+			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) {
 				return nil, fmt.Errorf("storcli controller %d invalid temperature %q", id, property.Value)
 			}
 			result = append(result, sensors.HBA{Name: fmt.Sprintf("hba%d", id), Temp: temp})

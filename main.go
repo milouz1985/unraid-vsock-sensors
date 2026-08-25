@@ -156,7 +156,9 @@ func handle(conn net.Conn, path string, collector *hbaCollector) {
 		r.HBAError = err.Error()
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(requestTimeout))
-	_ = json.NewEncoder(conn).Encode(r)
+	if err := json.NewEncoder(conn).Encode(r); err != nil {
+		log.Printf("write response: %v", err)
+	}
 }
 
 func get(args []string) error {

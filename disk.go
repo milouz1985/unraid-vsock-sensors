@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,7 +45,7 @@ func readDisks(path string) ([]sensors.Disk, error) {
 			// fan curve to maximum while the disk is intentionally asleep.
 		} else {
 			temp, err = strconv.ParseFloat(rawTemp, 64)
-			if err != nil {
+			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) {
 				return nil, fmt.Errorf("disk %q has invalid temperature %q", name, rawTemp)
 			}
 		}

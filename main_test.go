@@ -73,12 +73,17 @@ func TestReadAndSelect(t *testing.T) {
 }
 
 func TestReadDisksRejectsInvalidTemperature(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "disks.ini")
-	if err := os.WriteFile(p, []byte("[disk1]\ndevice=sdb\ntemp=broken\nrotational=1\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readDisks(p); err == nil {
-		t.Fatal("invalid temperature should remain an error")
+	for _, temperature := range []string{"broken", "NaN", "+Inf", "-Inf"} {
+		t.Run(temperature, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "disks.ini")
+			data := "[disk1]\ndevice=sdb\ntemp=" + temperature + "\nrotational=1\n"
+			if err := os.WriteFile(p, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readDisks(p); err == nil {
+				t.Fatal("invalid temperature should remain an error")
+			}
+		})
 	}
 }
 
@@ -280,8 +285,20 @@ func TestParseStorCLI(t *testing.T) {
 }
 
 func TestParseStorCLIRejectsUnexpectedOutput(t *testing.T) {
-	data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Failure"},"Response Data":{}}]}`)
-	if _, err := parseStorCLI(data); err == nil {
-		t.Fatal("expected failed controller status to be rejected")
+	for name, data := range map[string]string{
+		"failed status": `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Failure"},"Response Data":{}}]}`,
+		"NaN":           storCLIResponseWithTemperature("NaN"),
+		"positive Inf":  storCLIResponseWithTemperature("+Inf"),
+		"negative Inf":  storCLIResponseWithTemperature("-Inf"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseStorCLI([]byte(data)); err == nil {
+				t.Fatal("unexpected StorCLI output should be rejected")
+			}
+		})
 	}
+}
+
+func storCLIResponseWithTemperature(temperature string) string {
+	return `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"` + temperature + `"}]}}]}`
 }
