@@ -22,7 +22,7 @@ func TestServerResponseIncludesVersion(t *testing.T) {
 	server, client := net.Pipe()
 	done := make(chan struct{})
 	go func() {
-		handle(server, path, newHBACollector(time.Minute))
+		handle(server, path, newHBACollector(time.Minute, hbaModeEnabled))
 		close(done)
 	}()
 	if _, err := io.WriteString(client, "GET\n"); err != nil {

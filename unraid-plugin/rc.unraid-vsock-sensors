@@ -8,16 +8,21 @@ log_file="/var/log/$name.log"
 
 load_config() {
     PORT="19090"
-    STORCLI_CACHE="30s"
+    HBA_MODE="auto"
+    STORCLI_INTERVAL="30s"
     [[ ! -r "$config" ]] || source "$config"
 
     if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( 10#$PORT < 1 || 10#$PORT > 4294967294 )); then
         echo "Invalid VSOCK port: $PORT" >&2
         return 1
     fi
-    case "$STORCLI_CACHE" in
+    case "$STORCLI_INTERVAL" in
         10s|30s|1m|5m) ;;
-        *) echo "Invalid StorCLI cache interval: $STORCLI_CACHE" >&2; return 1 ;;
+        *) echo "Invalid StorCLI refresh interval: $STORCLI_INTERVAL" >&2; return 1 ;;
+    esac
+    case "$HBA_MODE" in
+        auto|enabled|disabled) ;;
+        *) echo "Invalid HBA mode: $HBA_MODE" >&2; return 1 ;;
     esac
 }
 
@@ -42,7 +47,7 @@ start() {
         return 1
     fi
 
-    nohup "$binary" serve --port "$PORT" --storcli-cache "$STORCLI_CACHE" \
+    nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" --storcli-interval "$STORCLI_INTERVAL" \
         </dev/null >>"$log_file" 2>&1 &
     pid=$!
     printf '%s\n' "$pid" > "$pid_file"

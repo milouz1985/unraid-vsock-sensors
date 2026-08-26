@@ -19,6 +19,7 @@ import (
 
 type hbaCollector struct {
 	interval time.Duration
+	mode     hbaMode
 	mu       sync.RWMutex
 	readings []sensors.HBA
 	err      error
@@ -26,14 +27,31 @@ type hbaCollector struct {
 	collect func(context.Context) ([]sensors.HBA, error)
 }
 
-const storcliTimeout = 10 * time.Second
+// StorCLI normally completes in about 1.5 seconds. Five seconds leaves enough
+// margin under load while limiting how long stale readings survive a hung call.
+const storcliTimeout = 5 * time.Second
 
-func newHBACollector(interval time.Duration) *hbaCollector {
-	return &hbaCollector{
+type hbaMode string
+
+const (
+	hbaModeAuto     hbaMode = "auto"
+	hbaModeEnabled  hbaMode = "enabled"
+	hbaModeDisabled hbaMode = "disabled"
+)
+
+var errNoHBA = errors.New("storcli returned no controllers")
+
+func newHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
+	collector := &hbaCollector{
 		interval: interval,
+		mode:     mode,
 		err:      errors.New("HBA temperatures have not been collected yet"),
 		collect:  collectHBAs,
 	}
+	if mode == hbaModeDisabled {
+		collector.err = nil
+	}
+	return collector
 }
 
 // `(c *hbaCollector)` is the method receiver: it means that run belongs to the
@@ -44,6 +62,9 @@ func newHBACollector(interval time.Duration) *hbaCollector {
 //
 // run owns the refresh loop. It is the only goroutine that calls StorCLI.
 func (c *hbaCollector) run(ctx context.Context) {
+	if c.mode == hbaModeDisabled {
+		return
+	}
 	// Collect immediately so the first value is available as soon as possible.
 	c.refresh(ctx)
 	// Use a timer rather than a ticker so the interval starts after each refresh.
@@ -75,6 +96,13 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	// readers from observing parts of two different refreshes.
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// In auto mode, a missing StorCLI executable or an empty controller list
+	// means that this system has no HBA monitoring to expose, not that collection
+	// failed. Other errors still identify a broken or unreadable HBA and remain
+	// visible to clients.
+	if c.mode == hbaModeAuto && (errors.Is(err, exec.ErrNotFound) || errors.Is(err, errNoHBA)) {
+		err = nil
+	}
 	c.err = err
 	if err != nil {
 		// Do not publish a stale temperature. Downstream consumers such as
@@ -112,9 +140,6 @@ func collectHBAs(ctx context.Context) ([]sensors.HBA, error) {
 		return nil, err
 	}
 	readings, err := parseStorCLI(out)
-	if err == nil && len(readings) == 0 {
-		err = errors.New("storcli returned no ROC temperature sensor")
-	}
 	return readings, err
 }
 
@@ -135,6 +160,9 @@ func parseStorCLI(data []byte) ([]sensors.HBA, error) {
 	}
 	if err := json.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("parse storcli JSON: %w", err)
+	}
+	if len(root.Controllers) == 0 {
+		return nil, errNoHBA
 	}
 
 	var result []sensors.HBA

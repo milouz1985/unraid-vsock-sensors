@@ -116,11 +116,15 @@ https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin
 unraid-vsock-sensors serve --port 19090
 ```
 
-Le serveur exécute en arrière-plan la commande fixe
+Lorsque la collecte HBA est active, le serveur exécute en arrière-plan la commande fixe
 `storcli /cALL show temperature J nolog`, immédiatement au démarrage puis toutes
 les 30 secondes par défaut. Les requêtes utilisent uniquement le dernier état
-en mémoire et n'attendent donc jamais StorCLI. `--storcli-cache 1m` ajuste
+en mémoire et n'attendent donc jamais StorCLI. `--storcli-interval 1m` ajuste
 l'intervalle de rafraîchissement.
+
+La collecte HBA utilise le mode `auto` par défaut : l'absence de StorCLI ou de
+contrôleur n'est pas traitée comme une erreur. `--hba-mode enabled` rend cette
+absence explicite, tandis que `--hba-mode disabled` n'exécute jamais StorCLI.
 
 Sans le plugin, le script de démarrage `/boot/config/go` peut servir pour un
 essai ponctuel.

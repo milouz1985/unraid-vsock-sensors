@@ -78,7 +78,9 @@ Commands:
 Serve options:
   --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
   --port PORT               AF_VSOCK port (default: 19090)
-  --storcli-cache DURATION  Interval between StorCLI refreshes (default: 30s)
+  --hba-mode MODE           HBA collection: auto, enabled, or disabled (default: auto)
+  --storcli-interval DURATION
+                            Delay between StorCLI refreshes (default: 30s)
 
 Get options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
@@ -106,12 +108,17 @@ func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	path := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
 	port := fs.Uint("port", defaultPort, "vsock port")
-	storcliCache := fs.Duration("storcli-cache", 30*time.Second, "interval between storcli refreshes")
+	hbaModeValue := fs.String("hba-mode", string(hbaModeAuto), "HBA collection mode")
+	storcliInterval := fs.Duration("storcli-interval", 30*time.Second, "delay between StorCLI refreshes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *storcliCache <= 0 {
-		return errors.New("storcli-cache must be greater than zero")
+	if *storcliInterval <= 0 {
+		return errors.New("storcli-interval must be greater than zero")
+	}
+	hbaMode := hbaMode(*hbaModeValue)
+	if hbaMode != hbaModeAuto && hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
+		return fmt.Errorf("invalid HBA mode %q (expected auto, enabled, or disabled)", *hbaModeValue)
 	}
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
@@ -128,7 +135,7 @@ func serve(args []string) error {
 		<-ctx.Done()
 		_ = listener.Close()
 	}()
-	hbas := newHBACollector(*storcliCache)
+	hbas := newHBACollector(*storcliInterval, hbaMode)
 	// The `go` keyword starts run in a new goroutine, a lightweight concurrent
 	// task managed by Go. This lets the server accept requests immediately while
 	// StorCLI is refreshed independently in the background.

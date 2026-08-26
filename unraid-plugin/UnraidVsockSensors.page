@@ -6,7 +6,8 @@ Icon="refresh"
 $plugin = 'unraid-vsock-sensors';
 $cfg = parse_plugin_cfg($plugin);
 $port = htmlspecialchars($cfg['PORT'] ?? '19090', ENT_QUOTES);
-$cache = $cfg['STORCLI_CACHE'] ?? '30s';
+$hbaMode = $cfg['HBA_MODE'] ?? 'auto';
+$interval = $cfg['STORCLI_INTERVAL'] ?? '30s';
 
 $statusOutput = [];
 exec('/etc/rc.d/rc.unraid-vsock-sensors status 2>/dev/null', $statusOutput, $statusCode);
@@ -50,15 +51,24 @@ _(VSOCK port)_:
 
 > The Proxmox client and the CoolerControl plugin must use the same port.
 
-_(StorCLI cache)_:
-: <select name="STORCLI_CACHE">
-<option value="10s" <?=$cache === '10s' ? 'selected' : ''?>>10 seconds</option>
-<option value="30s" <?=$cache === '30s' ? 'selected' : ''?>>30 seconds</option>
-<option value="1m" <?=$cache === '1m' ? 'selected' : ''?>>1 minute</option>
-<option value="5m" <?=$cache === '5m' ? 'selected' : ''?>>5 minutes</option>
+_(HBA monitoring)_:
+: <select name="HBA_MODE">
+<option value="auto" <?=$hbaMode === 'auto' ? 'selected' : ''?>>Auto</option>
+<option value="enabled" <?=$hbaMode === 'enabled' ? 'selected' : ''?>>Enabled</option>
+<option value="disabled" <?=$hbaMode === 'disabled' ? 'selected' : ''?>>Disabled</option>
 </select>
 
-> Interval between two StorCLI temperature refreshes. VSOCK requests always use the cached value.
+> Auto silently disables HBA sensors when StorCLI or a controller is absent. Enabled reports their absence as an error. Disabled never runs StorCLI.
+
+_(StorCLI refresh interval)_:
+: <select name="STORCLI_INTERVAL">
+<option value="10s" <?=$interval === '10s' ? 'selected' : ''?>>10 seconds</option>
+<option value="30s" <?=$interval === '30s' ? 'selected' : ''?>>30 seconds</option>
+<option value="1m" <?=$interval === '1m' ? 'selected' : ''?>>1 minute</option>
+<option value="5m" <?=$interval === '5m' ? 'selected' : ''?>>5 minutes</option>
+</select>
+
+> Delay between two StorCLI temperature refreshes. VSOCK requests always use the cached value.
 
 &nbsp;
 
