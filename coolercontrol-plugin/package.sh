@@ -24,6 +24,12 @@ mkdir -p "$package_dir/ui" "$output_dir"
         "$go_command" build -trimpath -ldflags="-s -w -X main.version=$version" \
         -o "$package_dir/unraid-vsock-sensors-cc" .
 )
+(
+    cd "$repo_dir"
+    CGO_ENABLED=0 GOOS=linux GOARCH="$architecture" \
+        "$go_command" build -trimpath -ldflags="-s -w -X main.version=$version" \
+        -o "$package_dir/unraid-vsock-sensors" .
+)
 sed "s/^version = .*/version = \"$version\"/" \
     "$script_dir/manifest.toml" > "$package_dir/manifest.toml"
 install -m 0644 "$script_dir/ui/index.html" "$package_dir/ui/index.html"

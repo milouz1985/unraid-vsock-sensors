@@ -25,13 +25,14 @@ port_explicit=0
 [[ -v UNRAID_VSOCK_PORT ]] && port_explicit=1
 plugins_root="${CC_PLUGINS_DIR:-/var/lib/coolercontrol/plugins}"
 plugin_dir="$plugins_root/unraid-vsock-sensors-cc"
+cli_dir="${CLI_BIN_DIR:-/usr/local/bin}"
 package_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 temporary_dir="$(mktemp -d)"
 trap 'rm -rf "$temporary_dir"' EXIT
 
 if (( EUID == 0 )); then
     elevate=()
-elif [[ -d "$plugins_root" && -w "$plugins_root" ]]; then
+elif [[ -d "$plugins_root" && -w "$plugins_root" && -d "$cli_dir" && -w "$cli_dir" ]]; then
     elevate=()
 elif command -v sudo >/dev/null 2>&1; then
     elevate=(sudo)
@@ -59,8 +60,9 @@ fi
 validate_number "Le CID" "$cid" 3
 validate_number "Le port" "$port" 1
 
-"${elevate[@]}" install -d -m 0755 "$plugin_dir" "$plugin_dir/ui"
+"${elevate[@]}" install -d -m 0755 "$plugin_dir" "$plugin_dir/ui" "$cli_dir"
 install_file 0755 "$package_dir/unraid-vsock-sensors-cc" "$plugin_dir/unraid-vsock-sensors-cc"
+install_file 0755 "$package_dir/unraid-vsock-sensors" "$cli_dir/unraid-vsock-sensors"
 install_file 0644 "$package_dir/manifest.toml" "$plugin_dir/manifest.toml"
 install_file 0644 "$package_dir/ui/index.html" "$plugin_dir/ui/index.html"
 
@@ -73,4 +75,5 @@ else
 fi
 
 echo "Plugin installé dans $plugin_dir"
+echo "Client CLI installé dans $cli_dir/unraid-vsock-sensors"
 echo "Redémarre CoolerControl : sudo systemctl restart coolercontrold"

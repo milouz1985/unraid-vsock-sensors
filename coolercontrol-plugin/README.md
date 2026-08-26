@@ -55,9 +55,10 @@ permet de fournir explicitement une version lors d'un build sans dépôt Git.
 Cette installation ne nécessite ni Git ni Go sur Proxmox.
 
 Le plugin est installé dans
-`/var/lib/coolercontrol/plugins/unraid-vsock-sensors-cc`. Une réinstallation
-sans option conserve sa configuration. Le CID et le port peuvent ensuite être
-modifiés dans **Plugins → Unraid VSOCK Sensors**.
+`/var/lib/coolercontrol/plugins/unraid-vsock-sensors-cc` et le client CLI dans
+`/usr/local/bin/unraid-vsock-sensors`. Une réinstallation sans option conserve
+sa configuration. Le CID et le port peuvent ensuite être modifiés dans
+**Plugins → Unraid VSOCK Sensors**.
 
 CoolerControl découvre les sondes au démarrage du plugin. Après l'ajout, le
 retrait ou le renommage d'un disque dans Unraid, redémarrer `coolercontrold`
@@ -67,6 +68,7 @@ Pour diagnostiquer le service :
 
 ```sh
 journalctl -u cc-plugin-unraid-vsock-sensors-cc
+unraid-vsock-sensors get --cid 42 --port 19090 disk all
 ```
 
 ## Développement du protocole

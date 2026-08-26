@@ -12,5 +12,12 @@ sudo ./install.sh --cid=42 --port=19090
 sudo systemctl restart coolercontrold
 ```
 
+Le script installe également le client de diagnostic
+`/usr/local/bin/unraid-vsock-sensors`. Par exemple :
+
+```sh
+unraid-vsock-sensors get --cid 42 --port 19090 disk all
+```
+
 La configuration peut ensuite être modifiée dans CoolerControl sous
 **Plugins → Unraid VSOCK Sensors**.
