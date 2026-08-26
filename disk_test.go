@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"unraid-vsock-sensors/internal/sensors"
 )
 
 func TestReadAndSelect(t *testing.T) {
@@ -81,6 +83,20 @@ func TestReadDisksRejectsInvalidTemperature(t *testing.T) {
 				t.Fatal("invalid temperature should remain an error")
 			}
 		})
+	}
+}
+
+func TestSelectDisksExcludesExternalDisksFromKindSelectors(t *testing.T) {
+	disks := []sensors.Disk{
+		{Name: "internal", Device: "sdb", Transport: "ata", Rotational: true},
+		{Name: "external", Device: "sdc", Transport: "usb", Rotational: true},
+	}
+
+	if got := selectDisks(disks, "hdd"); len(got) != 1 || got[0].Name != "internal" {
+		t.Fatalf("hdd: %#v", got)
+	}
+	if got := selectDisks(disks, "external"); len(got) != 1 || got[0].Name != "external" {
+		t.Fatalf("explicit name: %#v", got)
 	}
 }
 

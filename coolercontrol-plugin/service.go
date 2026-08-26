@@ -19,15 +19,14 @@ const deviceID = "unraid-storage"
 const vsockRequestTimeout = 3 * time.Second
 
 type diskGroup struct {
-	id    string
 	label string
-	match func(sensors.Disk) bool
+	kind  sensors.DiskKind
 }
 
 var diskGroups = []diskGroup{
-	{id: "hdd", label: "HDD maximum", match: func(d sensors.Disk) bool { return d.Rotational }},
-	{id: "ssd", label: "SSD maximum", match: isSSD},
-	{id: "nvme", label: "NVMe maximum", match: isNVMe},
+	{label: "HDD maximum", kind: sensors.DiskKindHDD},
+	{label: "SATA SSD maximum", kind: sensors.DiskKindSATASSD},
+	{label: "NVMe SSD maximum", kind: sensors.DiskKindNVMe},
 }
 
 type unraidService struct {
@@ -111,10 +110,10 @@ func makeDevice(state sensors.Response, cid, port uint32) *models.Device {
 	temps := make(map[string]*models.TempInfo)
 	number := uint32(1)
 	for _, group := range diskGroups {
-		if countDisks(state.Disks, group.match) < 2 {
+		if countDisks(state.Disks, group.kind) < 2 {
 			continue
 		}
-		temps[group.id] = &models.TempInfo{Label: group.label, Number: number}
+		temps[string(group.kind)] = &models.TempInfo{Label: group.label, Number: number}
 		number++
 	}
 	for _, disk := range state.Disks {
@@ -149,7 +148,7 @@ func makeStatus(state sensors.Response) []*models.Status {
 		var maximum float64
 		count := 0
 		for _, disk := range state.Disks {
-			if group.match(disk) {
+			if !disk.IsExternal() && disk.Kind() == group.kind {
 				if count == 0 || disk.Temp > maximum {
 					maximum = disk.Temp
 				}
@@ -157,7 +156,7 @@ func makeStatus(state sensors.Response) []*models.Status {
 			}
 		}
 		if count >= 2 {
-			result = append(result, tempStatus(group.id, maximum))
+			result = append(result, tempStatus(string(group.kind), maximum))
 		}
 	}
 	for _, group := range diskGroups {
@@ -179,10 +178,10 @@ func tempStatus(id string, temperature float64) *models.Status {
 	return &models.Status{Id: id, Metric: &models.Status_Temp{Temp: temperature}}
 }
 
-func countDisks(disks []sensors.Disk, match func(sensors.Disk) bool) int {
+func countDisks(disks []sensors.Disk, kind sensors.DiskKind) int {
 	count := 0
 	for _, disk := range disks {
-		if match(disk) {
+		if !disk.IsExternal() && disk.Kind() == kind {
 			count++
 		}
 	}

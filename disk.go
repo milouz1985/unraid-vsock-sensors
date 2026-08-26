@@ -74,11 +74,11 @@ func selectDisks(disks []sensors.Disk, selector string) []sensors.Disk {
 		match := selector == "all" || strings.EqualFold(disk.Name, selector) || strings.EqualFold(disk.Device, selector)
 		switch selector {
 		case "nvme":
-			match = disk.Transport == "nvme" || strings.HasPrefix(disk.Device, "nvme")
+			match = !disk.IsExternal() && disk.Kind() == sensors.DiskKindNVMe
 		case "hdd":
-			match = disk.Rotational
+			match = !disk.IsExternal() && disk.Kind() == sensors.DiskKindHDD
 		case "ssd":
-			match = !disk.Rotational && disk.Transport != "nvme" && !strings.HasPrefix(disk.Device, "nvme")
+			match = !disk.IsExternal() && disk.Kind() == sensors.DiskKindSATASSD
 		}
 		if match {
 			result = append(result, disk)

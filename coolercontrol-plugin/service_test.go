@@ -19,6 +19,7 @@ func sampleResponse() sensors.Response {
 			{ID: "serial-disk1", Name: "disk1", Device: "sdb", Transport: "ata", Rotational: true, Temp: 35},
 			{ID: "serial-disk2", Name: "disk2", Device: "sdc", Transport: "ata", Rotational: true, Temp: 0},
 			{ID: "serial-cache", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 48},
+			{ID: "serial-usb", Name: "external", Device: "sdd", Transport: "usb", Rotational: true, Temp: 60},
 		},
 		HBAs: []sensors.HBA{{Name: "hba0", Temp: 49}},
 	}
@@ -32,6 +33,9 @@ func TestGroupMaximumAndSleepingDisk(t *testing.T) {
 	}
 	if values["hdd"] != 35 || values["disk-serial-disk2"] != 0 || values["disk-serial-cache"] != 48 {
 		t.Fatalf("unexpected readings: %#v", values)
+	}
+	if values["disk-serial-usb"] != 60 {
+		t.Fatal("external disk should remain available as an individual sensor")
 	}
 	if _, exists := values["nvme"]; exists {
 		t.Fatal("single NVMe should not have an aggregate sensor")
