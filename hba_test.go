@@ -88,8 +88,8 @@ func TestParseStorCLI(t *testing.T) {
 	if len(hbas) != 2 || hbas[0].Name != "hba0" || hbas[0].Temp != 49 || hbas[1].Temp != 60 {
 		t.Fatalf("unexpected HBA readings: %#v", hbas)
 	}
-	if got := selectHBAs(hbas, "hba"); len(got) != 2 {
-		t.Fatalf("hba selector: %#v", got)
+	if got := selectHBAs(hbas, "all"); len(got) != 2 {
+		t.Fatalf("all selector: %#v", got)
 	}
 	if got := selectHBAs(hbas, "hba1"); len(got) != 1 || got[0].Temp != 60 {
 		t.Fatalf("hba1 selector: %#v", got)

@@ -32,6 +32,13 @@ const (
 
 var version = "dev"
 
+type sensorType string
+
+const (
+	sensorTypeDisk sensorType = "disk"
+	sensorTypeHBA  sensorType = "hba"
+)
+
 func main() {
 	// Keep stderr concise: service managers already add timestamps, while sensor
 	// values are written separately to stdout for cmd-based consumers.
@@ -59,7 +66,7 @@ func main() {
 func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
   %[1]s serve [options]
-  %[1]s get [options] SELECTOR
+  %[1]s get [options] TYPE SELECTOR
   %[1]s get [options] --json
   %[1]s version
 
@@ -78,12 +85,18 @@ Get options:
   --port PORT               AF_VSOCK port (default: 19090)
   --json                    Print the complete JSON response
 
+Sensor types:
+  disk                      Select disks, pools, or disk groups
+  hba                       Select HBA temperature sensors
+
 Selectors:
-  hdd, ssd, nvme, all, hba, hba0, disk name, or device name
+  disk: hdd, ssd, nvme, all, disk name, or device name
+  hba:  all or sensor name (for example hba0)
 
 Examples:
   %[1]s serve --port 990
-  %[1]s get --cid 42 hdd
+  %[1]s get --cid 42 disk hdd
+  %[1]s get --cid 42 hba all
   %[1]s get --cid 42 --json
 `, os.Args[0])
 	os.Exit(2)
@@ -183,8 +196,16 @@ func get(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 1 && !*all {
-		return errors.New("a selector is required (hdd, nvme, all, name, or device)")
+	if *all {
+		if fs.NArg() != 0 {
+			return errors.New("--json does not accept a sensor type or selector")
+		}
+	} else if fs.NArg() != 2 {
+		return errors.New("a sensor type and selector are required (for example: disk hdd or hba all)")
+	}
+	kind := sensorType(fs.Arg(0))
+	if !*all && kind != sensorTypeDisk && kind != sensorTypeHBA {
+		return fmt.Errorf("unknown sensor type %q (expected disk or hba)", kind)
 	}
 	if err := vsockaddr.ValidateCID(uint64(*cid)); err != nil {
 		return err
@@ -198,14 +219,15 @@ func get(args []string) error {
 	if err != nil {
 		return err
 	}
-	return writeResponse(os.Stdout, r, fs.Arg(0), *all)
+	if *all {
+		return json.NewEncoder(os.Stdout).Encode(r)
+	}
+	return writeResponse(os.Stdout, r, kind, fs.Arg(1))
 }
 
-func writeResponse(out io.Writer, r sensors.Response, selector string, all bool) error {
-	if all {
-		return json.NewEncoder(out).Encode(r)
-	}
-	if strings.HasPrefix(strings.ToLower(selector), "hba") {
+func writeResponse(out io.Writer, r sensors.Response, kind sensorType, selector string) error {
+	switch kind {
+	case sensorTypeHBA:
 		var unavailable error
 		if r.HBAError != "" {
 			unavailable = fmt.Errorf("HBA temperature unavailable: %s", r.HBAError)
@@ -213,13 +235,16 @@ func writeResponse(out io.Writer, r sensors.Response, selector string, all bool)
 		return writeMaxTemperature(out, selectHBAs(r.HBAs, selector), selector, unavailable, func(hba sensors.HBA) float64 {
 			return hba.Temp
 		})
+	case sensorTypeDisk:
+		if r.Error != "" {
+			return errors.New(r.Error)
+		}
+		return writeMaxTemperature(out, selectDisks(r.Disks, selector), selector, nil, func(disk sensors.Disk) float64 {
+			return disk.Temp
+		})
+	default:
+		return fmt.Errorf("unknown sensor type %q (expected disk or hba)", kind)
 	}
-	if r.Error != "" {
-		return errors.New(r.Error)
-	}
-	return writeMaxTemperature(out, selectDisks(r.Disks, selector), selector, nil, func(disk sensors.Disk) float64 {
-		return disk.Temp
-	})
 }
 
 func writeMaxTemperature[T any](

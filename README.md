@@ -128,14 +128,17 @@ essai ponctuel.
 ## Interroger depuis Proxmox
 
 ```sh
-unraid-vsock-sensors get --cid 42 hdd
-unraid-vsock-sensors get --cid 42 nvme
-unraid-vsock-sensors get --cid 42 disk1
-unraid-vsock-sensors get --cid 42 nvme0n1
-unraid-vsock-sensors get --cid 42 hba
-unraid-vsock-sensors get --cid 42 hba0
+unraid-vsock-sensors get --cid 42 disk hdd
+unraid-vsock-sensors get --cid 42 disk nvme
+unraid-vsock-sensors get --cid 42 disk disk1
+unraid-vsock-sensors get --cid 42 disk nvme0n1
+unraid-vsock-sensors get --cid 42 hba all
+unraid-vsock-sensors get --cid 42 hba hba0
 unraid-vsock-sensors get --cid 42 --json
 ```
+
+Le type de capteur explicite évite toute ambiguïté avec un disque ou un pool
+dont le nom ressemble à celui d'un HBA, par exemple `get disk hba1`.
 
 `--json` renvoie toujours la réponse structurée complète, y compris les champs
 `error` et `hba_error`, afin de permettre le diagnostic d'une famille de sondes

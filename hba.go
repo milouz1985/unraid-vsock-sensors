@@ -170,7 +170,7 @@ func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {
 	selector = strings.ToLower(selector)
 	var result []sensors.HBA
 	for _, sensor := range hbas {
-		if selector == "hba" || sensor.Name == selector {
+		if selector == "all" || sensor.Name == selector {
 			result = append(result, sensor)
 		}
 	}
