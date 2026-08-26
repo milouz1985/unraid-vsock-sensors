@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"unraid-vsock-sensors/internal/vsockaddr"
 )
 
 type runtimeConfig struct {
 	CID  uint32 `json:"cid"`
 	Port uint32 `json:"port"`
 }
-
-// UINT32_MAX is reserved by VSOCK for VMADDR_CID_ANY and VMADDR_PORT_ANY.
-const maxVsockAddress = uint32(1<<32 - 2)
 
 var defaultConfig = runtimeConfig{CID: 42, Port: 19090}
 
@@ -38,17 +37,11 @@ func loadConfig(path string) (runtimeConfig, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return runtimeConfig{}, fmt.Errorf("decode %s: %w", path, err)
 	}
-	if config.CID < 3 {
-		return runtimeConfig{}, fmt.Errorf("invalid %s: cid must be at least 3", path)
+	if err := vsockaddr.ValidateCID(uint64(config.CID)); err != nil {
+		return runtimeConfig{}, fmt.Errorf("invalid %s: %w", path, err)
 	}
-	if config.CID > maxVsockAddress {
-		return runtimeConfig{}, fmt.Errorf("invalid %s: cid must not be VMADDR_CID_ANY", path)
-	}
-	if config.Port == 0 {
-		return runtimeConfig{}, fmt.Errorf("invalid %s: port must be greater than zero", path)
-	}
-	if config.Port > maxVsockAddress {
-		return runtimeConfig{}, fmt.Errorf("invalid %s: port must not be VMADDR_PORT_ANY", path)
+	if err := vsockaddr.ValidatePort(uint64(config.Port)); err != nil {
+		return runtimeConfig{}, fmt.Errorf("invalid %s: %w", path, err)
 	}
 	return config, nil
 }

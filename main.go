@@ -17,14 +17,14 @@ import (
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
+	"unraid-vsock-sensors/internal/vsockaddr"
 
 	"github.com/mdlayher/vsock"
 )
 
 const (
-	defaultPort     = 19090
-	requestTimeout  = 3 * time.Second
-	maxVsockAddress = uint64(1<<32 - 2)
+	defaultPort    = 19090
+	requestTimeout = 3 * time.Second
 )
 
 var version = "dev"
@@ -97,7 +97,7 @@ func serve(args []string) error {
 	if *storcliCache <= 0 {
 		return errors.New("storcli-cache must be greater than zero")
 	}
-	if err := validateVsockPort(*port); err != nil {
+	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
 	listener, err := vsock.Listen(uint32(*port), nil)
@@ -170,10 +170,10 @@ func get(args []string) error {
 	if fs.NArg() != 1 && !*all {
 		return errors.New("a selector is required (hdd, nvme, all, name, or device)")
 	}
-	if err := validateVsockCID(*cid); err != nil {
+	if err := vsockaddr.ValidateCID(uint64(*cid)); err != nil {
 		return err
 	}
-	if err := validateVsockPort(*port); err != nil {
+	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
@@ -183,20 +183,6 @@ func get(args []string) error {
 		return err
 	}
 	return writeResponse(os.Stdout, r, fs.Arg(0), *all)
-}
-
-func validateVsockCID(cid uint) error {
-	if cid < 3 || uint64(cid) > maxVsockAddress {
-		return fmt.Errorf("cid must be between 3 and %d", maxVsockAddress)
-	}
-	return nil
-}
-
-func validateVsockPort(port uint) error {
-	if port == 0 || uint64(port) > maxVsockAddress {
-		return fmt.Errorf("port must be between 1 and %d", maxVsockAddress)
-	}
-	return nil
 }
 
 func writeResponse(out io.Writer, r sensors.Response, selector string, all bool) error {
