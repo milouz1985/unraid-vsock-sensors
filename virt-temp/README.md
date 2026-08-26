@@ -13,19 +13,39 @@ ancienne température.
 Lorsque le chemin est détecté automatiquement, l'agent retrouve le périphérique
 si son numéro `hwmonN` change après un déchargement et rechargement du module.
 
-## Compiler et charger le module
+## Construire le paquet sur la machine de développement
+
+Go est nécessaire uniquement sur la machine de développement. Le script
+cross-compile le binaire Linux et crée dans `dist/` une archive accompagnée de
+sa somme SHA-256 :
 
 ```sh
-sudo cp -r virt-temp/virt-temp-0.1.0 /usr/src/
-sudo dkms add -m virt-temp -v 0.1.0
-sudo dkms build -m virt-temp -v 0.1.0
-sudo dkms install -m virt-temp -v 0.1.0
-sudo modprobe virt-temp
-echo virt-temp | sudo tee /etc/modules-load.d/virt-temp.conf
-sensors
+./virt-temp/package.sh
 ```
 
-## Publier la température
+Une release taguée `v0.3.0` produit un module DKMS `virt-temp/0.3.0`, tandis
+qu'une branche de développement conserve son suffixe `-dev`.
+
+## Installer sur Proxmox
+
+Seuls DKMS, les outils de compilation C et les en-têtes du noyau en cours sont
+nécessaires sur Proxmox ; Go et Git ne le sont pas :
+
+```sh
+sudo apt install dkms build-essential \
+  "proxmox-headers-$(uname -r)" lm-sensors
+archive="$(find . -maxdepth 1 -name 'unraid-vsock-sensors-hwmon-*-linux-amd64.tar.gz' -print -quit)"
+sha256sum -c "$archive.sha256"
+tar -xzf "$archive"
+cd "${archive%.tar.gz}"
+./install.sh
+```
+
+L'installateur lit la version incluse dans le paquet, installe les sources
+DKMS correspondantes, charge le module et active le service systemd. Une
+configuration existante dans `/etc/default/unraid-vsock-hwmon` est préservée.
+
+## Publier manuellement la température
 
 ```sh
 sudo unraid-vsock-sensors hwmon --cid 42 --port 19090 --interval 1s
@@ -59,7 +79,7 @@ Après avoir installé les en-têtes du noyau en cours d'exécution sur la machi
 de développement, générer `compile_commands.json` :
 
 ```sh
-make -C virt-temp/virt-temp-0.1.0 compile_commands
+make -C virt-temp/module compile_commands
 ```
 
 Cette base contient des chemins propres au noyau et à la machine ; elle est

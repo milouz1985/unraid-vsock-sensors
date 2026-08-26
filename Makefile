@@ -30,14 +30,14 @@ test: ## Exécute tous les tests, y compris ceux du plugin
 
 check: vet test ## Vérifie le projet sans créer d'artefacts
 
-all: check build plugin-package unraid-package ## Vérifie, compile et crée les packages CoolerControl et Unraid
+all: check build plugin-package unraid-package hwmon-package ## Vérifie, compile et crée tous les paquets
 
 .PHONY: build
 
 build: ## Compile un binaire Linux statique
 	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) .
 
-.PHONY: plugin-build plugin-test plugin-generate plugin-package unraid-package
+.PHONY: plugin-build plugin-test plugin-generate plugin-package unraid-package hwmon-package
 
 plugin-build: ## Compile le plugin CoolerControl pour Linux
 	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(PLUGIN_BINARY) ./coolercontrol-plugin
@@ -53,6 +53,9 @@ plugin-package: ## Crée une archive du plugin installable sans Go ni Git
 
 unraid-package: ## Crée le plugin serveur installable dans Unraid
 	GO="$(GO)" VERSION="$(VERSION)" ./unraid-plugin/package.sh
+
+hwmon-package: ## Crée le paquet hwmon installable sur Proxmox sans Go
+	GO="$(GO)" VERSION="$(VERSION)" ./virt-temp/package.sh
 
 build plugin-build: | $(BIN_DIR)
 
