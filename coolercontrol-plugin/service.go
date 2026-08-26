@@ -17,7 +17,7 @@ import (
 const (
 	deviceID            = "unraid-storage"
 	minDiskGroupSize    = 2
-	vsockRequestTimeout = 3 * time.Second
+	vsockRequestTimeout = 500 * time.Millisecond
 )
 
 type diskGroup struct {
