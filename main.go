@@ -206,27 +206,37 @@ func writeResponse(out io.Writer, r sensors.Response, selector string, all bool)
 		return json.NewEncoder(out).Encode(r)
 	}
 	if strings.HasPrefix(strings.ToLower(selector), "hba") {
-		selected := selectHBAs(r.HBAs, selector)
-		if len(selected) == 0 {
-			if r.HBAError != "" {
-				return fmt.Errorf("HBA temperature unavailable: %s", r.HBAError)
-			}
-			return fmt.Errorf("no available temperature for selector %q", selector)
+		var unavailable error
+		if r.HBAError != "" {
+			unavailable = fmt.Errorf("HBA temperature unavailable: %s", r.HBAError)
 		}
-		fmt.Fprintln(out, strconv.FormatFloat(sensors.MaxTemperature(selected, func(hba sensors.HBA) float64 {
+		return writeMaxTemperature(out, selectHBAs(r.HBAs, selector), selector, unavailable, func(hba sensors.HBA) float64 {
 			return hba.Temp
-		}), 'f', -1, 64))
-		return nil
+		})
 	}
 	if r.Error != "" {
 		return errors.New(r.Error)
 	}
-	selected := selectDisks(r.Disks, selector)
-	if len(selected) == 0 {
+	return writeMaxTemperature(out, selectDisks(r.Disks, selector), selector, nil, func(disk sensors.Disk) float64 {
+		return disk.Temp
+	})
+}
+
+func writeMaxTemperature[T any](
+	out io.Writer,
+	items []T,
+	selector string,
+	unavailable error,
+	temperature func(T) float64,
+) error {
+	if len(items) == 0 {
+		if unavailable != nil {
+			return unavailable
+		}
 		return fmt.Errorf("no available temperature for selector %q", selector)
 	}
-	fmt.Fprintln(out, strconv.FormatFloat(sensors.MaxTemperature(selected, func(disk sensors.Disk) float64 {
-		return disk.Temp
-	}), 'f', -1, 64))
-	return nil
+	_, err := fmt.Fprintln(out, strconv.FormatFloat(
+		sensors.MaxTemperature(items, temperature), 'f', -1, 64,
+	))
+	return err
 }
