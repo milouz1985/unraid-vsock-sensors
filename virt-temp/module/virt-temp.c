@@ -375,7 +375,6 @@ static const struct file_operations virt_temp_fops = {
 	.open = virt_temp_open,
 	.write = virt_temp_write,
 	.release = virt_temp_release,
-	.llseek = no_llseek,
 };
 
 static struct miscdevice virt_temp_misc = {
