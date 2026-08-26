@@ -86,17 +86,3 @@ systemctl status unraid-vsock-hwmon.service
 Après dix secondes sans mise à jour réussie, la lecture de `temp1_input`
 retourne `100000` milli-degrés Celsius. Le délai peut être modifié au chargement
 du module, par exemple avec `modprobe virt-temp stale_timeout=15`.
-
-## Configurer l'auto-complétion de l'éditeur
-
-Après avoir installé les en-têtes du noyau en cours d'exécution sur la machine
-de développement, générer `compile_commands.json` :
-
-```sh
-make -C virt-temp/module compile_commands
-```
-
-Cette base contient des chemins propres au noyau et à la machine ; elle est
-donc ignorée par Git. Les configurations du dépôt indiquent à clangd et à
-l'extension C/C++ de VS Code de la lire à la racine du projet. Il faut la
-régénérer après chaque changement ou mise à jour du noyau.
