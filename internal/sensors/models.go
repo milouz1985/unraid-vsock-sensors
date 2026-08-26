@@ -1,3 +1,4 @@
+// Package sensors defines the shared sensor model and VSOCK client.
 package sensors
 
 import (
@@ -5,6 +6,7 @@ import (
 	"time"
 )
 
+// Disk describes a disk and its latest cached temperature reported by Unraid.
 type Disk struct {
 	ID         string  `json:"id"`
 	Name       string  `json:"name"`
@@ -14,15 +16,21 @@ type Disk struct {
 	Temp       float64 `json:"temp_c"`
 }
 
+// DiskKind identifies the storage technology used to group disk temperatures.
 type DiskKind string
 
 const (
-	DiskKindHDD      DiskKind = "hdd"
-	DiskKindSATASSD  DiskKind = "ssd"
-	DiskKindNVMe     DiskKind = "nvme"
+	// DiskKindHDD identifies a rotational disk.
+	DiskKindHDD DiskKind = "hdd"
+	// DiskKindSATASSD identifies a non-rotational disk using ATA transport.
+	DiskKindSATASSD DiskKind = "ssd"
+	// DiskKindNVMe identifies a non-rotational NVMe disk.
+	DiskKindNVMe DiskKind = "nvme"
+	// DiskKindOtherSSD identifies a non-rotational disk using another transport.
 	DiskKindOtherSSD DiskKind = "other-ssd"
 )
 
+// Kind classifies the disk by its rotational state and transport.
 func (d Disk) Kind() DiskKind {
 	switch {
 	case d.Rotational:
@@ -36,15 +44,18 @@ func (d Disk) Kind() DiskKind {
 	}
 }
 
+// IsExternal reports whether Unraid exposes the disk through USB transport.
 func (d Disk) IsExternal() bool {
 	return strings.EqualFold(d.Transport, "usb")
 }
 
+// HBA describes a host bus adapter and its latest temperature.
 type HBA struct {
 	Name string  `json:"name"`
 	Temp float64 `json:"temp_c"`
 }
 
+// Response contains a snapshot of every sensor exposed by the server.
 type Response struct {
 	Version   string    `json:"version"`
 	Timestamp time.Time `json:"timestamp"`

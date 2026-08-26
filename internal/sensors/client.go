@@ -11,6 +11,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Fetch retrieves one sensor snapshot from the VSOCK server at cid and port.
+// The context controls connection establishment and all subsequent I/O.
 func Fetch(ctx context.Context, cid, port uint32) (Response, error) {
 	var response Response
 	conn, err := dialContext(ctx, cid, port)

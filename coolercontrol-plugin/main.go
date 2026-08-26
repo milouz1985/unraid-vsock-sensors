@@ -1,3 +1,4 @@
+// Command unraid-vsock-sensors-cc exposes Unraid temperatures to CoolerControl.
 package main
 
 import (

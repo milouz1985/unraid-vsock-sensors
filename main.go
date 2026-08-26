@@ -1,4 +1,4 @@
-// unraid-vsock-sensors exports Unraid's cached disk temperatures over AF_VSOCK.
+// Command unraid-vsock-sensors exports Unraid's cached temperatures over AF_VSOCK.
 package main
 
 import (
