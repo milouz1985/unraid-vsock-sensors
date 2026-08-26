@@ -12,6 +12,9 @@ réveille pas les disques en veille.
 - `hdd`, `ssd` et `nvme` retournent la température maximale du groupe.
 - Les sélecteurs de groupe excluent les disques USB externes ; `all`, un nom
   Unraid ou un device explicite les incluent volontairement.
+- Les SSD utilisant un autre transport que SATA ou NVMe (`other-ssd`, par
+  exemple SAS) ne forment volontairement ni un groupe agrégé ni un sélecteur
+  CLI. Ils restent accessibles par `all`, leur nom Unraid ou leur device.
 - Un nom Unraid (`disk1`, nom de pool) ou un device (`sdb`, `nvme0n1`) permet
   d'interroger un disque indépendamment.
 - `hba` retourne la température ROC maximale rapportée par StorCLI ; `hba0`,

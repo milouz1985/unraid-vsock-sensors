@@ -29,6 +29,8 @@ type diskGroup struct {
 	kind  sensors.DiskKind
 }
 
+// diskGroups omits DiskKindOtherSSD because an unknown non-rotational
+// transport does not identify a homogeneous cooling group.
 var diskGroups = []diskGroup{
 	{label: "HDD maximum", kind: sensors.DiskKindHDD},
 	{label: "SATA SSD maximum", kind: sensors.DiskKindSATASSD},
