@@ -14,9 +14,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const deviceID = "unraid-storage"
-
-const vsockRequestTimeout = 3 * time.Second
+const (
+	deviceID            = "unraid-storage"
+	minDiskGroupSize    = 2
+	vsockRequestTimeout = 3 * time.Second
+)
 
 type diskGroup struct {
 	label string
@@ -110,7 +112,7 @@ func makeDevice(state sensors.Response, cid, port uint32) *models.Device {
 	temps := make(map[string]*models.TempInfo)
 	number := uint32(1)
 	for _, group := range diskGroups {
-		if countDisks(state.Disks, group.kind) < 2 {
+		if countDisks(state.Disks, group.kind) < minDiskGroupSize {
 			continue
 		}
 		temps[string(group.kind)] = &models.TempInfo{Label: group.label, Number: number}
@@ -151,7 +153,7 @@ func makeStatus(state sensors.Response) []*models.Status {
 				disks = append(disks, disk)
 			}
 		}
-		if len(disks) >= 2 {
+		if len(disks) >= minDiskGroupSize {
 			maximum := sensors.MaxTemperature(disks, func(disk sensors.Disk) float64 {
 				return disk.Temp
 			})
