@@ -22,7 +22,69 @@ const (
 	defaultHWMonInterval = time.Second
 	hwmonClassPath       = "/sys/class/hwmon"
 	virtTempName         = "virt_temp"
+	minHWMonGroupSize    = 2
 )
+
+type hwmonReading struct {
+	id          string
+	label       string
+	temperature float64
+}
+
+type hwmonDiskGroup struct {
+	kind  sensors.DiskKind
+	label string
+}
+
+var hwmonDiskGroups = []hwmonDiskGroup{
+	{kind: sensors.DiskKindHDD, label: "HDD maximum"},
+	{kind: sensors.DiskKindSATASSD, label: "SATA SSD maximum"},
+	{kind: sensors.DiskKindNVMe, label: "NVMe SSD maximum"},
+}
+
+func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmonReading) {
+	internalDisks := make([]sensors.Disk, 0, len(state.Disks))
+	for _, disk := range state.Disks {
+		if !disk.IsExternal() {
+			internalDisks = append(internalDisks, disk)
+		}
+	}
+
+	for _, group := range hwmonDiskGroups {
+		groupDisks := make([]sensors.Disk, 0, len(internalDisks))
+		for _, disk := range internalDisks {
+			if disk.Kind() == group.kind {
+				groupDisks = append(groupDisks, disk)
+			}
+		}
+		if len(groupDisks) < minHWMonGroupSize {
+			continue
+		}
+		diskReadings = append(diskReadings, hwmonReading{
+			id:    "disk:group:" + string(group.kind),
+			label: group.label,
+			temperature: sensors.MaxTemperature(groupDisks, func(disk sensors.Disk) float64 {
+				return disk.Temp
+			}),
+		})
+	}
+
+	for _, disk := range internalDisks {
+		diskReadings = append(diskReadings, hwmonReading{
+			id:          "disk:" + disk.ID,
+			label:       fmt.Sprintf("%s (%s)", disk.Name, disk.Device),
+			temperature: disk.Temp,
+		})
+	}
+	for _, hba := range state.HBAs {
+		hbaReadings = append(hbaReadings, hwmonReading{
+			id:          "hba:" + hba.Name,
+			label:       hba.Name,
+			temperature: hba.Temp,
+		})
+	}
+	return diskReadings, hbaReadings
+}
 
 type hwmonTarget struct {
 	temperaturePath string
