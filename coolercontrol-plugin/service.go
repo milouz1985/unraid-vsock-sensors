@@ -145,17 +145,16 @@ func makeDevice(state sensors.Response, cid, port uint32) *models.Device {
 func makeStatus(state sensors.Response) []*models.Status {
 	var result []*models.Status
 	addDiskMaximum := func(group diskGroup) {
-		var maximum float64
-		count := 0
+		var disks []sensors.Disk
 		for _, disk := range state.Disks {
 			if !disk.IsExternal() && disk.Kind() == group.kind {
-				if count == 0 || disk.Temp > maximum {
-					maximum = disk.Temp
-				}
-				count++
+				disks = append(disks, disk)
 			}
 		}
-		if count >= 2 {
+		if len(disks) >= 2 {
+			maximum := sensors.MaxTemperature(disks, func(disk sensors.Disk) float64 {
+				return disk.Temp
+			})
 			result = append(result, tempStatus(string(group.kind), maximum))
 		}
 	}
