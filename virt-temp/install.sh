@@ -78,6 +78,20 @@ if ! find /sys/class/hwmon -name name -exec grep -l '^virt_temp$' {} + 2>/dev/nu
     fail "Le module est chargé, mais le périphérique hwmon virt_temp reste introuvable"
 fi
 
+while IFS= read -r previous_version; do
+    [[ "$previous_version" == "$version" ]] && continue
+    if [[ ! "$previous_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+        echo "Version DKMS invalide ignorée : $previous_version" >&2
+        continue
+    fi
+    "${elevate[@]}" dkms remove -m "$module" -v "$previous_version" --all
+    "${elevate[@]}" rm -rf -- "/usr/src/$module-$previous_version"
+done < <(
+    "${elevate[@]}" dkms status -m "$module" 2>/dev/null \
+        | sed -n "s|^$module/\([^,:]*\).*|\1|p" \
+        | sort -u
+)
+
 echo "virt-temp $version installé"
 echo "Configuration : $config"
 echo "Désinstallation : $uninstaller"

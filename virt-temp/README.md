@@ -44,6 +44,8 @@ cd "${archive%.tar.gz}"
 L'installateur lit la version incluse dans le paquet, installe les sources
 DKMS correspondantes, charge le module et active le service systemd. Une
 configuration existante dans `/etc/default/unraid-vsock-hwmon` est préservée.
+Lors d'une mise à jour, la nouvelle version est chargée et vérifiée avant que
+l'ancienne version du module soit retirée de DKMS.
 
 ## Désinstaller de Proxmox
 
