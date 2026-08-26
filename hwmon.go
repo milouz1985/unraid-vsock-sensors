@@ -20,15 +20,48 @@ import (
 
 const (
 	defaultHWMonInterval = time.Second
+	hwmonClassPath       = "/sys/class/hwmon"
 	virtTempName         = "virt_temp"
 )
+
+type hwmonTarget struct {
+	temperaturePath string
+	find            func(string) (string, error)
+}
+
+func newHWMonTarget() *hwmonTarget {
+	return &hwmonTarget{
+		find: func(name string) (string, error) {
+			return findHWMon(hwmonClassPath, name)
+		},
+	}
+}
+
+func (t *hwmonTarget) resolve() (string, error) {
+	if t.temperaturePath != "" {
+		return t.temperaturePath, nil
+	}
+	hwmonPath, err := t.find(virtTempName)
+	if err != nil {
+		return "", err
+	}
+	t.temperaturePath = filepath.Join(hwmonPath, "temp1_input")
+	return t.temperaturePath, nil
+}
+
+func (t *hwmonTarget) handleWriteError(err error) {
+	// A hwmonN directory may disappear and return under another number after a
+	// module reload.
+	if errors.Is(err, os.ErrNotExist) {
+		t.temperaturePath = ""
+	}
+}
 
 func hwmon(args []string) error {
 	fs := flag.NewFlagSet("hwmon", flag.ContinueOnError)
 	cid := fs.Uint("cid", 3, "guest vsock CID")
 	port := fs.Uint("port", defaultPort, "vsock port")
 	interval := fs.Duration("interval", defaultHWMonInterval, "temperature update interval")
-	path := fs.String("path", "", "virt-temp hwmon directory (detected automatically by default)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -45,22 +78,18 @@ func hwmon(args []string) error {
 		return errors.New("interval must be greater than zero")
 	}
 
-	hwmonPath := *path
-	if hwmonPath == "" {
-		var err error
-		hwmonPath, err = findHWMon(virtTempName)
-		if err != nil {
-			return err
-		}
-	}
-	temperaturePath := filepath.Join(hwmonPath, "temp1_input")
+	target := newHWMonTarget()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("publishing Unraid HDD maximum to %s every %s", temperaturePath, *interval)
+	log.Printf("publishing Unraid HDD maximum through %s every %s", virtTempName, *interval)
 	failed := false
 	for {
-		err := publishHDDMaximum(ctx, uint32(*cid), uint32(*port), temperaturePath, sensors.Fetch)
+		temperaturePath, err := target.resolve()
+		if err == nil {
+			err = publishHDDMaximum(ctx, uint32(*cid), uint32(*port), temperaturePath, sensors.Fetch)
+			target.handleWriteError(err)
+		}
 		if err != nil && !failed {
 			log.Printf("hwmon update failed; virt-temp watchdog will apply its failsafe: %v", err)
 			failed = true
@@ -79,8 +108,8 @@ func hwmon(args []string) error {
 	}
 }
 
-func findHWMon(name string) (string, error) {
-	paths, err := filepath.Glob("/sys/class/hwmon/hwmon*")
+func findHWMon(root, name string) (string, error) {
+	paths, err := filepath.Glob(filepath.Join(root, "hwmon*"))
 	if err != nil {
 		return "", err
 	}

@@ -54,3 +54,53 @@ func TestPublishHDDMaximumLeavesWatchdogInChargeOnError(t *testing.T) {
 		t.Fatalf("failed update changed temperature to %q", got)
 	}
 }
+
+func TestFindHWMon(t *testing.T) {
+	root := t.TempDir()
+	for directory, name := range map[string]string{
+		"hwmon0": "coretemp",
+		"hwmon3": virtTempName,
+	} {
+		path := filepath.Join(root, directory)
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "name"), []byte(name+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := findHWMon(root, virtTempName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, "hwmon3"); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestHWMonTargetRediscoversAfterModuleReload(t *testing.T) {
+	paths := []string{"/sys/class/hwmon/hwmon3", "/sys/class/hwmon/hwmon4"}
+	target := newHWMonTarget()
+	target.find = func(string) (string, error) {
+		path := paths[0]
+		paths = paths[1:]
+		return path, nil
+	}
+
+	first, err := target.resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "/sys/class/hwmon/hwmon3/temp1_input" {
+		t.Fatalf("unexpected first path %q", first)
+	}
+	target.handleWriteError(os.ErrNotExist)
+	second, err := target.resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != "/sys/class/hwmon/hwmon4/temp1_input" {
+		t.Fatalf("unexpected rediscovered path %q", second)
+	}
+}

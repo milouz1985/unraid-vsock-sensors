@@ -95,7 +95,6 @@ Hwmon options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
   --port PORT               AF_VSOCK port (default: 19090)
   --interval DURATION       Delay between updates (default: 1s)
-  --path PATH               virt-temp hwmon directory (detected by default)
 
 Sensor types:
   disk                      Select disks, pools, or disk groups

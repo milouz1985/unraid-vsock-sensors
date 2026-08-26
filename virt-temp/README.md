@@ -10,6 +10,9 @@ La sonde démarre à 100 °C et repasse à 100 °C lorsqu'elle n'a reçu aucune 
 déclenche ainsi une valeur de sécurité au lieu de conserver indéfiniment une
 ancienne température.
 
+Lorsque le chemin est détecté automatiquement, l'agent retrouve le périphérique
+si son numéro `hwmonN` change après un déchargement et rechargement du module.
+
 ## Compiler et charger le module
 
 ```sh
