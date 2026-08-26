@@ -12,8 +12,11 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
@@ -106,16 +109,25 @@ func serve(args []string) error {
 	}
 	defer listener.Close()
 	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
 	hbas := newHBACollector(*storcliCache)
 	// The `go` keyword starts run in a new goroutine, a lightweight concurrent
 	// task managed by Go. This lets the server accept requests immediately while
 	// StorCLI is refreshed independently in the background.
 	go hbas.run(ctx)
+	var clients sync.WaitGroup
+	defer clients.Wait()
 	for {
 		client, err := listener.Accept()
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			return fmt.Errorf("accept: %w", err)
 		}
 
@@ -130,7 +142,11 @@ func serve(args []string) error {
 
 		// Start one goroutine per accepted connection so a slow client does not
 		// prevent the accept loop from receiving and serving other clients.
-		go handle(client, *path, hbas)
+		clients.Add(1)
+		go func() {
+			defer clients.Done()
+			handle(client, *path, hbas)
+		}()
 	}
 }
 
