@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -93,6 +94,27 @@ func TestRealFetchErrorIsUnavailable(t *testing.T) {
 	_, err := service.Status(context.Background(), &device.StatusRequest{DeviceId: deviceID})
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("got %v, want unavailable", err)
+	}
+}
+
+func TestStatusReturnsUnavailableWhenVsockFetchTimesOut(t *testing.T) {
+	service := newUnraidService(42, 19090)
+	service.fetch = func(ctx context.Context, _ uint32, _ uint32) (sensors.Response, error) {
+		<-ctx.Done()
+		return sensors.Response{}, ctx.Err()
+	}
+
+	parent, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := service.Status(parent, &device.StatusRequest{DeviceId: deviceID})
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("got %v, want unavailable", err)
+	}
+	if elapsed := time.Since(started); elapsed < vsockRequestTimeout {
+		t.Fatalf("request returned after %v, before timeout %v", elapsed, vsockRequestTimeout)
+	} else if elapsed >= time.Second {
+		t.Fatalf("request returned after %v; VSOCK timeout was not applied", elapsed)
 	}
 }
 

@@ -15,9 +15,13 @@ import (
 )
 
 const (
-	deviceID            = "unraid-storage"
-	minDiskGroupSize    = 2
-	vsockRequestTimeout = 500 * time.Millisecond
+	deviceID         = "unraid-storage"
+	minDiskGroupSize = 2
+	// Keep failed VSOCK reads well below CoolerControl's minimum 500 ms poll
+	// interval so requests cannot accumulate across polling cycles. The server's
+	// three-second deadline is a defensive per-connection bound, not its latency
+	// budget; healthy reads only parse local cached state.
+	vsockRequestTimeout = 200 * time.Millisecond
 )
 
 type diskGroup struct {
