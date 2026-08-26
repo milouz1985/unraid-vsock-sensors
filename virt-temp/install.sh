@@ -13,6 +13,7 @@ binary="/usr/local/bin/unraid-vsock-sensors"
 unit="/etc/systemd/system/unraid-vsock-hwmon.service"
 config="/etc/default/unraid-vsock-hwmon"
 modules_load="/etc/modules-load.d/virt-temp.conf"
+uninstaller="/usr/local/sbin/uninstall-unraid-vsock-hwmon"
 working_dir="$(mktemp -d)"
 trap 'rm -rf -- "$working_dir"' EXIT
 
@@ -34,6 +35,7 @@ if [[ ! -d "$kernel_build" ]]; then
 fi
 
 [[ -x "$script_dir/unraid-vsock-sensors" ]] || fail "Binaire absent du paquet"
+[[ -x "$script_dir/uninstall.sh" ]] || fail "Script de désinstallation absent du paquet"
 [[ -d "$generated_source" ]] || fail "Sources DKMS absentes du paquet : $generated_source"
 
 "${elevate[@]}" install -d -m 0755 "$dkms_source"
@@ -56,6 +58,7 @@ if grep -q '^virt_temp ' /proc/modules; then
 fi
 
 "${elevate[@]}" install -m 0755 "$script_dir/unraid-vsock-sensors" "$binary"
+"${elevate[@]}" install -m 0755 "$script_dir/uninstall.sh" "$uninstaller"
 "${elevate[@]}" install -m 0644 "$script_dir/unraid-vsock-hwmon.service" "$unit"
 printf 'virt-temp\n' > "$working_dir/virt-temp.conf"
 "${elevate[@]}" install -m 0644 "$working_dir/virt-temp.conf" "$modules_load"
@@ -77,4 +80,5 @@ fi
 
 echo "virt-temp $version installé"
 echo "Configuration : $config"
+echo "Désinstallation : $uninstaller"
 echo "Vérification : sensors && systemctl status unraid-vsock-hwmon.service"

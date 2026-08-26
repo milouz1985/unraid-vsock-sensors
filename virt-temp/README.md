@@ -45,6 +45,18 @@ L'installateur lit la version incluse dans le paquet, installe les sources
 DKMS correspondantes, charge le module et active le service systemd. Une
 configuration existante dans `/etc/default/unraid-vsock-hwmon` est préservée.
 
+## Désinstaller de Proxmox
+
+L'installateur pose également une commande de désinstallation durable :
+
+```sh
+sudo uninstall-unraid-vsock-hwmon
+```
+
+Elle arrête le service, décharge le module, retire son inscription DKMS et
+supprime les fichiers installés. La configuration
+`/etc/default/unraid-vsock-hwmon` est volontairement conservée.
+
 ## Publier manuellement la température
 
 ```sh

@@ -29,6 +29,9 @@ mkdir -p "$package_dir" "$output_dir"
 VERSION="$version" "$script_dir/prepare-dkms.sh" "$package_dir" >/dev/null
 printf '%s\n' "$version" > "$package_dir/VERSION"
 install -m 0755 "$script_dir/install.sh" "$package_dir/install.sh"
+sed "s/@VERSION@/$version/g" "$script_dir/uninstall.sh.in" \
+    > "$package_dir/uninstall.sh"
+chmod 0755 "$package_dir/uninstall.sh"
 install -m 0644 "$script_dir/unraid-vsock-hwmon.service" \
     "$package_dir/unraid-vsock-hwmon.service"
 install -m 0644 "$script_dir/README.md" "$package_dir/README.md"

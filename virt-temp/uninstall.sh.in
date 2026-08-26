@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() { echo "$1" >&2; exit "${2:-1}"; }
+
+version="@VERSION@"
+module="virt-temp"
+service="unraid-vsock-hwmon.service"
+dkms_source="/usr/src/$module-$version"
+binary="/usr/local/bin/unraid-vsock-sensors"
+unit="/etc/systemd/system/$service"
+config="/etc/default/unraid-vsock-hwmon"
+modules_load="/etc/modules-load.d/virt-temp.conf"
+uninstaller="/usr/local/sbin/uninstall-unraid-vsock-hwmon"
+
+if (( EUID == 0 )); then
+    elevate=()
+elif command -v sudo >/dev/null 2>&1; then
+    elevate=(sudo)
+else
+    fail "La désinstallation nécessite root ou la commande sudo"
+fi
+
+for command in dkms modprobe systemctl; do
+    command -v "$command" >/dev/null 2>&1 || fail "Commande requise absente : $command"
+done
+
+"${elevate[@]}" systemctl disable --now "$service" 2>/dev/null || true
+if grep -q '^virt_temp ' /proc/modules; then
+    "${elevate[@]}" modprobe -r virt_temp
+fi
+
+if "${elevate[@]}" dkms status -m "$module" -v "$version" 2>/dev/null \
+    | grep -Fq "$module/$version"; then
+    "${elevate[@]}" dkms remove -m "$module" -v "$version" --all
+fi
+
+"${elevate[@]}" rm -f -- "$binary" "$unit" "$modules_load" "$uninstaller"
+"${elevate[@]}" rm -rf -- "$dkms_source"
+"${elevate[@]}" systemctl daemon-reload
+
+echo "virt-temp $version désinstallé"
+if [[ -e "$config" ]]; then
+    echo "Configuration conservée : $config"
+fi
