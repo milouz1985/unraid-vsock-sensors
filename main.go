@@ -52,6 +52,8 @@ func main() {
 		err = serve(os.Args[2:])
 	case "get":
 		err = get(os.Args[2:])
+	case "hwmon":
+		err = hwmon(os.Args[2:])
 	case "version", "--version":
 		fmt.Fprintln(os.Stdout, version)
 		return
@@ -68,11 +70,13 @@ func usage() {
   %[1]s serve [options]
   %[1]s get [options] TYPE SELECTOR
   %[1]s get [options] --json
+  %[1]s hwmon [options]
   %[1]s version
 
 Commands:
   serve                     Serve sensor data over AF_VSOCK
   get                       Read sensor data from an AF_VSOCK server
+  hwmon                     Publish the HDD maximum to a virt-temp hwmon device
   version                   Print the build version
 
 Serve options:
@@ -86,6 +90,12 @@ Get options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
   --port PORT               AF_VSOCK port (default: 19090)
   --json                    Print the complete JSON response
+
+Hwmon options:
+  --cid CID                 Guest AF_VSOCK CID (default: 3)
+  --port PORT               AF_VSOCK port (default: 19090)
+  --interval DURATION       Delay between updates (default: 1s)
+  --path PATH               virt-temp hwmon directory (detected by default)
 
 Sensor types:
   disk                      Select disks, pools, or disk groups

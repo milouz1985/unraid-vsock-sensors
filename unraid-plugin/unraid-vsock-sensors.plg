@@ -1,7 +1,7 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
 <!ENTITY name "unraid-vsock-sensors">
-<!ENTITY author "francois">
+<!ENTITY author "François HOYEZ">
 <!ENTITY version "0.2.1">
 <!ENTITY pluginURL "https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg">
 <!ENTITY package "unraid-vsock-sensors-0.2.1-x86_64-1.txz">
