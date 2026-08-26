@@ -27,6 +27,75 @@ type hbaCollector struct {
 	collect func(context.Context) ([]sensors.HBA, error)
 }
 
+type hbaMetadata struct {
+	id         string
+	model      string
+	pciAddress string
+}
+
+type hbaReader struct {
+	metadata map[int]hbaMetadata
+	discover func(context.Context) (map[int]hbaMetadata, error)
+	read     func(context.Context) ([]sensors.HBA, error)
+}
+
+func newHBAReader() *hbaReader {
+	return &hbaReader{discover: discoverHBAs, read: readHBATemperatures}
+}
+
+func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
+	if r.metadata == nil {
+		metadata, err := r.discover(ctx)
+		if err != nil {
+			return nil, err
+		}
+		r.metadata = metadata
+	}
+	readings, err := r.read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if applyHBAMetadata(readings, r.metadata) {
+		return readings, nil
+	}
+
+	// Controller indices may change after a hotplug. Refresh metadata once when
+	// a temperature references an index absent from the cached discovery.
+	metadata, err := r.discover(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.metadata = metadata
+	if !applyHBAMetadata(readings, r.metadata) {
+		return nil, errors.New("storcli metadata missing for a controller")
+	}
+	return readings, nil
+}
+
+func applyHBAMetadata(readings []sensors.HBA, metadata map[int]hbaMetadata) bool {
+	for index := range readings {
+		controller, err := hbaControllerNumber(readings[index].Name)
+		if err != nil {
+			return false
+		}
+		identity, ok := metadata[controller]
+		if !ok {
+			return false
+		}
+		readings[index].ID = identity.id
+		readings[index].Model = identity.model
+		readings[index].PCIAddress = identity.pciAddress
+	}
+	return true
+}
+
+func hbaControllerNumber(name string) (int, error) {
+	if !strings.HasPrefix(name, "hba") {
+		return 0, fmt.Errorf("invalid HBA name %q", name)
+	}
+	return strconv.Atoi(strings.TrimPrefix(name, "hba"))
+}
+
 // StorCLI normally completes in about 1.5 seconds. Five seconds leaves enough
 // margin under load while limiting how long stale readings survive a hung call.
 const storcliTimeout = 5 * time.Second
@@ -42,11 +111,12 @@ const (
 var errNoHBA = errors.New("storcli returned no controllers")
 
 func newHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
+	reader := newHBAReader()
 	collector := &hbaCollector{
 		interval: interval,
 		mode:     mode,
 		err:      errors.New("HBA temperatures have not been collected yet"),
-		collect:  collectHBAs,
+		collect:  reader.collect,
 	}
 	if mode == hbaModeDisabled {
 		collector.err = nil
@@ -122,7 +192,7 @@ func (c *hbaCollector) read() ([]sensors.HBA, error) {
 	return slices.Clone(c.readings), c.err
 }
 
-func collectHBAs(ctx context.Context) ([]sensors.HBA, error) {
+func readHBATemperatures(ctx context.Context) ([]sensors.HBA, error) {
 	command := exec.CommandContext(
 		ctx,
 		"storcli",
@@ -141,6 +211,116 @@ func collectHBAs(ctx context.Context) ([]sensors.HBA, error) {
 	}
 	readings, err := parseStorCLI(out)
 	return readings, err
+}
+
+func discoverHBAs(ctx context.Context) (map[int]hbaMetadata, error) {
+	command := exec.CommandContext(ctx, "storcli", "/cALL", "show", "J", "nolog")
+	out, err := command.Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("storcli discovery timeout: %w", ctx.Err())
+	}
+	if err != nil {
+		return nil, err
+	}
+	return parseStorCLIMetadata(out)
+}
+
+func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
+	type basics struct {
+		Model        string `json:"Model"`
+		ProductName  string `json:"Product Name"`
+		SerialNumber string `json:"Serial Number"`
+		SASAddress   string `json:"SAS Address"`
+		PCIAddress   string `json:"PCI Address"`
+	}
+	var root struct {
+		Controllers []struct {
+			CommandStatus struct {
+				Controller int    `json:"Controller"`
+				Status     string `json:"Status"`
+			} `json:"Command Status"`
+			ResponseData struct {
+				Basics     basics `json:"Basics"`
+				Model      string `json:"Model"`
+				Product    string `json:"Product Name"`
+				Serial     string `json:"Serial Number"`
+				SASAddress string `json:"SAS Address"`
+				PCIAddress string `json:"PCI Address"`
+			} `json:"Response Data"`
+		} `json:"Controllers"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("parse storcli discovery JSON: %w", err)
+	}
+	if len(root.Controllers) == 0 {
+		return nil, errNoHBA
+	}
+
+	result := make(map[int]hbaMetadata, len(root.Controllers))
+	ids := make(map[string]int, len(root.Controllers))
+	for _, controller := range root.Controllers {
+		number := controller.CommandStatus.Controller
+		if controller.CommandStatus.Status != "Success" {
+			return nil, fmt.Errorf("storcli controller %d status is %q", number, controller.CommandStatus.Status)
+		}
+		data := controller.ResponseData
+		serial := firstHBAValue(data.Basics.SerialNumber, data.Serial)
+		sasAddress := firstHBAValue(data.Basics.SASAddress, data.SASAddress)
+		pciAddress := normalizePCIAddress(firstHBAValue(data.Basics.PCIAddress, data.PCIAddress))
+		model := firstHBAValue(data.Basics.Model, data.Basics.ProductName, data.Model, data.Product)
+		id := hbaStableID(number, serial, sasAddress, pciAddress)
+		if previous, duplicate := ids[id]; duplicate {
+			return nil, fmt.Errorf("storcli controllers %d and %d have duplicate identity %q", previous, number, id)
+		}
+		ids[id] = number
+		result[number] = hbaMetadata{id: id, model: model, pciAddress: pciAddress}
+	}
+	return result, nil
+}
+
+func firstHBAValue(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		switch strings.ToLower(value) {
+		case "", "n/a", "na", "none", "unknown":
+			continue
+		default:
+			return value
+		}
+	}
+	return ""
+}
+
+func hbaStableID(controller int, serial, sasAddress, pciAddress string) string {
+	if serial = firstHBAValue(serial); serial != "" {
+		return "serial:" + strings.ToLower(serial)
+	}
+	if sasAddress = firstHBAValue(sasAddress); sasAddress != "" {
+		return "sas:" + strings.TrimPrefix(strings.ToLower(sasAddress), "0x")
+	}
+	if pciAddress != "" {
+		return "pci:" + pciAddress
+	}
+	return fmt.Sprintf("controller:%d", controller)
+}
+
+func normalizePCIAddress(address string) string {
+	parts := strings.Split(strings.TrimSpace(address), ":")
+	if len(parts) != 4 {
+		return ""
+	}
+	values := make([]uint64, len(parts))
+	for index, part := range parts {
+		value, err := strconv.ParseUint(part, 16, 16)
+		if err != nil {
+			return ""
+		}
+		values[index] = value
+	}
+	if values[0] > 0xffff || values[1] > 0xff || values[2] > 0x1f || values[3] > 7 {
+		return ""
+	}
+	return fmt.Sprintf("%04x:%02x:%02x.%x", values[0], values[1], values[2], values[3])
 }
 
 func parseStorCLI(data []byte) ([]sensors.HBA, error) {

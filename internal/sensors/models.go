@@ -51,8 +51,11 @@ func (d Disk) IsExternal() bool {
 
 // HBA describes a host bus adapter and its latest temperature.
 type HBA struct {
-	Name string  `json:"name"`
-	Temp float64 `json:"temp_c"`
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	Model      string  `json:"model,omitempty"`
+	PCIAddress string  `json:"pci_address,omitempty"`
+	Temp       float64 `json:"temp_c"`
 }
 
 // Response contains a snapshot of every sensor exposed by the server.

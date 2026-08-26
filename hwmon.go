@@ -5,11 +5,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -20,9 +20,10 @@ import (
 
 const (
 	defaultHWMonInterval = time.Second
-	hwmonClassPath       = "/sys/class/hwmon"
-	virtTempName         = "virt_temp"
+	virtTempDevicePath   = "/dev/virt-temp"
 	minHWMonGroupSize    = 2
+	maxHWMonIDSize       = 63
+	maxHWMonLabelSize    = 95
 )
 
 type hwmonReading struct {
@@ -77,46 +78,21 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 		})
 	}
 	for _, hba := range state.HBAs {
+		id := hba.ID
+		if id == "" {
+			id = hba.Name
+		}
+		label := hba.Name
+		if hba.Model != "" {
+			label += " (" + hba.Model + ")"
+		}
 		hbaReadings = append(hbaReadings, hwmonReading{
-			id:          "hba:" + hba.Name,
-			label:       hba.Name,
+			id:          "hba:" + id,
+			label:       label,
 			temperature: hba.Temp,
 		})
 	}
 	return diskReadings, hbaReadings
-}
-
-type hwmonTarget struct {
-	temperaturePath string
-	find            func(string) (string, error)
-}
-
-func newHWMonTarget() *hwmonTarget {
-	return &hwmonTarget{
-		find: func(name string) (string, error) {
-			return findHWMon(hwmonClassPath, name)
-		},
-	}
-}
-
-func (t *hwmonTarget) resolve() (string, error) {
-	if t.temperaturePath != "" {
-		return t.temperaturePath, nil
-	}
-	hwmonPath, err := t.find(virtTempName)
-	if err != nil {
-		return "", err
-	}
-	t.temperaturePath = filepath.Join(hwmonPath, "temp1_input")
-	return t.temperaturePath, nil
-}
-
-func (t *hwmonTarget) handleWriteError(err error) {
-	// A hwmonN directory may disappear and return under another number after a
-	// module reload.
-	if errors.Is(err, os.ErrNotExist) {
-		t.temperaturePath = ""
-	}
 }
 
 func hwmon(args []string) error {
@@ -124,6 +100,7 @@ func hwmon(args []string) error {
 	cid := fs.Uint("cid", 3, "guest vsock CID")
 	port := fs.Uint("port", defaultPort, "vsock port")
 	interval := fs.Duration("interval", defaultHWMonInterval, "temperature update interval")
+	device := fs.String("device", virtTempDevicePath, "virt-temp control device")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -140,20 +117,15 @@ func hwmon(args []string) error {
 		return errors.New("interval must be greater than zero")
 	}
 
-	target := newHWMonTarget()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("publishing Unraid HDD maximum through %s every %s", virtTempName, *interval)
+	log.Printf("publishing dynamic Unraid temperatures through %s every %s", *device, *interval)
 	failed := false
 	for {
-		temperaturePath, err := target.resolve()
-		if err == nil {
-			err = publishHDDMaximum(ctx, uint32(*cid), uint32(*port), temperaturePath, sensors.Fetch)
-			target.handleWriteError(err)
-		}
+		err := publishHWMonState(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
 		if err != nil && !failed {
-			log.Printf("hwmon update failed; virt-temp watchdog will apply its failsafe: %v", err)
+			log.Printf("hwmon update failed; existing sensors will apply their failsafe: %v", err)
 			failed = true
 		} else if err == nil && failed {
 			log.Printf("hwmon updates recovered")
@@ -170,25 +142,11 @@ func hwmon(args []string) error {
 	}
 }
 
-func findHWMon(root, name string) (string, error) {
-	paths, err := filepath.Glob(filepath.Join(root, "hwmon*"))
-	if err != nil {
-		return "", err
-	}
-	for _, path := range paths {
-		data, err := os.ReadFile(filepath.Join(path, "name"))
-		if err == nil && strings.TrimSpace(string(data)) == name {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("hwmon device %q not found", name)
-}
-
-func publishHDDMaximum(
+func publishHWMonState(
 	parent context.Context,
 	cid uint32,
 	port uint32,
-	path string,
+	device string,
 	fetch func(context.Context, uint32, uint32) (sensors.Response, error),
 ) error {
 	ctx, cancel := context.WithTimeout(parent, requestTimeout)
@@ -197,22 +155,64 @@ func publishHDDMaximum(
 	if err != nil {
 		return err
 	}
+	disks, hbas := makeHWMonReadings(state)
+	var diskErr, hbaErr error
 	if state.Error != "" {
-		return errors.New(state.Error)
+		diskErr = fmt.Errorf("disks: %s", state.Error)
+	} else if err := writeHWMonReadings(device, "disk", disks); err != nil {
+		diskErr = fmt.Errorf("disks: %w", err)
 	}
+	if state.HBAError != "" {
+		hbaErr = fmt.Errorf("HBA: %s", state.HBAError)
+	} else if err := writeHWMonReadings(device, "hba", hbas); err != nil {
+		hbaErr = fmt.Errorf("HBA: %w", err)
+	}
+	return errors.Join(diskErr, hbaErr)
+}
 
-	var disks []sensors.Disk
-	for _, disk := range state.Disks {
-		if !disk.IsExternal() && disk.Kind() == sensors.DiskKindHDD {
-			disks = append(disks, disk)
+func writeHWMonReadings(path, namespace string, readings []hwmonReading) (err error) {
+	device, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, device.Close())
+	}()
+	return encodeHWMonReadings(device, namespace, readings)
+}
+
+func encodeHWMonReadings(out io.Writer, namespace string, readings []hwmonReading) error {
+	prefix := namespace + ":"
+	ids := make(map[string]struct{}, len(readings))
+	if namespace != "disk" && namespace != "hba" {
+		return fmt.Errorf("invalid hwmon namespace %q", namespace)
+	}
+	for _, reading := range readings {
+		if !strings.HasPrefix(reading.id, prefix) || len(reading.id) > maxHWMonIDSize ||
+			strings.ContainsAny(reading.id, "\t\r\n") {
+			return fmt.Errorf("invalid hwmon sensor ID %q", reading.id)
+		}
+		if _, duplicate := ids[reading.id]; duplicate {
+			return fmt.Errorf("duplicate hwmon sensor ID %q", reading.id)
+		}
+		ids[reading.id] = struct{}{}
+		if reading.label == "" || len(reading.label) > maxHWMonLabelSize ||
+			strings.ContainsAny(reading.label, "\t\r\n") {
+			return fmt.Errorf("invalid hwmon sensor label %q", reading.label)
+		}
+		if math.IsNaN(reading.temperature) || math.IsInf(reading.temperature, 0) {
+			return fmt.Errorf("invalid temperature for %q", reading.id)
+		}
+		if reading.temperature < 0 || reading.temperature > 150 {
+			return fmt.Errorf("temperature out of range for %q", reading.id)
 		}
 	}
-	temperature := 0.0
-	if len(disks) > 0 {
-		temperature = sensors.MaxTemperature(disks, func(disk sensors.Disk) float64 {
-			return disk.Temp
-		})
+	for _, reading := range readings {
+		milliCelsius := int64(math.Round(reading.temperature * 1000))
+		if _, err := fmt.Fprintf(out, "%s\t%d\t%s\n", reading.id, milliCelsius, reading.label); err != nil {
+			return err
+		}
 	}
-	milliCelsius := int64(math.Round(temperature * 1000))
-	return os.WriteFile(path, []byte(fmt.Sprintf("%d\n", milliCelsius)), 0644)
+	_, err := fmt.Fprintf(out, "commit\t%s\n", namespace)
+	return err
 }

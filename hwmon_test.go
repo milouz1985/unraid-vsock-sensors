@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"unraid-vsock-sensors/internal/sensors"
@@ -38,97 +41,105 @@ func TestMakeHWMonReadings(t *testing.T) {
 	}
 }
 
-func TestPublishHDDMaximum(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "temp1_input")
-	state := sensors.Response{Disks: []sensors.Disk{
-		{Name: "disk1", Rotational: true, Temp: 34},
-		{Name: "disk2", Rotational: true, Temp: 38.5},
-		{Name: "external", Rotational: true, Transport: "usb", Temp: 60},
-		{Name: "cache", Transport: "nvme", Temp: 48},
-	}}
+func TestEncodeHWMonReadings(t *testing.T) {
+	readings := []hwmonReading{
+		{id: "disk:1", label: "disk1 (sda)", temperature: 34.125},
+		{id: "disk:group:hdd", label: "HDD maximum", temperature: 38},
+	}
+	var output bytes.Buffer
+	if err := encodeHWMonReadings(&output, "disk", readings); err != nil {
+		t.Fatal(err)
+	}
+	want := "disk:1\t34125\tdisk1 (sda)\n" +
+		"disk:group:hdd\t38000\tHDD maximum\n" +
+		"commit\tdisk\n"
+	if got := output.String(); got != want {
+		t.Fatalf("encoded snapshot = %q, want %q", got, want)
+	}
+}
+
+func TestEncodeHWMonReadingsRejectsInvalidFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		reading   hwmonReading
+	}{
+		{name: "namespace", namespace: "other", reading: hwmonReading{id: "other:1", label: "disk1", temperature: 30}},
+		{name: "wrong prefix", namespace: "disk", reading: hwmonReading{id: "hba:0", label: "hba0", temperature: 30}},
+		{name: "newline", namespace: "disk", reading: hwmonReading{id: "disk:1", label: "disk1\nbad", temperature: 30}},
+		{name: "NaN", namespace: "disk", reading: hwmonReading{id: "disk:1", label: "disk1", temperature: math.NaN()}},
+		{name: "huge", namespace: "disk", reading: hwmonReading{id: "disk:1", label: "disk1", temperature: 1e300}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := encodeHWMonReadings(&bytes.Buffer{}, test.namespace, []hwmonReading{test.reading}); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestEncodeHWMonReadingsValidatesBeforeWriting(t *testing.T) {
+	readings := []hwmonReading{
+		{id: "disk:1", label: "disk1", temperature: 30},
+		{id: "disk:2", label: "invalid\nlabel", temperature: 31},
+	}
+	var output bytes.Buffer
+	if err := encodeHWMonReadings(&output, "disk", readings); err == nil {
+		t.Fatal("expected validation error")
+	}
+	if output.Len() != 0 {
+		t.Fatalf("validation wrote %q before returning an error", output.String())
+	}
+}
+
+func TestEncodeHWMonReadingsRejectsDuplicateIDsBeforeWriting(t *testing.T) {
+	readings := []hwmonReading{
+		{id: "hba:serial:1234", label: "hba0", temperature: 50},
+		{id: "hba:serial:1234", label: "hba1", temperature: 51},
+	}
+	var output bytes.Buffer
+	if err := encodeHWMonReadings(&output, "hba", readings); err == nil {
+		t.Fatal("expected duplicate ID error")
+	}
+	if output.Len() != 0 {
+		t.Fatalf("validation wrote %q before returning an error", output.String())
+	}
+}
+
+func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "virt-temp")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
 	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
-		return state, nil
+		return sensors.Response{
+			Error: "disks.ini failed",
+			HBAs:  []sensors.HBA{{Name: "hba0", Temp: 51}},
+		}, nil
 	}
-
-	if err := publishHDDMaximum(context.Background(), 42, 19090, path, fetch); err != nil {
-		t.Fatal(err)
+	err := publishHWMonState(context.Background(), 42, 19090, path, fetch)
+	if err == nil {
+		t.Fatal("expected disk error")
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	if message := err.Error(); !strings.Contains(message, "disks: disks.ini failed") {
+		t.Fatalf("unexpected error %q", message)
 	}
-	if got := string(data); got != "38500\n" {
-		t.Fatalf("got %q, want 38500 milli-degrees", got)
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if got, want := string(data), "hba:hba0\t51000\thba0\ncommit\thba\n"; got != want {
+		t.Fatalf("HBA snapshot = %q, want %q", got, want)
 	}
 }
 
-func TestPublishHDDMaximumLeavesWatchdogInChargeOnError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "temp1_input")
-	if err := os.WriteFile(path, []byte("42000\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+func TestPublishHWMonStateReturnsFetchError(t *testing.T) {
+	want := errors.New("vsock failed")
 	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
-		return sensors.Response{}, errors.New("vsock failed")
+		return sensors.Response{}, want
 	}
-
-	if err := publishHDDMaximum(context.Background(), 42, 19090, path, fetch); err == nil {
-		t.Fatal("expected fetch error")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := string(data); got != "42000\n" {
-		t.Fatalf("failed update changed temperature to %q", got)
-	}
-}
-
-func TestFindHWMon(t *testing.T) {
-	root := t.TempDir()
-	for directory, name := range map[string]string{
-		"hwmon0": "coretemp",
-		"hwmon3": virtTempName,
-	} {
-		path := filepath.Join(root, directory)
-		if err := os.Mkdir(path, 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(path, "name"), []byte(name+"\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	got, err := findHWMon(root, virtTempName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := filepath.Join(root, "hwmon3"); got != want {
-		t.Fatalf("got %q, want %q", got, want)
-	}
-}
-
-func TestHWMonTargetRediscoversAfterModuleReload(t *testing.T) {
-	paths := []string{"/sys/class/hwmon/hwmon3", "/sys/class/hwmon/hwmon4"}
-	target := newHWMonTarget()
-	target.find = func(string) (string, error) {
-		path := paths[0]
-		paths = paths[1:]
-		return path, nil
-	}
-
-	first, err := target.resolve()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != "/sys/class/hwmon/hwmon3/temp1_input" {
-		t.Fatalf("unexpected first path %q", first)
-	}
-	target.handleWriteError(os.ErrNotExist)
-	second, err := target.resolve()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second != "/sys/class/hwmon/hwmon4/temp1_input" {
-		t.Fatalf("unexpected rediscovered path %q", second)
+	if err := publishHWMonState(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, want) {
+		t.Fatalf("got %v, want %v", err, want)
 	}
 }

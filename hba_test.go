@@ -155,6 +155,57 @@ func TestParseStorCLI(t *testing.T) {
 	}
 }
 
+func TestParseStorCLIMetadataUsesSerialIdentity(t *testing.T) {
+	data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Product Name":"INSPUR 3008IT","Serial Number":"56c92bf0002e6705","SAS Address":" 56c92bf0002e6705","PCI Address":"00:06:10:00","Bus Number":6,"Device Number":16,"Function Number":0,"Domain ID":0}}]}`)
+	metadata, err := parseStorCLIMetadata(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := hbaMetadata{
+		id:         "serial:56c92bf0002e6705",
+		model:      "INSPUR 3008IT",
+		pciAddress: "0000:06:10.0",
+	}
+	if got := metadata[0]; got != want {
+		t.Fatalf("metadata = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseStorCLIMetadataRejectsDuplicateIdentity(t *testing.T) {
+	data := []byte(`{"Controllers":[
+		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Basics":{"Serial Number":"same"}}},
+		{"Command Status":{"Controller":1,"Status":"Success"},"Response Data":{"Basics":{"Serial Number":"same"}}}
+	]}`)
+	if _, err := parseStorCLIMetadata(data); err == nil {
+		t.Fatal("expected duplicate identity error")
+	}
+}
+
+func TestHBAReaderCachesDiscovery(t *testing.T) {
+	discoveries := 0
+	reader := &hbaReader{
+		discover: func(context.Context) (map[int]hbaMetadata, error) {
+			discoveries++
+			return map[int]hbaMetadata{0: {id: "serial:1234", model: "SAS3008"}}, nil
+		},
+		read: func(context.Context) ([]sensors.HBA, error) {
+			return []sensors.HBA{{Name: "hba0", Temp: 50}}, nil
+		},
+	}
+	for range 2 {
+		readings, err := reader.collect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(readings) != 1 || readings[0].ID != "serial:1234" {
+			t.Fatalf("unexpected readings: %#v", readings)
+		}
+	}
+	if discoveries != 1 {
+		t.Fatalf("discovery count = %d, want 1", discoveries)
+	}
+}
+
 func TestParseStorCLIRejectsUnexpectedOutput(t *testing.T) {
 	for name, data := range map[string]string{
 		"failed status": `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Failure"},"Response Data":{}}]}`,

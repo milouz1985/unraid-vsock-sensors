@@ -1,17 +1,23 @@
 # Expérimentation hwmon virt-temp
 
-Ce prototype publie la température maximale des HDD internes d'Unraid sous la
-forme d'une sonde Linux `hwmon` native sur l'hôte Proxmox. Le module noyau se
-contente de stocker et d'exposer une valeur ; `unraid-vsock-sensors hwmon` la
-récupère par AF_VSOCK.
+Ce prototype publie les températures des disques internes et des HBA d'Unraid
+sous forme de sondes Linux `hwmon` natives sur l'hôte Proxmox. Le module noyau
+crée dynamiquement les canaux d'un périphérique hwmon unique ;
+`unraid-vsock-sensors hwmon` lui transmet les instantanés récupérés par
+AF_VSOCK via `/dev/virt-temp`.
 
-La sonde démarre à 100 °C et repasse à 100 °C lorsqu'elle n'a reçu aucune mise
-à jour depuis 10 secondes. L'arrêt de l'agent ou la perte de la connexion VSOCK
-déclenche ainsi une valeur de sécurité au lieu de conserver indéfiniment une
-ancienne température.
+Chaque sonde repasse à 100 °C lorsqu'elle n'a reçu aucune mise à jour depuis
+10 secondes. L'arrêt de l'agent ou la perte de la connexion VSOCK déclenche
+ainsi une valeur de sécurité au lieu de conserver indéfiniment une ancienne
+température.
 
-Lorsque le chemin est détecté automatiquement, l'agent retrouve le périphérique
-si son numéro `hwmonN` change après un déchargement et rechargement du module.
+Les disques USB ne sont pas publiés. Les maximums HDD, SATA SSD et NVMe sont
+créés lorsqu'au moins deux disques appartiennent au groupe. Les sondes suivent
+dynamiquement les disques et HBA présents à chaque instantané réussi.
+Chaque identifiant conserve son numéro `tempN` pendant toute la durée de
+chargement du module, y compris si la sonde disparaît puis revient.
+L'identité d'un HBA utilise en priorité son numéro de série, puis son adresse
+SAS, son adresse PCI et enfin son numéro de contrôleur StorCLI.
 
 ## Construire le paquet sur la machine de développement
 
@@ -76,13 +82,13 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now unraid-vsock-hwmon.service
 ```
 
-Vérifier séparément la sonde native et l'agent :
+Vérifier les sondes natives et l'agent :
 
 ```sh
-sensors virt_temp-virtual-0
+sensors | sed -n '/virt_temp/,+4p'
 systemctl status unraid-vsock-hwmon.service
 ```
 
-Après dix secondes sans mise à jour réussie, la lecture de `temp1_input`
+Après dix secondes sans mise à jour réussie, chaque `temp1_input` existant
 retourne `100000` milli-degrés Celsius. Le délai peut être modifié au chargement
 du module, par exemple avec `modprobe virt-temp stale_timeout=15`.

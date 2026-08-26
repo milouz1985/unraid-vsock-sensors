@@ -74,8 +74,8 @@ fi
 "${elevate[@]}" systemctl daemon-reload
 "${elevate[@]}" systemctl enable --now unraid-vsock-hwmon.service
 
-if ! find /sys/class/hwmon -name name -exec grep -l '^virt_temp$' {} + 2>/dev/null | grep -q .; then
-    fail "Le module est chargé, mais le périphérique hwmon virt_temp reste introuvable"
+if [[ ! -c /dev/virt-temp ]]; then
+    fail "Le module est chargé, mais le périphérique /dev/virt-temp reste introuvable"
 fi
 
 while IFS= read -r previous_version; do
