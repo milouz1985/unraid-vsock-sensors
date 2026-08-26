@@ -65,29 +65,15 @@ func TestHBACollectorFailurePolicy(t *testing.T) {
 	setSuccessfulRefresh(42)
 	checkTemp(42)
 
-	// Two transient failures keep the last successful value available.
-	for range maxFailedRefreshes - 1 {
-		setFailedRefresh()
-		checkTemp(42)
-	}
-
-	// The third consecutive failure invalidates the stale value.
 	setFailedRefresh()
 	readings, err := collector.read()
 	if len(readings) != 0 || err == nil {
-		t.Fatalf("stale readings should be unavailable: %#v, %v", readings, err)
+		t.Fatalf("failed refresh should invalidate readings: %#v, %v", readings, err)
 	}
 
-	// A success restores service and implicitly resets the failure count: the
-	// next isolated failure must keep the new value available.
+	// A later successful refresh restores the readings.
 	setSuccessfulRefresh(50)
-	setFailedRefresh()
 	checkTemp(50)
-
-	readings, err = collector.read()
-	if err == nil || err.Error() != "storcli failed" {
-		t.Fatalf("refresh error was not exposed: %v", err)
-	}
 }
 
 func TestParseStorCLI(t *testing.T) {

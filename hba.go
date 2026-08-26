@@ -22,15 +22,11 @@ type hbaCollector struct {
 	mu       sync.RWMutex
 	readings []sensors.HBA
 	err      error
-	failures int
 	// collect is replaceable in tests to simulate a slow StorCLI command.
 	collect func(context.Context) ([]sensors.HBA, error)
 }
 
-const (
-	storcliTimeout     = 10 * time.Second
-	maxFailedRefreshes = 3
-)
+const storcliTimeout = 10 * time.Second
 
 func newHBACollector(interval time.Duration) *hbaCollector {
 	return &hbaCollector{
@@ -80,19 +76,13 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.err = err
-	if err == nil {
-		c.readings = readings
-		c.failures = 0
+	if err != nil {
+		// Do not publish a stale temperature. Downstream consumers such as
+		// CoolerControl apply their own missing-reading policy.
+		c.readings = nil
 		return
 	}
-
-	// Keep the last known temperatures through brief StorCLI failures. After
-	// three consecutive failures, discard them rather than serving stale sensor
-	// values indefinitely. A successful refresh resets the counter above.
-	c.failures++
-	if c.failures >= maxFailedRefreshes {
-		c.readings = nil
-	}
+	c.readings = readings
 }
 
 // read never invokes StorCLI. The copy keeps callers from modifying the slice

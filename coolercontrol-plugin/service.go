@@ -172,9 +172,6 @@ func makeStatus(state sensors.Response) []*models.Status {
 	for _, disk := range state.Disks {
 		result = append(result, tempStatus(sensorID("disk", disk.ID), disk.Temp))
 	}
-	// The Unraid server deliberately keeps the last valid HBA readings through
-	// two transient StorCLI failures. Publish every reading it still provides;
-	// after the third failure the server empties HBAs itself.
 	for _, hba := range state.HBAs {
 		result = append(result, tempStatus(sensorID("hba", hba.Name), hba.Temp))
 	}

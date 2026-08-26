@@ -71,21 +71,6 @@ func TestDeviceOmitsUnknownServerVersion(t *testing.T) {
 	}
 }
 
-func TestTransientHBAErrorKeepsCachedReading(t *testing.T) {
-	state := sampleResponse()
-	state.HBAError = "storcli failed"
-	readings := makeStatus(state)
-	for _, reading := range readings {
-		if reading.Id == "hba-hba0" {
-			if got := reading.Metric.(*models.Status_Temp).Temp; got != 49 {
-				t.Fatalf("got HBA temperature %v, want 49", got)
-			}
-			return
-		}
-	}
-	t.Fatal("cached HBA reading was hidden by a transient error")
-}
-
 func TestRealFetchErrorIsUnavailable(t *testing.T) {
 	service := newUnraidService(42, 19090)
 	service.fetch = func(context.Context, uint32, uint32) (sensors.Response, error) {
