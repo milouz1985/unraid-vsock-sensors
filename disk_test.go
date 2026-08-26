@@ -98,6 +98,9 @@ func TestSelectDisksExcludesExternalDisksFromKindSelectors(t *testing.T) {
 	if got := selectDisks(disks, "external"); len(got) != 1 || got[0].Name != "external" {
 		t.Fatalf("explicit name: %#v", got)
 	}
+	if got := selectDisks(disks, "all"); len(got) != 2 {
+		t.Fatalf("all should include external disks: %#v", got)
+	}
 }
 
 func TestReadDisksRejectsMissingTemperatureOnActiveDisk(t *testing.T) {

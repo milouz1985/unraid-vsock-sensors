@@ -10,6 +10,8 @@ réveille pas les disques en veille.
 - Sur Proxmox, `get` retourne une température seule, directement exploitable
   par un capteur de type commande.
 - `hdd`, `ssd` et `nvme` retournent la température maximale du groupe.
+- Les sélecteurs de groupe excluent les disques USB externes ; `all`, un nom
+  Unraid ou un device explicite les incluent volontairement.
 - Un nom Unraid (`disk1`, nom de pool) ou un device (`sdb`, `nvme0n1`) permet
   d'interroger un disque indépendamment.
 - `hba` retourne la température ROC maximale rapportée par StorCLI ; `hba0`,
