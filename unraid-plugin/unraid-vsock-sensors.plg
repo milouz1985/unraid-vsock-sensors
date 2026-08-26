@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "unraid-vsock-sensors">
 <!ENTITY author "francois">
-<!ENTITY version "0.2.0">
+<!ENTITY version "0.2.1">
 <!ENTITY pluginURL "https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg">
-<!ENTITY package "unraid-vsock-sensors-0.2.0-x86_64-1.txz">
-<!ENTITY packageURL "https://git.lan.home/francois/unraid-vsock-sensors/releases/download/v0.2.0/unraid-vsock-sensors-0.2.0-x86_64-1.txz">
-<!ENTITY packageMD5 "70d7ffcd9cf940eff1134359c40ea9c4">
-<!ENTITY packageSHA256 "441e28255cd4abe2147fa25065616930b7dc98d5b8d07a81da50641fcba67ef7">
+<!ENTITY package "unraid-vsock-sensors-0.2.1-x86_64-1.txz">
+<!ENTITY packageURL "https://git.lan.home/francois/unraid-vsock-sensors/releases/download/v0.2.1/unraid-vsock-sensors-0.2.1-x86_64-1.txz">
+<!ENTITY packageMD5 "332c373f1c2d988b7b2e24c27d6b533b">
+<!ENTITY packageSHA256 "2beb5195a20447f0da0f00797c297d4e918689c2993204b5450bcc4393b7d666">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
 ]>
 
@@ -37,7 +37,7 @@ set -e
 name="unraid-vsock-sensors"
 cfgdir="/boot/config/plugins/$name"
 mkdir -p "$cfgdir"
-find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-0.2.0-x86_64-1.txz" -delete 2>/dev/null || true
+find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-0.2.1-x86_64-1.txz" -delete 2>/dev/null || true
 if [[ ! -f "$cfgdir/$name.cfg" ]]; then
     install -m 0644 "/usr/local/emhttp/plugins/$name/default.cfg" "$cfgdir/$name.cfg"
 fi
