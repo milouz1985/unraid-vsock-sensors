@@ -18,12 +18,12 @@ import (
 )
 
 type hbaCollector struct {
-	interval time.Duration
-	mode     hbaMode
-	mu       sync.RWMutex
-	readings []sensors.HBA
-	err      error
-	detected bool
+	interval    time.Duration
+	mode        hbaMode
+	mu          sync.RWMutex
+	readings    []sensors.HBA
+	err         error
+	hadReadings bool
 	// collect is replaceable in tests to simulate a slow StorCLI command.
 	collect func(context.Context) ([]sensors.HBA, error)
 }
@@ -148,7 +148,7 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, storcliTimeout)
 	defer cancel()
 
-	// Do not hold the lock here: StorCLI may take up to ten seconds, while
+	// Do not hold the lock here: StorCLI may take up to five seconds, while
 	// incoming vsock requests must remain able to read the current snapshot.
 	readings, err := c.collect(ctx)
 
@@ -162,7 +162,7 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	// prevents hwmon clients from deleting existing sensors instead of letting
 	// their watchdog apply its failsafe.
 	absent := errors.Is(err, exec.ErrNotFound) || errors.Is(err, errNoHBA)
-	if c.mode == hbaModeAuto && !c.detected && absent {
+	if c.mode == hbaModeAuto && !c.hadReadings && absent {
 		err = nil
 	}
 	c.err = err
@@ -174,7 +174,7 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	}
 	c.readings = readings
 	if len(readings) > 0 {
-		c.detected = true
+		c.hadReadings = true
 	}
 }
 
