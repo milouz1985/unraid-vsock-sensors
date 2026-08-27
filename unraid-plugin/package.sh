@@ -44,6 +44,7 @@ install -m 0755 "$plugin_dir/service.sh" \
 install -m 0644 "$plugin_dir/slack-desc" "$stage_dir/install/slack-desc"
 
 package_path="$dist_dir/$package_name"
+# Fixed metadata makes identical sources produce the same package checksum.
 tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
     -C "$stage_dir" -cJf "$package_path" .
 package_md5="$(md5sum "$package_path" | cut -d' ' -f1)"

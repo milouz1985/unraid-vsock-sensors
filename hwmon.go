@@ -58,6 +58,8 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 				groupDisks = append(groupDisks, disk)
 			}
 		}
+		// A maximum is useful only for a real group; with one disk it would
+		// duplicate the individual sensor under another name.
 		if len(groupDisks) < minHWMonGroupSize {
 			continue
 		}

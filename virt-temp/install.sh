@@ -78,6 +78,7 @@ if [[ ! -c /dev/virt-temp ]]; then
     fail "Le module est chargé, mais le périphérique /dev/virt-temp reste introuvable"
 fi
 
+# Remove older DKMS releases only after the new module and service are active.
 while IFS= read -r previous_version; do
     [[ "$previous_version" == "$version" ]] && continue
     if [[ ! "$previous_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then

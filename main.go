@@ -141,6 +141,7 @@ func serve(args []string) error {
 	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// Closing the listener is what releases a blocked Accept during shutdown.
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
@@ -182,6 +183,8 @@ func serve(args []string) error {
 func handle(conn net.Conn, path string, collector *hbaCollector) {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(requestTimeout))
+	// The protocol accepts one fixed command and caps input so an idle or
+	// malformed host connection cannot retain unbounded resources.
 	line, err := bufio.NewReader(io.LimitReader(conn, 1024)).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return

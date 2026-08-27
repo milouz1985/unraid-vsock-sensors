@@ -26,6 +26,8 @@ dirty="$(git -C "$repo_dir" status --porcelain --untracked-files=normal)"
 if [[ -n "$tag" && -z "$dirty" ]]; then
     version="${tag#v}"
 else
+    # Development versions retain the nearest release, distance and commit so
+    # packages remain traceable even when built outside a tagged release.
     base_tag="$(git -C "$repo_dir" describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || true)"
     if [[ -n "$base_tag" ]]; then
         base_version="${base_tag#v}"
