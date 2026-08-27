@@ -1,11 +1,11 @@
-# Expérimentation hwmon virt-temp
+# Intégration hwmon virt-temp
 
-Ce prototype publie les températures des disques internes et des HBA d'Unraid
-sous forme de sondes Linux `hwmon` natives sur l'hôte Proxmox. Comme
-`drivetemp`, le module noyau crée dynamiquement un périphérique hwmon par
-sonde, contenant chacun un unique canal `temp1` ;
-`unraid-vsock-sensors hwmon` lui transmet les instantanés récupérés par
-AF_VSOCK via `/dev/virt-temp`.
+Cette intégration publie les températures des disques internes et des HBA d'Unraid
+sous forme de sondes Linux `hwmon` natives sur l'hôte Proxmox. Le module crée
+deux périphériques : `unraid_storage` regroupe les disques et leurs maximums,
+et `unraid_hba` regroupe les contrôleurs. Chaque sonde occupe un canal `tempN`.
+`unraid-vsock-sensors hwmon` leur transmet les mesures récupérées par AF_VSOCK
+via `/dev/virt-temp`.
 
 Chaque sonde repasse à 100 °C lorsqu'elle n'a reçu aucune mise à jour depuis
 10 secondes. L'arrêt de l'agent ou la perte de la connexion VSOCK déclenche
@@ -13,28 +13,26 @@ ainsi une valeur de sécurité au lieu de conserver indéfiniment une ancienne
 température.
 
 Les disques USB ne sont pas publiés. Les maximums HDD, SATA SSD et NVMe sont
-créés lorsqu'au moins deux disques appartiennent au groupe. Les périphériques
-suivent dynamiquement les disques et HBA présents à chaque instantané réussi :
-un périphérique disparaît avec sa sonde et retrouve la même identité lorsqu'il
-réapparaît.
-Le parent platform conserve une identité technique stable dérivée de l'ID de
-la sonde, tandis que son nom hwmon lisible est dérivé du label Unraid, par
-exemple `unraid_disk1`, `unraid_hdd_maximum` ou `unraid_hba0`.
+créés lorsqu'au moins deux disques appartiennent au groupe. Le premier
+instantané valide reçu après le démarrage de l'agent configure l'inventaire de
+chaque périphérique. Cet inventaire et l'ordre de ses canaux restent ensuite
+fixes jusqu'au prochain redémarrage de l'agent.
 
-Comme `drivetemp`, le module crée et supprime chaque périphérique hwmon
-indépendamment. Le `commit` termine un inventaire complet afin d'identifier les
-sondes disparues, mais ne constitue pas une transaction globale : l'échec
-exceptionnel de création d'un périphérique n'annule pas les mises à jour des
-autres sondes. L'erreur est renvoyée à l'agent et la sonde concernée est
-réessayée à l'instantané suivant.
+Une mise à jour ne rafraîchit que les identifiants connus. Si une sonde attendue
+disparaît, son canal n'est pas supprimé : son watchdog atteint 100 °C. Le canal
+maximum de son groupe n'est pas rafraîchi non plus, afin qu'une courbe utilisant
+uniquement ce maximum atteigne également le failsafe. Le journal précise qu'il
+faut vérifier la disparition puis redémarrer `unraid-vsock-hwmon.service` si
+elle est volontaire. Une nouvelle sonde est signalée mais n'est exposée qu'après
+ce redémarrage. Celui-ci constitue donc l'acceptation explicite de la nouvelle
+topologie et reconstruit les deux inventaires.
 
-Un instantané validé est autoritaire : une sonde absente est considérée comme
-supprimée. L'agent ne valide donc jamais une famille dont la collecte a échoué ;
-les périphériques existants restent enregistrés et passent au failsafe par leur
-watchdog. Un disque endormi reste quant à lui présent dans l'instantané avec
-une température de 0 °C, conformément au cache `disks.ini` d'Unraid.
+Une famille dont la collecte échoue n'est pas mise à jour ; tous ses canaux
+finissent donc au failsafe. Un disque endormi reste présent avec une température
+de 0 °C, conformément au cache `disks.ini` d'Unraid.
 
-Une session accepte au maximum 1 024 sondes distinctes avant son `commit`.
+Une session accepte au maximum 1 024 sondes distinctes avant son opération
+finale `configure` ou `commit`.
 Cette borne protège les allocations de mémoire noyau contrôlées depuis
 l'espace utilisateur ; elle ne représente pas une limite matérielle des HBA.
 
@@ -107,7 +105,7 @@ sudo systemctl enable --now unraid-vsock-hwmon.service
 Vérifier les sondes natives et l'agent :
 
 ```sh
-sensors | sed -n '/virt_temp/,+3p'
+sensors unraid_storage-* unraid_hba-*
 systemctl status unraid-vsock-hwmon.service
 ```
 

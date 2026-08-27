@@ -30,6 +30,17 @@ type hwmonReading struct {
 	id          string
 	label       string
 	temperature float64
+	members     []string
+}
+
+type hwmonInventory struct {
+	initialized bool
+	readings    []hwmonReading
+}
+
+type hwmonPublisher struct {
+	disks hwmonInventory
+	hbas  hwmonInventory
 }
 
 type hwmonDiskGroup struct {
@@ -53,9 +64,11 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 
 	for _, group := range hwmonDiskGroups {
 		groupDisks := make([]sensors.Disk, 0, len(internalDisks))
+		members := make([]string, 0, len(internalDisks))
 		for _, disk := range internalDisks {
 			if disk.Kind() == group.kind {
 				groupDisks = append(groupDisks, disk)
+				members = append(members, "disk:"+disk.ID)
 			}
 		}
 		// A maximum is useful only for a real group; with one disk it would
@@ -64,8 +77,9 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 			continue
 		}
 		diskReadings = append(diskReadings, hwmonReading{
-			id:    "disk:group:" + string(group.kind),
-			label: group.label,
+			id:      "disk:group:" + string(group.kind),
+			label:   group.label,
+			members: members,
 			temperature: sensors.MaxTemperature(groupDisks, func(disk sensors.Disk) float64 {
 				return disk.Temp
 			}),
@@ -122,13 +136,14 @@ func hwmon(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("publishing dynamic Unraid temperatures through %s every %s", *device, *interval)
+	log.Printf("publishing fixed Unraid hwmon inventories through %s every %s", *device, *interval)
+	publisher := &hwmonPublisher{}
 	lastError := ""
 	for {
-		err := publishHWMonState(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
+		err := publisher.publish(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
 		if err != nil && err.Error() != lastError {
 			lastError = err.Error()
-			log.Printf("hwmon update failed; existing sensors will apply their failsafe: %s", lastError)
+			log.Printf("hwmon update warning; unavailable sensors will apply their failsafe: %s", lastError)
 		} else if err == nil && lastError != "" {
 			log.Printf("hwmon updates recovered")
 			lastError = ""
@@ -144,7 +159,7 @@ func hwmon(args []string) error {
 	}
 }
 
-func publishHWMonState(
+func (publisher *hwmonPublisher) publish(
 	parent context.Context,
 	cid uint32,
 	port uint32,
@@ -159,23 +174,81 @@ func publishHWMonState(
 	}
 	disks, hbas := makeHWMonReadings(state)
 	var diskErr, hbaErr error
-	// A committed snapshot is authoritative: any omitted sensor is removed by
-	// virt-temp. Never commit a family whose collection failed; leave its
-	// existing devices untouched so their watchdog can apply the failsafe.
 	if state.Error != "" {
 		diskErr = fmt.Errorf("disks: %s", state.Error)
-	} else if err := writeHWMonReadings(device, "disk", disks); err != nil {
+	} else if err := publishHWMonFamily(device, "disk", &publisher.disks, disks); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
 	}
 	if state.HBAError != "" {
 		hbaErr = fmt.Errorf("HBA: %s", state.HBAError)
-	} else if err := writeHWMonReadings(device, "hba", hbas); err != nil {
+	} else if err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
 	}
 	return errors.Join(diskErr, hbaErr)
 }
 
-func writeHWMonReadings(path, namespace string, readings []hwmonReading) (err error) {
+func publishHWMonFamily(
+	path, namespace string,
+	inventory *hwmonInventory,
+	current []hwmonReading,
+) error {
+	if !inventory.initialized {
+		if err := writeHWMonReadings(path, namespace, "configure", current); err != nil {
+			return err
+		}
+		inventory.initialized = true
+		inventory.readings = append([]hwmonReading(nil), current...)
+		return nil
+	}
+
+	currentByID := make(map[string]hwmonReading, len(current))
+	for _, reading := range current {
+		currentByID[reading.id] = reading
+	}
+	expectedByID := make(map[string]hwmonReading, len(inventory.readings))
+	for _, reading := range inventory.readings {
+		expectedByID[reading.id] = reading
+	}
+
+	updates := make([]hwmonReading, 0, len(inventory.readings))
+	var topologyErrors []error
+	for _, expected := range inventory.readings {
+		reading, found := currentByID[expected.id]
+		if !found || reading.label != expected.label {
+			topologyErrors = append(topologyErrors, fmt.Errorf(
+				"expected sensor %q is missing or changed; failsafe active, restart unraid-vsock-hwmon.service if intentional",
+				expected.label,
+			))
+			continue
+		}
+		complete := true
+		for _, member := range expected.members {
+			currentMember, found := currentByID[member]
+			expectedMember, expected := expectedByID[member]
+			if !found || !expected || currentMember.label != expectedMember.label {
+				complete = false
+				break
+			}
+		}
+		if complete {
+			updates = append(updates, reading)
+		}
+	}
+	for _, reading := range current {
+		if _, expected := expectedByID[reading.id]; !expected {
+			topologyErrors = append(topologyErrors, fmt.Errorf(
+				"new sensor %q is not published; restart unraid-vsock-hwmon.service to accept the new topology",
+				reading.label,
+			))
+		}
+	}
+	if err := writeHWMonReadings(path, namespace, "commit", updates); err != nil {
+		return errors.Join(append(topologyErrors, err)...)
+	}
+	return errors.Join(topologyErrors...)
+}
+
+func writeHWMonReadings(path, namespace, operation string, readings []hwmonReading) (err error) {
 	device, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {
 		return err
@@ -183,14 +256,17 @@ func writeHWMonReadings(path, namespace string, readings []hwmonReading) (err er
 	defer func() {
 		err = errors.Join(err, device.Close())
 	}()
-	return encodeHWMonReadings(device, namespace, readings)
+	return encodeHWMonReadings(device, namespace, operation, readings)
 }
 
-func encodeHWMonReadings(out io.Writer, namespace string, readings []hwmonReading) error {
+func encodeHWMonReadings(out io.Writer, namespace, operation string, readings []hwmonReading) error {
 	prefix := namespace + ":"
 	ids := make(map[string]struct{}, len(readings))
 	if namespace != "disk" && namespace != "hba" {
 		return fmt.Errorf("invalid hwmon namespace %q", namespace)
+	}
+	if operation != "configure" && operation != "commit" {
+		return fmt.Errorf("invalid hwmon operation %q", operation)
 	}
 	for _, reading := range readings {
 		if !strings.HasPrefix(reading.id, prefix) || len(reading.id) > maxHWMonIDSize ||
@@ -218,6 +294,6 @@ func encodeHWMonReadings(out io.Writer, namespace string, readings []hwmonReadin
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(out, "commit\t%s\n", namespace)
+	_, err := fmt.Fprintf(out, "%s\t%s\n", operation, namespace)
 	return err
 }

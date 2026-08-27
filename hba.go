@@ -156,7 +156,7 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	// In auto mode, an initially absent StorCLI executable or controller means
 	// that this system has no HBA monitoring to expose. Once an HBA has been
 	// detected, the same condition is a collection failure: keeping the error
-	// prevents hwmon clients from deleting existing sensors instead of letting
+	// prevents the fixed HBA channels from receiving incomplete updates and lets
 	// their watchdog apply its failsafe.
 	absent := errors.Is(err, exec.ErrNotFound) || errors.Is(err, errNoHBA)
 	if c.mode == hbaModeAuto && !c.hadReadings && absent {

@@ -160,9 +160,14 @@ Celsius. Elles conviennent donc à une source `cmd` de fan2go.
 
 ## Capteurs hwmon natifs
 
-Le module expérimental `virt-temp` présente automatiquement les groupes, les
-disques et les HBA comme des sondes Linux standard. Ils sont utilisables sans
+Le module `virt-temp` présente deux périphériques Linux standard,
+`unraid_storage` et `unraid_hba`, dont les canaux correspondent aux groupes,
+disques et HBA découverts au démarrage de l'agent. Ils sont utilisables sans
 intégration spécifique par CoolerControl, fan2go, fancontrol et lm-sensors.
+L'inventaire reste fixe pendant l'exécution : une sonde attendue qui disparaît
+passe au failsafe avec son maximum de groupe. Après une modification volontaire
+de la topologie, redémarrer `unraid-vsock-hwmon.service` pour reconstruire les
+canaux.
 Consultez [`virt-temp/README.md`](virt-temp/README.md) pour la construction et
 l'installation du paquet Proxmox.
 

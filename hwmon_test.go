@@ -27,7 +27,7 @@ func TestMakeHWMonReadings(t *testing.T) {
 
 	disks, hbas := makeHWMonReadings(state)
 	wantDisks := []hwmonReading{
-		{id: "disk:group:hdd", label: "HDD maximum", temperature: 38},
+		{id: "disk:group:hdd", label: "HDD maximum", temperature: 38, members: []string{"disk:1", "disk:2"}},
 		{id: "disk:1", label: "disk1 (sda)", temperature: 34},
 		{id: "disk:2", label: "disk2 (sdb)", temperature: 38},
 		{id: "disk:3", label: "cache (nvme0n1)", temperature: 45},
@@ -47,7 +47,7 @@ func TestEncodeHWMonReadings(t *testing.T) {
 		{id: "disk:group:hdd", label: "HDD maximum", temperature: 38},
 	}
 	var output bytes.Buffer
-	if err := encodeHWMonReadings(&output, "disk", readings); err != nil {
+	if err := encodeHWMonReadings(&output, "disk", "commit", readings); err != nil {
 		t.Fatal(err)
 	}
 	want := "disk:1\t34125\tdisk1 (sda)\n" +
@@ -72,7 +72,7 @@ func TestEncodeHWMonReadingsRejectsInvalidFields(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := encodeHWMonReadings(&bytes.Buffer{}, test.namespace, []hwmonReading{test.reading}); err == nil {
+			if err := encodeHWMonReadings(&bytes.Buffer{}, test.namespace, "commit", []hwmonReading{test.reading}); err == nil {
 				t.Fatal("expected validation error")
 			}
 		})
@@ -85,7 +85,7 @@ func TestEncodeHWMonReadingsValidatesBeforeWriting(t *testing.T) {
 		{id: "disk:2", label: "invalid\nlabel", temperature: 31},
 	}
 	var output bytes.Buffer
-	if err := encodeHWMonReadings(&output, "disk", readings); err == nil {
+	if err := encodeHWMonReadings(&output, "disk", "commit", readings); err == nil {
 		t.Fatal("expected validation error")
 	}
 	if output.Len() != 0 {
@@ -99,7 +99,7 @@ func TestEncodeHWMonReadingsRejectsDuplicateIDsBeforeWriting(t *testing.T) {
 		{id: "hba:serial:1234", label: "hba1", temperature: 51},
 	}
 	var output bytes.Buffer
-	if err := encodeHWMonReadings(&output, "hba", readings); err == nil {
+	if err := encodeHWMonReadings(&output, "hba", "commit", readings); err == nil {
 		t.Fatal("expected duplicate ID error")
 	}
 	if output.Len() != 0 {
@@ -118,7 +118,7 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 			HBAs:  []sensors.HBA{{Name: "hba0", Temp: 51}},
 		}, nil
 	}
-	err := publishHWMonState(context.Background(), 42, 19090, path, fetch)
+	err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, path, fetch)
 	if err == nil {
 		t.Fatal("expected disk error")
 	}
@@ -129,9 +129,46 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if got, want := string(data), "hba:hba0\t51000\thba0\ncommit\thba\n"; got != want {
+	if got, want := string(data), "hba:hba0\t51000\thba0\nconfigure\thba\n"; got != want {
 		t.Fatalf("HBA snapshot = %q, want %q", got, want)
 	}
+}
+
+func TestPublisherKeepsMissingSensorAndGroupStale(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "virt-temp")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &hwmonPublisher{}
+	states := [][]hwmonReading{
+		makeDiskReadings(sensors.Response{Disks: []sensors.Disk{
+			{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
+			{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Temp: 38},
+		}}),
+		makeDiskReadings(sensors.Response{Disks: []sensors.Disk{
+			{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},
+		}}),
+	}
+	for index, readings := range states {
+		if index > 0 {
+			if err := os.Truncate(path, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_ = publishHWMonFamily(path, "disk", &publisher.disks, readings)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "disk:1\t35000\tdisk1 (sda)\ncommit\tdisk\n"; got != want {
+		t.Fatalf("update = %q, want only the available individual sensor %q", got, want)
+	}
+}
+
+func makeDiskReadings(state sensors.Response) []hwmonReading {
+	disks, _ := makeHWMonReadings(state)
+	return disks
 }
 
 func TestPublishHWMonStateReturnsFetchError(t *testing.T) {
@@ -139,7 +176,7 @@ func TestPublishHWMonStateReturnsFetchError(t *testing.T) {
 	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
 		return sensors.Response{}, want
 	}
-	if err := publishHWMonState(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, want) {
+	if err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, want) {
 		t.Fatalf("got %v, want %v", err, want)
 	}
 }
