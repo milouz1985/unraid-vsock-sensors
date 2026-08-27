@@ -8,7 +8,7 @@ Environment=UNRAID_VSOCK_CID=3
 Environment=UNRAID_VSOCK_PORT=19090
 Environment=UNRAID_VSOCK_INTERVAL=1s
 EnvironmentFile=-/etc/default/unraid-vsock-hwmon
-ExecStart=/usr/local/bin/unraid-vsock-sensors hwmon --cid ${UNRAID_VSOCK_CID} --port ${UNRAID_VSOCK_PORT} --interval ${UNRAID_VSOCK_INTERVAL}
+ExecStart=/usr/bin/unraid-vsock-sensors hwmon --cid ${UNRAID_VSOCK_CID} --port ${UNRAID_VSOCK_PORT} --interval ${UNRAID_VSOCK_INTERVAL}
 Restart=on-failure
 RestartSec=2s
 

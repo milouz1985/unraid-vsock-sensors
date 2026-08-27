@@ -43,7 +43,7 @@ build: ## Compile un binaire Linux statique
 unraid-package: ## Crée le plugin serveur installable dans Unraid
 	GO="$(GO)" VERSION="$(VERSION)" ./unraid-plugin/package.sh
 
-hwmon-package: ## Crée le paquet hwmon installable sur Proxmox sans Go
+hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
 	GO="$(GO)" VERSION="$(VERSION)" ./virt-temp/package.sh
 
 build: | $(BIN_DIR)

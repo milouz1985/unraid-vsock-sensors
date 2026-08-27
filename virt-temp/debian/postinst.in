@@ -1,0 +1,62 @@
+#!/bin/sh
+set -e
+
+module="virt-temp"
+version="@VERSION@"
+service="unraid-vsock-hwmon.service"
+kernel_release="$(uname -r)"
+
+if [ "$1" != "configure" ]; then
+    exit 0
+fi
+
+if [ ! -d "/lib/modules/$kernel_release/build" ]; then
+    echo "En-têtes absents pour le noyau $kernel_release." >&2
+    echo "Installez proxmox-headers-$kernel_release puis exécutez : apt --fix-broken install" >&2
+    exit 1
+fi
+
+if ! dkms status -m "$module" -v "$version" 2>/dev/null | grep -Fq "$module/$version"; then
+    dkms add -m "$module" -v "$version"
+fi
+dkms build --force -m "$module" -v "$version"
+dkms install --force -m "$module" -v "$version"
+
+# Migrate installations made by the former tarball installer only after the
+# replacement module has built successfully. Its unit in /etc would otherwise
+# override the packaged unit in /usr/lib.
+if [ -e /usr/local/sbin/uninstall-unraid-vsock-hwmon ]; then
+    rm -f -- \
+        /etc/modules-load.d/virt-temp.conf \
+        /etc/systemd/system/unraid-vsock-hwmon.service \
+        /usr/local/bin/unraid-vsock-sensors \
+        /usr/local/sbin/uninstall-unraid-vsock-hwmon
+fi
+
+systemctl stop "$service" 2>/dev/null || true
+if grep -q '^virt_temp ' /proc/modules; then
+    modprobe -r virt_temp
+fi
+modprobe virt_temp
+systemctl daemon-reload
+systemctl enable --now "$service"
+
+# Keep only the DKMS release owned by the installed Debian package. This runs
+# after the new module is active so a failed upgrade leaves the old one usable.
+dkms status -m "$module" 2>/dev/null \
+    | sed -n "s|^$module/\([^,:]*\).*|\1|p" \
+    | sort -u \
+    | while IFS= read -r previous_version; do
+        [ "$previous_version" = "$version" ] && continue
+        if ! printf '%s\n' "$previous_version" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z.+~-]*$'; then
+            echo "Version DKMS invalide ignorée : $previous_version" >&2
+            continue
+        fi
+        dkms remove -m "$module" -v "$previous_version" --all
+        rm -rf -- "/usr/src/$module-$previous_version"
+    done
+
+if [ ! -c /dev/virt-temp ]; then
+    echo "Le module est chargé, mais /dev/virt-temp reste introuvable." >&2
+    exit 1
+fi

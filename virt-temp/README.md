@@ -43,9 +43,9 @@ SAS, son adresse PCI et enfin son numéro de contrôleur StorCLI.
 
 ## Construire le paquet sur la machine de développement
 
-Go est nécessaire uniquement sur la machine de développement. Le script
-cross-compile le binaire Linux et crée dans `dist/` une archive accompagnée de
-sa somme SHA-256 :
+Go et `dpkg-deb` sont nécessaires uniquement sur la machine de développement.
+Le script cross-compile le binaire Linux amd64 et crée le paquet Debian dans
+`dist/` :
 
 ```sh
 ./virt-temp/package.sh
@@ -56,36 +56,29 @@ qu'une branche de développement conserve son suffixe `-dev`.
 
 ## Installer sur Proxmox
 
-Seuls DKMS, les outils de compilation C et les en-têtes du noyau en cours sont
-nécessaires sur Proxmox ; Go et Git ne le sont pas :
+Installer les en-têtes du noyau Proxmox courant en même temps que le paquet :
 
 ```sh
-sudo apt install dkms build-essential \
-  "proxmox-headers-$(uname -r)" lm-sensors
-archive="$(find . -maxdepth 1 -name 'unraid-vsock-sensors-hwmon-*-linux-amd64.tar.gz' -print -quit)"
-sha256sum -c "$archive.sha256"
-tar -xzf "$archive"
-cd "${archive%.tar.gz}"
-./install.sh
+sudo apt install "proxmox-headers-$(uname -r)" \
+  ./unraid-vsock-sensors-hwmon_X.Y.Z-1_amd64.deb
 ```
 
-L'installateur lit la version incluse dans le paquet, installe les sources
-DKMS correspondantes, charge le module et active le service systemd. Une
-configuration existante dans `/etc/default/unraid-vsock-hwmon` est préservée.
-Lors d'une mise à jour, la nouvelle version est chargée et vérifiée avant que
-l'ancienne version du module soit retirée de DKMS.
+`apt` installe les dépendances DKMS, compile et charge le module, puis active le
+service systemd. Une configuration existante dans
+`/etc/default/unraid-vsock-hwmon` est préservée. Le paquet migre également une
+installation réalisée avec l'ancien tarball. Lors d'une mise à jour, installer
+simplement le nouveau `.deb` avec la même commande.
 
 ## Désinstaller de Proxmox
 
-L'installateur pose également une commande de désinstallation durable :
+Retirer le paquet tout en conservant sa configuration :
 
 ```sh
-sudo uninstall-unraid-vsock-hwmon
+sudo apt remove unraid-vsock-sensors-hwmon
 ```
 
-Elle arrête le service, décharge le module, retire son inscription DKMS et
-supprime les fichiers installés. La configuration
-`/etc/default/unraid-vsock-hwmon` est volontairement conservée.
+Utiliser `apt purge` à la place pour supprimer également
+`/etc/default/unraid-vsock-hwmon`.
 
 ## Publier manuellement la température
 
@@ -93,15 +86,12 @@ supprime les fichiers installés. La configuration
 sudo unraid-vsock-sensors hwmon --cid 42 --port 19090 --interval 1s
 ```
 
-Pour un fonctionnement continu, installer l'unité systemd fournie et remplacer
-ses valeurs par défaut si nécessaire :
+Le paquet active automatiquement le service. Pour changer le CID, modifier sa
+configuration puis le redémarrer :
 
 ```sh
-sudo install -m 0644 virt-temp/unraid-vsock-hwmon.service /etc/systemd/system/
-printf 'UNRAID_VSOCK_CID=42\nUNRAID_VSOCK_PORT=19090\n' | \
-  sudo tee /etc/default/unraid-vsock-hwmon
-sudo systemctl daemon-reload
-sudo systemctl enable --now unraid-vsock-hwmon.service
+sudo editor /etc/default/unraid-vsock-hwmon
+sudo systemctl restart unraid-vsock-hwmon.service
 ```
 
 Vérifier les sondes natives et l'agent :
