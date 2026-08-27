@@ -4,7 +4,7 @@ Section: admin
 Priority: optional
 Architecture: @ARCHITECTURE@
 Maintainer: François HOYEZ <francois.hoyez@gmail.com>
-Depends: dkms, build-essential, kmod, systemd
+Depends: dkms, build-essential, kmod, systemd, proxmox-default-headers
 Recommends: lm-sensors
 Description: Publish Unraid temperatures as native hwmon sensors
  Receives cached disk and HBA temperatures from an Unraid VM over AF_VSOCK

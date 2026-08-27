@@ -1,6 +1,6 @@
 [Unit]
 Description=Publish Unraid VSOCK temperatures through hwmon
-After=network.target
+After=systemd-modules-load.service network.target
 
 [Service]
 Type=simple
@@ -8,6 +8,7 @@ Environment=UNRAID_VSOCK_CID=3
 Environment=UNRAID_VSOCK_PORT=19090
 Environment=UNRAID_VSOCK_INTERVAL=1s
 EnvironmentFile=-/etc/default/unraid-vsock-hwmon
+ExecStartPre=/usr/sbin/modprobe virt_temp
 ExecStart=/usr/bin/unraid-vsock-sensors hwmon --cid ${UNRAID_VSOCK_CID} --port ${UNRAID_VSOCK_PORT} --interval ${UNRAID_VSOCK_INTERVAL}
 Restart=on-failure
 RestartSec=2s

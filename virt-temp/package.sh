@@ -6,6 +6,7 @@ repo_dir="$(cd -- "$script_dir/.." && pwd)"
 go_command="${GO:-go}"
 architecture="${GOARCH:-amd64}"
 version="$(VERSION="${VERSION:-}" "$repo_dir/version.sh")"
+debian_revision="${DEBIAN_REVISION:-1}"
 output_dir="${DIST_DIR:-$repo_dir/dist}"
 package="unraid-vsock-sensors-hwmon"
 build_dir="$(mktemp -d)"
@@ -16,19 +17,23 @@ if [[ "$architecture" != "amd64" ]]; then
     echo "Le paquet Proxmox prend uniquement en charge amd64." >&2
     exit 2
 fi
+if [[ ! "$debian_revision" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Révision Debian invalide : $debian_revision" >&2
+    exit 2
+fi
 
 # Debian uses ~ for prereleases and reserves the final -N component for the
 # packaging revision. A tagged 0.4.0 therefore becomes 0.4.0-1, while a Git
 # development build sorts before it as 0.4.0~dev.N.gHASH-1.
-debian_version="${version/-dev./~dev.}-1"
+debian_version="${version/-dev./~dev.}-$debian_revision"
 output="$output_dir/${package}_${debian_version}_${architecture}.deb"
 
 mkdir -p \
     "$package_root/DEBIAN" \
-    "$package_root/etc/default" \
     "$package_root/usr/bin" \
     "$package_root/usr/lib/modules-load.d" \
     "$package_root/usr/lib/systemd/system" \
+    "$package_root/usr/share/$package" \
     "$package_root/usr/share/doc/$package" \
     "$output_dir"
 
@@ -47,9 +52,8 @@ install -m 0644 "$script_dir/unraid-vsock-hwmon.service" \
 install -m 0644 "$script_dir/README.md" \
     "$package_root/usr/share/doc/$package/README.md"
 install -m 0644 "$script_dir/default" \
-    "$package_root/etc/default/unraid-vsock-hwmon"
+    "$package_root/usr/share/$package/unraid-vsock-hwmon.default"
 printf 'virt-temp\n' > "$package_root/usr/lib/modules-load.d/virt-temp.conf"
-printf '/etc/default/unraid-vsock-hwmon\n' > "$package_root/DEBIAN/conffiles"
 
 sed -e "s/@DEBIAN_VERSION@/$debian_version/g" \
     -e "s/@ARCHITECTURE@/$architecture/g" \

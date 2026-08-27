@@ -1,56 +1,300 @@
 # unraid-vsock-sensors
 
-Expose les températures de disques déjà mises en cache par Unraid à l'hôte
-Proxmox via `AF_VSOCK`. Aucun appel SMART n'est effectué, donc l'outil ne
-réveille pas les disques en veille.
+`unraid-vsock-sensors` transmet les températures des disques et des contrôleurs
+HBA d'une VM Unraid vers son hôte Proxmox par `AF_VSOCK`.
 
-## Fonctionnement
+Sur Proxmox, ces températures peuvent être :
 
-- Dans la VM Unraid, `serve` lit `/var/local/emhttp/disks.ini` à chaque requête.
-- Sur Proxmox, `get` retourne une température seule, directement exploitable
-  par un capteur de type commande.
-- `hdd`, `ssd` et `nvme` retournent la température maximale du groupe.
-- Les sélecteurs de groupe excluent les disques USB externes ; `all`, un nom
-  Unraid ou un device explicite les incluent volontairement.
-- Les SSD utilisant un autre transport que SATA ou NVMe (`other-ssd`, par
-  exemple SAS) ne forment volontairement ni un groupe agrégé ni un sélecteur
-  CLI. Ils restent accessibles par `all`, leur nom Unraid ou leur device.
-- Un nom Unraid (`disk1`, nom de pool) ou un device (`sdb`, `nvme0n1`) permet
-  d'interroger un disque indépendamment.
-- `hba` retourne la température ROC maximale rapportée par StorCLI ; `hba0`,
-  `hba1`, etc. permettent de sélectionner chaque contrôleur.
-- Pour un HDD en veille (`temp="*"`), le serveur renvoie `0 °C`, qui signifie
-  que la sonde est inactive. Le spindown ne provoque donc pas une fausse alerte
-  à `100 °C` dans CoolerControl et aucune ancienne mesure ne reste figée.
-- Les slots Unraid non assignés (`DISK_NP`) et la clé de démarrage `flash` ne
-  sont pas exposés comme des sondes.
-- Une vraie erreur de lecture ou une température invalide fait toujours échouer
-  la commande, afin que CoolerControl puisse la traiter comme une panne.
+- exposées comme sondes Linux `hwmon` natives pour CoolerControl, fan2go,
+  fancontrol ou lm-sensors ;
+- interrogées directement en ligne de commande ;
+- utilisées sans réseau IP entre la VM et l'hôte.
 
-## Compiler
+Le serveur lit le cache de températures d'Unraid. Il n'exécute jamais
+`smartctl` et ne réveille donc pas les disques en veille.
 
-```sh
-make build
+## Architecture
+
+```text
+VM Unraid                                      Hôte Proxmox
+┌────────────────────────────┐                 ┌─────────────────────────────┐
+│ disks.ini                  │                 │ unraid-vsock-sensors hwmon │
+│ StorCLI (HBA, optionnel)   │                 │            │                │
+│            │               │     AF_VSOCK    │            ▼                │
+│ unraid-vsock-sensors serve ├────────────────►│ /dev/virt-temp             │
+└────────────────────────────┘                 │            │                │
+                                               │            ▼                │
+                                               │ unraid_storage / unraid_hba│
+                                               └─────────────────────────────┘
 ```
 
-Le binaire statique est créé dans `bin/unraid-vsock-sensors`.
+Deux composants utilisent le même binaire :
 
-La version, dérivée du tag Git, est disponible dans le binaire et dans les
-réponses JSON du serveur :
+- le plugin Unraid lance la commande `serve` dans la VM ;
+- le paquet Debian Proxmox lance la commande `hwmon` sur l'hôte et installe le
+  module noyau DKMS `virt-temp`.
+
+Le CID VSOCK et le port doivent être identiques des deux côtés. Les exemples
+ci-dessous utilisent le CID `3` et le port `19090`, qui sont aussi les valeurs
+par défaut.
+
+## Installation
+
+### 1. Ajouter AF_VSOCK à la VM
+
+Sur Proxmox, identifier le numéro de la VM Unraid :
 
 ```sh
-unraid-vsock-sensors version
-unraid-vsock-sensors get --cid 42 --json
+qm list
 ```
 
-Le même binaire Linux amd64 peut être copié dans la VM et sur l'hôte. Go 1.25
-ou plus récent est nécessaire uniquement pour compiler.
+Éditer `/etc/pve/qemu-server/<VMID>.conf` et ajouter :
 
-## Versionner une release
+```text
+args: -device vhost-vsock-pci,guest-cid=3
+```
 
-Pour une release qui inclut le plugin Unraid, partir d'un commit propre,
-générer tous les artefacts avec la version finale explicite, commiter le
-descripteur produit, puis taguer ce commit final :
+Si une ligne `args:` existe déjà, ajouter seulement
+`-device vhost-vsock-pci,guest-cid=3` à cette ligne. Le CID doit être unique
+parmi les VM exécutées sur le même hôte.
+
+Arrêter puis redémarrer complètement la VM pour créer le périphérique. Un
+simple redémarrage de service dans Unraid ne suffit pas.
+
+### 2. Installer le serveur dans Unraid
+
+Dans **Plugins → Install Plugin**, fournir l'URL du descripteur `.plg` publié :
+
+```text
+https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg
+```
+
+Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
+
+- **VSOCK port** : `19090` ;
+- **HBA monitoring** : `enabled` si StorCLI et un HBA compatible sont
+  disponibles, sinon `disabled` ;
+- **StorCLI refresh interval** : `30 seconds` convient généralement.
+
+Le mode HBA `enabled` exige StorCLI et au moins un contrôleur. Le mode
+`disabled` n'exécute jamais StorCLI. Une ancienne configuration `auto` est
+interprétée comme `enabled`.
+
+Vérification depuis le terminal Unraid :
+
+```sh
+/etc/rc.d/rc.unraid-vsock-sensors status
+/usr/local/sbin/unraid-vsock-sensors version
+tail -n 50 /var/log/unraid-vsock-sensors.log
+```
+
+### 3. Installer l'intégration hwmon sur Proxmox
+
+Copier le `.deb` sur Proxmox, puis exécuter les commandes suivantes en tant que
+`root`. Adapter le nom du fichier à la version téléchargée :
+
+```sh
+apt update
+apt install "proxmox-headers-$(uname -r)" \
+  ./unraid-vsock-sensors-hwmon_X.Y.Z-1_amd64.deb
+```
+
+Cette commande :
+
+- installe DKMS et les outils de compilation nécessaires ;
+- installe le méta-paquet `proxmox-default-headers`, afin que les headers suivent
+  automatiquement les mises à jour du noyau Proxmox par défaut ;
+- compile `virt-temp` pour le noyau Proxmox actif ;
+- installe le binaire dans `/usr/bin` ;
+- active et démarre `unraid-vsock-hwmon.service`, qui charge explicitement le
+  module avant de lancer l'agent.
+
+Le fichier `/etc/default/unraid-vsock-hwmon` est créé seulement s'il n'existe
+pas. Une configuration provenant de l'ancien installateur tarball est conservée
+et les anciens fichiers sont migrés automatiquement.
+
+Le header explicite de `$(uname -r)` dans la commande garantit aussi
+l'installation sur le noyau actuellement démarré, notamment avant un reboot
+suivant une mise à jour de noyau. Le méta-paquet prend ensuite en charge les
+futurs noyaux de la branche Proxmox par défaut.
+
+Le warning APT indiquant qu'un téléchargement est effectué sans sandbox est
+sans gravité lorsque le `.deb` se trouve dans `/root`. Le placer dans `/tmp`
+évite ce message.
+
+## Configuration sur Proxmox
+
+Le fichier `/etc/default/unraid-vsock-hwmon` contient :
+
+```sh
+UNRAID_VSOCK_CID=3
+UNRAID_VSOCK_PORT=19090
+UNRAID_VSOCK_INTERVAL=1s
+```
+
+- `UNRAID_VSOCK_CID` désigne la VM Unraid configurée dans Proxmox ;
+- `UNRAID_VSOCK_PORT` doit correspondre au port du plugin Unraid ;
+- `UNRAID_VSOCK_INTERVAL` définit la fréquence de lecture du cache par l'agent
+  Proxmox. Il ne détermine pas la fréquence SMART d'Unraid.
+
+Après une modification :
+
+```sh
+systemctl restart unraid-vsock-hwmon.service
+```
+
+## Vérifier le fonctionnement
+
+Sur Proxmox :
+
+```sh
+dpkg -s unraid-vsock-sensors-hwmon | grep '^Status:'
+dkms status -m virt-temp
+systemctl status unraid-vsock-hwmon.service
+journalctl -u unraid-vsock-hwmon.service -n 50 --no-pager
+ls -l /dev/virt-temp
+sensors
+```
+
+Résultats attendus :
+
+- le paquet est `install ok installed` ;
+- DKMS indique `virt-temp/X.Y.Z ... installed` pour le noyau actif ;
+- le service est `active (running)` ;
+- `sensors` affiche `unraid_storage` et, si activé, `unraid_hba`.
+
+Pour afficher directement l'inventaire reçu sans passer par le module :
+
+```sh
+unraid-vsock-sensors get --cid 3 --port 19090 --json
+```
+
+## Sondes publiées
+
+`unraid_storage` contient :
+
+- un canal par disque interne ;
+- `HDD maximum`, `SATA SSD maximum` ou `NVMe SSD maximum` lorsqu'au moins deux
+  disques appartiennent au groupe correspondant.
+
+`unraid_hba` contient un canal par contrôleur StorCLI lorsque la collecte HBA
+est activée.
+
+Les disques USB, les slots Unraid non assignés (`DISK_NP`) et la clé USB de
+démarrage `flash` ne sont pas publiés. Les SSD utilisant un autre transport que
+SATA ou NVMe restent accessibles en ligne de commande, mais ne créent pas de
+canal maximum dédié.
+
+Un disque en veille est conservé dans l'inventaire avec une température de
+`0 °C`. Cette valeur signifie que la sonde est inactive et évite de déclencher
+le failsafe pendant un spindown normal.
+
+## Inventaire fixe et changement de topologie
+
+Au démarrage de l'agent Proxmox, le premier relevé non vide de chaque famille
+configure ses canaux hwmon. Un premier relevé vide est ignoré afin de ne pas
+figer un démarrage incomplet d'Unraid ou de StorCLI. Seul le mode HBA
+explicitement `disabled` autorise un inventaire HBA vide.
+
+L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
+pour un disque, puis numéro de série, adresse SAS, adresse PCI ou index StorCLI
+pour un HBA. Le label est une information d'affichage figée jusqu'au prochain
+démarrage de l'agent.
+
+Pendant l'exécution :
+
+- une sonde attendue qui disparaît reste présente et atteint le failsafe ;
+- le maximum de son groupe atteint également le failsafe ;
+- une nouvelle sonde est signalée dans le journal, mais n'est pas ajoutée ;
+- un changement de `/dev/sdX`, de nom affiché ou d'index StorCLI ne modifie pas
+  l'identité si l'ID stable reste identique.
+
+Après un ajout, un retrait ou un remplacement volontaire, accepter la nouvelle
+topologie avec :
+
+```sh
+systemctl restart unraid-vsock-hwmon.service
+```
+
+## Failsafe et fraîcheur des mesures
+
+Chaque canal non actualisé pendant 10 secondes retourne `100 °C`. Cela couvre
+l'arrêt du serveur ou de l'agent, une perte VSOCK, une erreur de lecture et la
+disparition d'une sonde attendue.
+
+La température des disques vient de `/var/local/emhttp/disks.ini`. Sa fraîcheur
+dépend de **Tunable (poll_attributes)** dans Unraid : interroger toutes les
+secondes peut donc retourner plusieurs fois la même valeur mise en cache.
+
+La température HBA vient du champ `ROC temperature(Degree Celsius)` de StorCLI.
+Le serveur actualise ce cache en arrière-plan ; les requêtes VSOCK n'attendent
+jamais l'exécution de StorCLI.
+
+## Utilisation en ligne de commande
+
+Les sélecteurs de groupe retournent la température maximale :
+
+```sh
+unraid-vsock-sensors get --cid 3 --port 19090 disk hdd
+unraid-vsock-sensors get --cid 3 --port 19090 disk ssd
+unraid-vsock-sensors get --cid 3 --port 19090 disk nvme
+unraid-vsock-sensors get --cid 3 --port 19090 hba all
+```
+
+Un disque ou un HBA peut être interrogé explicitement :
+
+```sh
+unraid-vsock-sensors get --cid 3 --port 19090 disk disk1
+unraid-vsock-sensors get --cid 3 --port 19090 disk sdb
+unraid-vsock-sensors get --cid 3 --port 19090 hba hba0
+```
+
+Ces commandes écrivent uniquement un nombre en degrés Celsius et conviennent à
+une source `cmd` de fan2go. L'option `--json` affiche le snapshot complet avec
+les erreurs éventuelles de chaque famille.
+
+## Mise à jour et désinstallation Proxmox
+
+Installer une nouvelle version avec `apt` :
+
+```sh
+apt install ./unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
+```
+
+Le suffixe `-N` est la révision Debian du packaging. Il peut augmenter sans que
+la version du logiciel change.
+
+Conserver la configuration lors de la suppression :
+
+```sh
+apt remove unraid-vsock-sensors-hwmon
+```
+
+Supprimer également `/etc/default/unraid-vsock-hwmon` :
+
+```sh
+apt purge unraid-vsock-sensors-hwmon
+```
+
+## Compiler et tester
+
+Go 1.25 ou plus récent est nécessaire sur la machine de développement.
+
+```sh
+make check          # exécute go vet et go test
+make build          # crée bin/unraid-vsock-sensors
+make unraid-package # crée le .txz et le .plg Unraid
+make hwmon-package  # crée le .deb Proxmox
+make all            # exécute tous les contrôles et construit tous les artefacts
+```
+
+Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
+commit courant n'est pas exactement tagué.
+
+## Publier une release
+
+Partir d'un arbre propre, construire avec la version finale, commiter le `.plg`
+produit, puis poser le tag sur ce commit :
 
 ```sh
 make all VERSION=X.Y.Z
@@ -60,131 +304,31 @@ git tag -a vX.Y.Z -m "Release vX.Y.Z"
 git push origin main vX.Y.Z
 ```
 
-La version explicite évite qu'un arbre non encore tagué produise un suffixe
-`-dev`. Le tag est posé après le commit du `.plg` afin que l'archive source
-automatique de Gitea contienne elle aussi le descripteur de la bonne version.
-En dehors de ce processus de release, les commandes de construction continuent
-à dériver automatiquement leur version depuis Git.
+Joindre à la release Gitea :
 
-Créer ensuite la release `vX.Y.Z` dans Gitea et y joindre le fichier `.txz`
-présent dans `dist/`. Le `.plg` commité fournit à Unraid une URL stable pour
-l'installation et les mises à jour.
+- `dist/unraid-vsock-sensors-X.Y.Z-x86_64-1.txz` ;
+- `dist/unraid-vsock-sensors-hwmon_X.Y.Z-1_amd64.deb`.
 
-## Ajouter vsock à la VM Proxmox
-
-Choisir un CID unique (exemple : `42`) et ajouter le périphérique QEMU à la VM :
-
-```text
-args: -device vhost-vsock-pci,guest-cid=42
-```
-
-Si la VM possède déjà une ligne `args:`, y ajouter seulement l'option ci-dessus.
-Après redémarrage, vérifier `lsmod | grep vsock` dans les deux systèmes.
-
-## Plugin Unraid
-
-Le serveur peut être installé comme plugin natif depuis **Plugins → Install
-Plugin**. La page **Settings → Unraid VSOCK Sensors** affiche son état et sa
-version, permet de le redémarrer et configure le port VSOCK ainsi que
-l'intervalle du cache StorCLI.
-
-Construire les deux fichiers à publier :
+Une correction limitée au paquet Debian peut être produite avec une nouvelle
+révision :
 
 ```sh
-make unraid-package
+make hwmon-package VERSION=X.Y.Z DEBIAN_REVISION=2
 ```
 
-La commande produit dans `dist/` :
+## Sécurité du transport
 
-- `unraid-vsock-sensors-X.Y.Z-x86_64-1.txz`, le package serveur ;
-- `unraid-vsock-sensors.plg`, le descripteur à donner au gestionnaire de
-  plugins Unraid.
+AF_VSOCK n'est pas un mécanisme d'authentification général. Le serveur accepte
+uniquement le CID hôte standard `2`, une commande fixe `GET`, une requête limitée
+à 1 Kio et ne reçoit aucun chemin fourni par le client.
 
-Elle met également à jour `unraid-plugin/unraid-vsock-sensors.plg`, qui doit
-être commité sur la branche `main`. Le package `.txz` doit être joint à la
-release `vX.Y.Z` sur `git.lan.home`. Les URL peuvent être adaptées avec
-`REPOSITORY_URL`, `PLUGIN_URL` et `PACKAGE_URL` si l'emplacement de publication
-change.
+## Développement assisté par IA
 
-Installation avec l'URL stable du dépôt :
+Ce projet est vibecodé : une part importante du code et de la documentation a
+été produite avec l'assistance d'une IA. Les changements sont néanmoins relus,
+les chemins critiques sont testés, et le projet est utilisé en production sur
+la machine personnelle de son auteur.
 
-```text
-https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg
-```
-
-## Exécuter manuellement dans Unraid
-
-```sh
-unraid-vsock-sensors serve --port 19090
-```
-
-Lorsque la collecte HBA est active, le serveur exécute en arrière-plan la commande fixe
-`storcli /cALL show temperature J nolog`, immédiatement au démarrage puis toutes
-les 30 secondes par défaut. Une commande `storcli /cALL show J nolog` exécutée
-au premier relevé associe chaque contrôleur à son numéro de série, son modèle et
-son adresse PCI ; ces métadonnées sont ensuite conservées jusqu'au redémarrage
-du service. La topologie PCI passthrough est supposée immuable pendant son
-exécution. Les requêtes utilisent uniquement le dernier état en mémoire et
-n'attendent donc jamais StorCLI. `--storcli-interval 1m` ajuste l'intervalle de
-rafraîchissement.
-
-La collecte HBA utilise le mode `enabled` par défaut : StorCLI et au moins un
-contrôleur sont attendus, et leur absence est une erreur afin que les canaux
-existants atteignent leur valeur de sécurité. `--hba-mode disabled` n'exécute
-jamais StorCLI et indique explicitement à l'agent de supprimer l'inventaire HBA
-à son prochain démarrage. Une ancienne configuration `auto` est migrée vers
-`enabled` lors du lancement du plugin.
-
-Sans le plugin, le script de démarrage `/boot/config/go` peut servir pour un
-essai ponctuel.
-
-## Interroger depuis Proxmox
-
-```sh
-unraid-vsock-sensors get --cid 42 disk hdd
-unraid-vsock-sensors get --cid 42 disk nvme
-unraid-vsock-sensors get --cid 42 disk disk1
-unraid-vsock-sensors get --cid 42 disk nvme0n1
-unraid-vsock-sensors get --cid 42 hba all
-unraid-vsock-sensors get --cid 42 hba hba0
-unraid-vsock-sensors get --cid 42 --json
-```
-
-Le type de capteur explicite évite toute ambiguïté avec un disque ou un pool
-dont le nom ressemble à celui d'un HBA, par exemple `get disk hba1`.
-
-`--json` renvoie toujours la réponse structurée complète, y compris les champs
-`error` et `hba_error`, afin de permettre le diagnostic d'une famille de sondes
-sans masquer les mesures encore disponibles dans l'autre.
-
-Les commandes autres que `--json` écrivent uniquement un nombre en degrés
-Celsius. Elles conviennent donc à une source `cmd` de fan2go.
-
-## Capteurs hwmon natifs
-
-Le module `virt-temp` présente deux périphériques Linux standard,
-`unraid_storage` et `unraid_hba`, dont les canaux correspondent aux groupes,
-disques et HBA découverts au démarrage de l'agent. Ils sont utilisables sans
-intégration spécifique par CoolerControl, fan2go, fancontrol et lm-sensors.
-L'inventaire reste fixe pendant l'exécution : une sonde attendue qui disparaît
-passe au failsafe avec son maximum de groupe. Après une modification volontaire
-de la topologie, redémarrer `unraid-vsock-hwmon.service` pour reconstruire les
-canaux.
-Consultez [`virt-temp/README.md`](virt-temp/README.md) pour la construction et
-l'installation du paquet Proxmox.
-
-## Fraîcheur et sécurité
-
-La fraîcheur des disques dépend de `Tunable (poll_attributes)` dans les réglages
-disque d'Unraid. Avec 30 secondes, une commande exécutée plus souvent renverra
-simplement la même valeur mise en cache. L'outil ne lance volontairement jamais
-`smartctl`.
-
-La température HBA ne vient pas d'Unraid : elle correspond au champ
-`ROC temperature(Degree Celsius)` de StorCLI. Une collecte en erreur invalide
-immédiatement les mesures HBA sans affecter les températures des disques.
-
-Le transport vsock n'est pas un mécanisme d'authentification. Le serveur accepte
-uniquement les connexions provenant du CID hôte standard `2`. Il accepte
-uniquement `GET`, ne reçoit aucun chemin ni commande, limite les requêtes à
-1 Kio et ne renvoie que le contenu structuré attendu.
+Cette transparence ne remplace pas une garantie de fonctionnement sur toutes
+les configurations Unraid ou Proxmox. Examiner les changements et tester les
+packages dans son propre environnement reste recommandé.

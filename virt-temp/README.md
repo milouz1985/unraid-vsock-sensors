@@ -1,107 +1,161 @@
-# Intégration hwmon virt-temp
+# Intégration hwmon `virt-temp`
 
-Cette intégration publie les températures des disques internes et des HBA d'Unraid
-sous forme de sondes Linux `hwmon` natives sur l'hôte Proxmox. Le module crée
-deux périphériques : `unraid_storage` regroupe les disques et leurs maximums,
-et `unraid_hba` regroupe les contrôleurs. Chaque sonde occupe un canal `tempN`.
-`unraid-vsock-sensors hwmon` leur transmet les mesures récupérées par AF_VSOCK
-via `/dev/virt-temp`.
+Ce document décrit le composant Proxmox de `unraid-vsock-sensors`. Pour la
+procédure complète, depuis la configuration VSOCK jusqu'au plugin Unraid,
+consulter le [README principal](../README.md).
 
-Chaque sonde repasse à 100 °C lorsqu'elle n'a reçu aucune mise à jour depuis
-10 secondes. L'arrêt de l'agent ou la perte de la connexion VSOCK déclenche
-ainsi une valeur de sécurité au lieu de conserver indéfiniment une ancienne
-température.
+## Composants installés
 
-Les disques USB ne sont pas publiés. Les maximums HDD, SATA SSD et NVMe sont
-créés lorsqu'au moins deux disques appartiennent au groupe. Le premier
-instantané non vide reçu après le démarrage de l'agent configure l'inventaire
-de chaque périphérique. Un état initial vide reste en attente afin de ne pas
-figer un démarrage incomplet d'Unraid ou de StorCLI. Seul le mode HBA
-explicitement `disabled` configure une famille vide. L'inventaire et l'ordre de
-ses canaux restent ensuite fixes jusqu'au prochain redémarrage de l'agent.
+Le paquet Debian `unraid-vsock-sensors-hwmon` installe :
 
-Une mise à jour ne rafraîchit que les identifiants connus. Si une sonde attendue
-disparaît, son canal n'est pas supprimé : son watchdog atteint 100 °C. Le canal
-maximum de son groupe n'est pas rafraîchi non plus, afin qu'une courbe utilisant
-uniquement ce maximum atteigne également le failsafe. Le journal précise qu'il
-faut vérifier la disparition puis redémarrer `unraid-vsock-hwmon.service` si
-elle est volontaire. Une nouvelle sonde est signalée mais n'est exposée qu'après
-ce redémarrage. Celui-ci constitue donc l'acceptation explicite de la nouvelle
-topologie et reconstruit les deux inventaires.
+- `/usr/bin/unraid-vsock-sensors`, l'agent VSOCK ;
+- `/usr/src/virt-temp-X.Y.Z`, les sources du module DKMS ;
+- `/usr/lib/systemd/system/unraid-vsock-hwmon.service` ;
+- `/usr/lib/modules-load.d/virt-temp.conf` ;
+- un modèle de configuration dans
+  `/usr/share/unraid-vsock-sensors-hwmon/`.
 
-Une famille dont la collecte échoue n'est pas mise à jour ; tous ses canaux
-finissent donc au failsafe. Un disque endormi reste présent avec une température
-de 0 °C, conformément au cache `disks.ini` d'Unraid.
+Au premier démarrage, `/etc/default/unraid-vsock-hwmon` est créé seulement s'il
+n'existe pas. Une configuration existante n'est jamais remplacée.
 
-Une session accepte au maximum 1 024 sondes distinctes avant son opération
-finale `configure` ou `commit`.
-Cette borne protège les allocations de mémoire noyau contrôlées depuis
-l'espace utilisateur ; elle ne représente pas une limite matérielle des HBA.
+## Fonctionnement du pilote
 
-L'identité d'un HBA utilise en priorité son numéro de série, puis son adresse
-SAS, son adresse PCI et enfin son numéro de contrôleur StorCLI.
+Le module crée `/dev/virt-temp`. L'agent y envoie séparément les familles
+`disk` et `hba` :
 
-## Construire le paquet sur la machine de développement
+1. `configure` crée l'inventaire et les canaux d'une famille ;
+2. `commit` actualise uniquement les identifiants déjà configurés ;
+3. une fermeture sans opération finale ne modifie rien.
 
-Go et `dpkg-deb` sont nécessaires uniquement sur la machine de développement.
-Le script cross-compile le binaire Linux amd64 et crée le paquet Debian dans
-`dist/` :
+Chaque session accepte au maximum 1 024 enregistrements. Cette limite borne les
+allocations contrôlées depuis l'espace utilisateur ; elle ne correspond pas à
+une limite matérielle.
+
+Le pilote expose au maximum deux périphériques hwmon :
+
+- `unraid_storage`, avec les disques internes et leurs maximums de groupe ;
+- `unraid_hba`, avec les contrôleurs StorCLI.
+
+Chaque sonde correspond à un canal `tempN_input` accompagné de
+`tempN_label`. Les ID stables restent internes au protocole ; sysfs expose le
+label configuré au démarrage.
+
+## Inventaire et failsafe
+
+L'inventaire est fixe pendant la vie du processus agent :
+
+- un ID absent n'est pas supprimé et son canal finit à `100 °C` ;
+- le maximum d'un groupe incomplet finit également à `100 °C` ;
+- un nouvel ID attend le prochain redémarrage du service ;
+- un changement de label n'affecte pas l'identité.
+
+Chaque canal retourne `100000` millidegrés Celsius après 10 secondes sans mise
+à jour. Le délai est un paramètre du module compris entre 1 et 300 secondes. Par
+exemple, pour utiliser 15 secondes de manière persistante :
 
 ```sh
-./virt-temp/package.sh
+printf 'options virt-temp stale_timeout=15\n' \
+  > /etc/modprobe.d/virt-temp.conf
+systemctl stop unraid-vsock-hwmon.service
+modprobe -r virt_temp
+modprobe virt_temp
+systemctl start unraid-vsock-hwmon.service
 ```
 
-Une release taguée `vX.Y.Z` produit un module DKMS `virt-temp/X.Y.Z`, tandis
-qu'une branche de développement conserve son suffixe `-dev`.
+Décharger le module supprime momentanément les sondes hwmon. Arrêter au préalable
+les logiciels qui les utilisent si nécessaire.
 
-## Installer sur Proxmox
+## Construire le paquet Debian
 
-Installer les en-têtes du noyau Proxmox courant en même temps que le paquet :
+Depuis la racine du dépôt :
 
 ```sh
-sudo apt install "proxmox-headers-$(uname -r)" \
-  ./unraid-vsock-sensors-hwmon_X.Y.Z-1_amd64.deb
+make hwmon-package
 ```
 
-`apt` installe les dépendances DKMS, compile et charge le module, puis active le
-service systemd. Une configuration existante dans
-`/etc/default/unraid-vsock-hwmon` est préservée. Le paquet migre également une
-installation réalisée avec l'ancien tarball. Lors d'une mise à jour, installer
-simplement le nouveau `.deb` avec la même commande.
-
-## Désinstaller de Proxmox
-
-Retirer le paquet tout en conservant sa configuration :
+Pour une version de release explicite :
 
 ```sh
-sudo apt remove unraid-vsock-sensors-hwmon
+make hwmon-package VERSION=X.Y.Z
 ```
 
-Utiliser `apt purge` à la place pour supprimer également
-`/etc/default/unraid-vsock-hwmon`.
-
-## Publier manuellement la température
+Pour republier uniquement une correction du packaging :
 
 ```sh
-sudo unraid-vsock-sensors hwmon --cid 42 --port 19090 --interval 1s
+make hwmon-package VERSION=X.Y.Z DEBIAN_REVISION=2
 ```
 
-Le paquet active automatiquement le service. Pour changer le CID, modifier sa
-configuration puis le redémarrer :
+Le résultat est :
 
-```sh
-sudo editor /etc/default/unraid-vsock-hwmon
-sudo systemctl restart unraid-vsock-hwmon.service
+```text
+dist/unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
 ```
 
-Vérifier les sondes natives et l'agent :
+La version Debian `X.Y.Z-N` contient la version applicative `X.Y.Z` et la
+révision de packaging `N`. Une version Git de développement est convertie en
+préversion Debian avec `~dev` afin d'être antérieure à la release finale.
+
+## Installer et mettre à jour
+
+Sur Proxmox, en tant que `root` :
 
 ```sh
-sensors unraid_storage-* unraid_hba-*
+apt update
+apt install "proxmox-headers-$(uname -r)" \
+  ./unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
+```
+
+Le `postinst` compile le module par DKMS, le signe lorsque DKMS est configuré
+pour le faire, charge `virt_temp`, démarre le service et retire les anciennes
+versions DKMS seulement après la réussite de la nouvelle installation.
+L'unité exécute également `modprobe virt_temp` avant chaque démarrage : elle ne
+peut donc plus rester active sans `/dev/virt-temp` après un reboot.
+
+Le paquet dépend de `proxmox-default-headers`. Ce méta-paquet installe les
+headers de chaque nouveau noyau Proxmox par défaut et permet à DKMS de
+recompiler automatiquement `virt-temp`. La commande d'installation demande en
+plus les headers de `$(uname -r)` pour couvrir le noyau actuellement démarré,
+qui peut être plus ancien après une mise à jour effectuée avant le reboot.
+
+Une mise à jour utilise la même commande avec le nouveau `.deb`. Le paquet
+migre automatiquement les fichiers posés par l'ancien installateur tarball.
+
+## Diagnostiquer
+
+```sh
+dpkg --audit
+dpkg -s unraid-vsock-sensors-hwmon
+dkms status -m virt-temp
 systemctl status unraid-vsock-hwmon.service
+journalctl -u unraid-vsock-hwmon.service -n 100 --no-pager
+ls -l /dev/virt-temp
+sensors
 ```
 
-Après dix secondes sans mise à jour réussie, chaque `temp1_input` existant
-retourne `100000` milli-degrés Celsius. Le délai peut être modifié au chargement
-du module, par exemple avec `modprobe virt-temp stale_timeout=15`. Les valeurs
-acceptées vont de 1 à 300 secondes.
+Si l'installation a été interrompue :
+
+```sh
+dpkg --configure -a
+apt --fix-broken install
+```
+
+Si les headers du noyau actif manquent :
+
+```sh
+apt install "proxmox-headers-$(uname -r)"
+apt --fix-broken install
+```
+
+## Désinstaller
+
+Conserver `/etc/default/unraid-vsock-hwmon` :
+
+```sh
+apt remove unraid-vsock-sensors-hwmon
+```
+
+Supprimer également la configuration :
+
+```sh
+apt purge unraid-vsock-sensors-hwmon
+```

@@ -5,6 +5,8 @@ module="virt-temp"
 version="@VERSION@"
 service="unraid-vsock-hwmon.service"
 kernel_release="$(uname -r)"
+config="/etc/default/unraid-vsock-hwmon"
+default_config="/usr/share/unraid-vsock-sensors-hwmon/unraid-vsock-hwmon.default"
 
 if [ "$1" != "configure" ]; then
     exit 0
@@ -14,6 +16,12 @@ if [ ! -d "/lib/modules/$kernel_release/build" ]; then
     echo "En-têtes absents pour le noyau $kernel_release." >&2
     echo "Installez proxmox-headers-$kernel_release puis exécutez : apt --fix-broken install" >&2
     exit 1
+fi
+
+# This file was managed by the former tarball installer and may predate the
+# Debian package. Keep it unchanged; create it only for a fresh installation.
+if [ ! -e "$config" ]; then
+    install -m 0644 "$default_config" "$config"
 fi
 
 if ! dkms status -m "$module" -v "$version" 2>/dev/null | grep -Fq "$module/$version"; then

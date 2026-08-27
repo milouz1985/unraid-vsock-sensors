@@ -4,6 +4,7 @@ GO ?= go
 BIN_DIR := bin
 BINARY := $(BIN_DIR)/unraid-vsock-sensors
 VERSION ?= $(shell ./version.sh)
+DEBIAN_REVISION ?= 1
 # Freeze the inferred version before packaging modifies generated tracked files.
 VERSION := $(VERSION)
 LDFLAGS = -s -w -X main.version=$(VERSION)
@@ -44,7 +45,7 @@ unraid-package: ## Crée le plugin serveur installable dans Unraid
 	GO="$(GO)" VERSION="$(VERSION)" ./unraid-plugin/package.sh
 
 hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
-	GO="$(GO)" VERSION="$(VERSION)" ./virt-temp/package.sh
+	GO="$(GO)" VERSION="$(VERSION)" DEBIAN_REVISION="$(DEBIAN_REVISION)" ./virt-temp/package.sh
 
 build: | $(BIN_DIR)
 
