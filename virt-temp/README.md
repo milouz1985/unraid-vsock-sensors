@@ -17,6 +17,9 @@ créés lorsqu'au moins deux disques appartiennent au groupe. Les périphérique
 suivent dynamiquement les disques et HBA présents à chaque instantané réussi :
 un périphérique disparaît avec sa sonde et retrouve la même identité lorsqu'il
 réapparaît.
+Le parent platform conserve une identité technique stable dérivée de l'ID de
+la sonde, tandis que son nom hwmon lisible est dérivé du label Unraid, par
+exemple `unraid_disk1`, `unraid_hdd_maximum` ou `unraid_hba0`.
 
 Comme `drivetemp`, le module crée et supprime chaque périphérique hwmon
 indépendamment. Le `commit` termine un inventaire complet afin d'identifier les

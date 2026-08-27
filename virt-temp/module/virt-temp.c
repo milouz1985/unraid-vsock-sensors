@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include <linux/ctype.h>
 #include <linux/fs.h>
 #include <linux/hwmon.h>
 #include <linux/jhash.h>
@@ -26,7 +27,8 @@ struct virt_temp_sensor {
 	struct list_head node;
 	char id[VIRT_TEMP_ID_SIZE];
 	char label[VIRT_TEMP_LABEL_SIZE];
-	char name[VIRT_TEMP_NAME_SIZE];
+	char platform_name[VIRT_TEMP_NAME_SIZE];
+	char hwmon_name[VIRT_TEMP_NAME_SIZE];
 	atomic_long_t temperature;
 	unsigned long last_update;
 	struct platform_device *platform;
@@ -187,20 +189,48 @@ static const struct hwmon_chip_info virt_temp_chip_info = {
 };
 
 /*
- * Build a short, stable platform/hwmon name from an ID that may contain
+ * Build a short, stable platform name from an ID that may contain
  * characters forbidden in hwmon names.  The hash is only used for the Linux
- * device name; sensors are still identified by comparing their complete IDs.
- * A hash collision therefore makes device registration fail instead of
- * associating a temperature with the wrong sensor.
+ * parent name; sensors are still identified by comparing their complete IDs.
+ * A hash collision therefore makes platform registration fail instead of
+ * associating a temperature with the wrong sensor.  The separate hwmon name
+ * is deliberately human-readable and does not carry the device identity.
  */
-static void virt_temp_make_name(struct virt_temp_sensor *sensor)
+static void virt_temp_make_names(struct virt_temp_sensor *sensor)
 {
 	const char *family = virt_temp_in_namespace(sensor->id, "hba") ?
 			     "hba" : "disk";
+	const char *label_end = strstr(sensor->label, " (");
+	size_t output;
+	const char *input;
 	u32 hash = jhash(sensor->id, strlen(sensor->id), 0);
 
-	snprintf(sensor->name, sizeof(sensor->name), "virt_temp_%s_%08x",
+	snprintf(sensor->platform_name, sizeof(sensor->platform_name),
+		 "virt_temp_%s_%08x",
 		 family, hash);
+
+	strscpy(sensor->hwmon_name, "unraid_", sizeof(sensor->hwmon_name));
+	output = strlen(sensor->hwmon_name);
+	if (!label_end)
+		label_end = sensor->label + strlen(sensor->label);
+	for (input = sensor->label;
+	     input < label_end && output + 1 < sizeof(sensor->hwmon_name);
+	     input++) {
+		unsigned char character = *input;
+
+		if (isalnum(character)) {
+			sensor->hwmon_name[output++] = tolower(character);
+		} else if (output && sensor->hwmon_name[output - 1] != '_') {
+			sensor->hwmon_name[output++] = '_';
+		}
+	}
+	if (output > strlen("unraid_") && sensor->hwmon_name[output - 1] == '_')
+		output--;
+	if (output == strlen("unraid_"))
+		strscpy(sensor->hwmon_name + output, "sensor",
+			sizeof(sensor->hwmon_name) - output);
+	else
+		sensor->hwmon_name[output] = '\0';
 }
 
 /* Caller holds virt_temp_lock. */
@@ -209,14 +239,14 @@ static int virt_temp_register_sensor(struct virt_temp_sensor *sensor)
 	struct device *hwmon;
 	struct platform_device *platform;
 
-	virt_temp_make_name(sensor);
-	platform = platform_device_register_simple(sensor->name,
+	virt_temp_make_names(sensor);
+	platform = platform_device_register_simple(sensor->platform_name,
 						  PLATFORM_DEVID_NONE, NULL, 0);
 	if (IS_ERR(platform))
 		return PTR_ERR(platform);
 	sensor->platform = platform;
 	hwmon = hwmon_device_register_with_info(&platform->dev,
-						sensor->name, sensor,
+						sensor->hwmon_name, sensor,
 						&virt_temp_chip_info, NULL);
 	if (IS_ERR(hwmon)) {
 		platform_device_unregister(platform);
