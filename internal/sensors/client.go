@@ -40,6 +40,9 @@ func Fetch(ctx context.Context, cid, port uint32) (Response, error) {
 	return response, nil
 }
 
+// dialContext uses mdlayher/socket directly because mdlayher/vsock.Dial does
+// not accept a context. The server can use vsock.Listen, while the client needs
+// socket.Conn.Connect so a missing or unreachable VM is bounded by its caller.
 func dialContext(ctx context.Context, cid, port uint32) (*socket.Conn, error) {
 	conn, err := socket.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0, "vsock", nil)
 	if err != nil {
