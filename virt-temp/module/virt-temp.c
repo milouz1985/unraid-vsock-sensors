@@ -45,6 +45,7 @@ struct virt_temp_record {
  */
 struct virt_temp_session {
 	struct list_head records;
+	struct mutex lock;
 	bool committed;
 };
 
@@ -283,6 +284,7 @@ static int virt_temp_open(struct inode *inode, struct file *file)
 	if (!session)
 		return -ENOMEM;
 	INIT_LIST_HEAD(&session->records);
+	mutex_init(&session->lock);
 	file->private_data = session;
 	return 0;
 }
@@ -292,25 +294,30 @@ static ssize_t virt_temp_write(struct file *file, const char __user *user,
 {
 	struct virt_temp_session *session = file->private_data;
 	struct virt_temp_record *record;
-	char *buffer, *cursor, *id, *temperature, *label;
+	char *buffer = NULL, *cursor, *id, *temperature, *label;
 	long value;
 	int err;
 
 	if (!count || count > VIRT_TEMP_WRITE_SIZE)
 		return -EMSGSIZE;
-	if (session->committed)
-		return -EPIPE;
+	mutex_lock(&session->lock);
+	if (session->committed) {
+		err = -EPIPE;
+		goto out;
+	}
 	buffer = memdup_user_nul(user, count);
-	if (IS_ERR(buffer))
-		return PTR_ERR(buffer);
+	if (IS_ERR(buffer)) {
+		err = PTR_ERR(buffer);
+		buffer = NULL;
+		goto out;
+	}
 	cursor = strim(buffer);
 
 	if (!strncmp(cursor, "commit\t", 7)) {
 		err = virt_temp_commit(session, cursor + 7);
 		if (!err)
 			session->committed = true;
-		kfree(buffer);
-		return err ? err : count;
+		goto out;
 	}
 
 	id = strsep(&cursor, "\t");
@@ -345,6 +352,7 @@ static ssize_t virt_temp_write(struct file *file, const char __user *user,
 	err = 0;
 out:
 	kfree(buffer);
+	mutex_unlock(&session->lock);
 	return err ? err : count;
 }
 
@@ -357,6 +365,7 @@ static int virt_temp_release(struct inode *inode, struct file *file)
 		list_del(&record->node);
 		kfree(record);
 	}
+	mutex_destroy(&session->lock);
 	kfree(session);
 	return 0;
 }
