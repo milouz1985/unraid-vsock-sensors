@@ -2,30 +2,33 @@
 
 #include <linux/fs.h>
 #include <linux/hwmon.h>
+#include <linux/jhash.h>
 #include <linux/jiffies.h>
 #include <linux/list.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
 
 #define VIRT_TEMP_FAILSAFE_MILLIC 100000L
 #define VIRT_TEMP_MAX_MILLIC 150000L
-#define VIRT_TEMP_MAX_CHANNELS 256
 #define VIRT_TEMP_ID_SIZE 64
 #define VIRT_TEMP_LABEL_SIZE 96
+#define VIRT_TEMP_NAME_SIZE 64
 #define VIRT_TEMP_WRITE_SIZE 256
 
 struct virt_temp_sensor {
 	struct list_head node;
 	char id[VIRT_TEMP_ID_SIZE];
 	char label[VIRT_TEMP_LABEL_SIZE];
+	char name[VIRT_TEMP_NAME_SIZE];
 	atomic_long_t temperature;
 	unsigned long last_update;
-	unsigned int channel;
-	bool active;
+	struct platform_device *platform;
+	struct device *hwmon;
 };
 
 struct virt_temp_record {
@@ -53,12 +56,15 @@ MODULE_PARM_DESC(stale_timeout,
 static LIST_HEAD(virt_temp_sensors);
 static DEFINE_MUTEX(virt_temp_lock);
 static struct miscdevice virt_temp_misc;
-static struct device *virt_temp_hwmon;
-static unsigned int virt_temp_next_channel;
-static u32 *virt_temp_config;
 
-static struct hwmon_channel_info virt_temp_channel_info = {
+static const u32 virt_temp_config[] = {
+	HWMON_T_INPUT | HWMON_T_LABEL,
+	0
+};
+
+static const struct hwmon_channel_info virt_temp_channel_info = {
 	.type = hwmon_temp,
+	.config = virt_temp_config,
 };
 
 static const struct hwmon_channel_info * const virt_temp_info[] = {
@@ -87,28 +93,6 @@ static struct virt_temp_sensor *virt_temp_find_sensor(const char *id)
 	return NULL;
 }
 
-static struct virt_temp_sensor *virt_temp_find_channel(int channel)
-{
-	struct virt_temp_sensor *sensor;
-
-	list_for_each_entry(sensor, &virt_temp_sensors, node) {
-		if (sensor->active && sensor->channel == channel)
-			return sensor;
-	}
-	return NULL;
-}
-
-static bool virt_temp_has_active_sensor(void)
-{
-	struct virt_temp_sensor *sensor;
-
-	list_for_each_entry(sensor, &virt_temp_sensors, node) {
-		if (sensor->active)
-			return true;
-	}
-	return false;
-}
-
 static struct virt_temp_record *
 virt_temp_find_record(struct virt_temp_session *session, const char *id)
 {
@@ -132,7 +116,7 @@ static umode_t virt_temp_is_visible(const void *data,
 				    enum hwmon_sensor_types type,
 				    u32 attr, int channel)
 {
-	if (type != hwmon_temp || !virt_temp_find_channel(channel))
+	if (type != hwmon_temp || channel != 0)
 		return 0;
 	if (attr == hwmon_temp_input || attr == hwmon_temp_label)
 		return 0444;
@@ -142,13 +126,10 @@ static umode_t virt_temp_is_visible(const void *data,
 static int virt_temp_read(struct device *dev, enum hwmon_sensor_types type,
 			  u32 attr, int channel, long *value)
 {
-	struct virt_temp_sensor *sensor;
+	struct virt_temp_sensor *sensor = dev_get_drvdata(dev);
 
-	if (type != hwmon_temp || attr != hwmon_temp_input)
+	if (type != hwmon_temp || attr != hwmon_temp_input || channel != 0)
 		return -EOPNOTSUPP;
-	sensor = virt_temp_find_channel(channel);
-	if (!sensor)
-		return -ENODATA;
 	*value = virt_temp_is_stale(sensor) ? VIRT_TEMP_FAILSAFE_MILLIC :
 						 atomic_long_read(&sensor->temperature);
 	return 0;
@@ -158,13 +139,10 @@ static int virt_temp_read_string(struct device *dev,
 				 enum hwmon_sensor_types type,
 				 u32 attr, int channel, const char **str)
 {
-	struct virt_temp_sensor *sensor;
+	struct virt_temp_sensor *sensor = dev_get_drvdata(dev);
 
-	if (type != hwmon_temp || attr != hwmon_temp_label)
+	if (type != hwmon_temp || attr != hwmon_temp_label || channel != 0)
 		return -EOPNOTSUPP;
-	sensor = virt_temp_find_channel(channel);
-	if (!sensor)
-		return -ENODATA;
 	*str = sensor->label;
 	return 0;
 }
@@ -180,32 +158,51 @@ static const struct hwmon_chip_info virt_temp_chip_info = {
 	.info = virt_temp_info,
 };
 
-/* Caller holds virt_temp_lock. */
-static int virt_temp_rebuild_hwmon(void)
+/* Build a stable, hwmon-safe name while retaining a readable family prefix. */
+static void virt_temp_make_name(struct virt_temp_sensor *sensor)
 {
-	u32 *config;
+	const char *family = virt_temp_in_namespace(sensor->id, "hba") ?
+			     "hba" : "disk";
+	u32 hash = jhash(sensor->id, strlen(sensor->id), 0);
+
+	snprintf(sensor->name, sizeof(sensor->name), "virt_temp_%s_%08x",
+		 family, hash);
+}
+
+/* Caller holds virt_temp_lock. */
+static int virt_temp_register_sensor(struct virt_temp_sensor *sensor)
+{
 	struct device *hwmon;
-	unsigned int channel;
+	struct platform_device *platform;
 
-	config = kcalloc(virt_temp_next_channel + 1, sizeof(*config), GFP_KERNEL);
-	if (!config)
-		return -ENOMEM;
-	/* A zero config entry terminates the channel list; visibility makes holes. */
-	for (channel = 0; channel < virt_temp_next_channel; channel++)
-		config[channel] = HWMON_T_INPUT | HWMON_T_LABEL;
-
-	kfree(virt_temp_config);
-	virt_temp_config = config;
-	virt_temp_channel_info.config = virt_temp_config;
-	hwmon = hwmon_device_register_with_info(virt_temp_misc.this_device,
-						"virt_temp", NULL,
+	virt_temp_make_name(sensor);
+	platform = platform_device_register_simple(sensor->name,
+						  PLATFORM_DEVID_NONE, NULL, 0);
+	if (IS_ERR(platform))
+		return PTR_ERR(platform);
+	sensor->platform = platform;
+	hwmon = hwmon_device_register_with_info(&platform->dev,
+						sensor->name, sensor,
 						&virt_temp_chip_info, NULL);
 	if (IS_ERR(hwmon)) {
-		virt_temp_hwmon = NULL;
+		platform_device_unregister(platform);
+		sensor->platform = NULL;
 		return PTR_ERR(hwmon);
 	}
-	virt_temp_hwmon = hwmon;
+	sensor->hwmon = hwmon;
 	return 0;
+}
+
+static void virt_temp_unregister_sensor(struct virt_temp_sensor *sensor)
+{
+	if (sensor->hwmon) {
+		hwmon_device_unregister(sensor->hwmon);
+		sensor->hwmon = NULL;
+	}
+	if (sensor->platform) {
+		platform_device_unregister(sensor->platform);
+		sensor->platform = NULL;
+	}
 }
 
 static int virt_temp_commit(struct virt_temp_session *session,
@@ -213,7 +210,6 @@ static int virt_temp_commit(struct virt_temp_session *session,
 {
 	struct virt_temp_sensor *sensor;
 	struct virt_temp_record *record;
-	bool topology_changed = false;
 	int err = 0;
 
 	if (strcmp(namespace, "disk") && strcmp(namespace, "hba"))
@@ -224,61 +220,48 @@ static int virt_temp_commit(struct virt_temp_session *session,
 	}
 
 	mutex_lock(&virt_temp_lock);
-	list_for_each_entry(sensor, &virt_temp_sensors, node) {
-		if (sensor->active && virt_temp_in_namespace(sensor->id, namespace) &&
-		    !virt_temp_find_record(session, sensor->id))
-			topology_changed = true;
-	}
-	list_for_each_entry(record, &session->records, node) {
-		sensor = virt_temp_find_sensor(record->id);
-		if (!sensor || !sensor->active || strcmp(sensor->label, record->label))
-			topology_changed = true;
-	}
-	/* Drain every sysfs callback before changing its channel backing data. */
-	if (topology_changed && virt_temp_hwmon) {
-		hwmon_device_unregister(virt_temp_hwmon);
-		virt_temp_hwmon = NULL;
-	}
-
-	list_for_each_entry(sensor, &virt_temp_sensors, node) {
-		if (sensor->active && virt_temp_in_namespace(sensor->id, namespace) &&
-		    !virt_temp_find_record(session, sensor->id)) {
-			sensor->active = false;
-			topology_changed = true;
-		}
-	}
-
 	list_for_each_entry(record, &session->records, node) {
 		sensor = virt_temp_find_sensor(record->id);
 		if (!sensor) {
-			if (virt_temp_next_channel >= VIRT_TEMP_MAX_CHANNELS) {
-				err = -ENOSPC;
-				goto out;
-			}
 			sensor = kzalloc(sizeof(*sensor), GFP_KERNEL);
 			if (!sensor) {
 				err = -ENOMEM;
 				goto out;
 			}
 			strscpy(sensor->id, record->id, sizeof(sensor->id));
-			sensor->channel = virt_temp_next_channel++;
-			list_add_tail(&sensor->node, &virt_temp_sensors);
-			topology_changed = true;
-		}
-		if (!sensor->active) {
-			sensor->active = true;
-			topology_changed = true;
-		}
-		if (strcmp(sensor->label, record->label)) {
 			strscpy(sensor->label, record->label, sizeof(sensor->label));
+			atomic_long_set(&sensor->temperature, record->temperature);
+			WRITE_ONCE(sensor->last_update, jiffies);
+			err = virt_temp_register_sensor(sensor);
+			if (err) {
+				kfree(sensor);
+				goto out;
+			}
+			list_add_tail(&sensor->node, &virt_temp_sensors);
+			continue;
+		}
+		if (!sensor->hwmon || strcmp(sensor->label, record->label)) {
+			/* Unregister first so no sysfs reader observes a changing label. */
+			virt_temp_unregister_sensor(sensor);
+			strscpy(sensor->label, record->label, sizeof(sensor->label));
+			err = virt_temp_register_sensor(sensor);
+			if (err)
+				goto out;
 		}
 		atomic_long_set(&sensor->temperature, record->temperature);
 		WRITE_ONCE(sensor->last_update, jiffies);
 	}
 
-	if ((topology_changed || !virt_temp_hwmon) &&
-	    virt_temp_has_active_sensor())
-		err = virt_temp_rebuild_hwmon();
+restart:
+	list_for_each_entry(sensor, &virt_temp_sensors, node) {
+		if (virt_temp_in_namespace(sensor->id, namespace) &&
+		    !virt_temp_find_record(session, sensor->id)) {
+			virt_temp_unregister_sensor(sensor);
+			list_del(&sensor->node);
+			kfree(sensor);
+			goto restart;
+		}
+	}
 out:
 	mutex_unlock(&virt_temp_lock);
 	return err;
@@ -394,18 +377,16 @@ static void __exit virt_temp_exit(void)
 	struct virt_temp_sensor *sensor, *next;
 
 	misc_deregister(&virt_temp_misc);
-	if (virt_temp_hwmon)
-		hwmon_device_unregister(virt_temp_hwmon);
 	list_for_each_entry_safe(sensor, next, &virt_temp_sensors, node) {
+		virt_temp_unregister_sensor(sensor);
 		list_del(&sensor->node);
 		kfree(sensor);
 	}
-	kfree(virt_temp_config);
 }
 
 module_init(virt_temp_init);
 module_exit(virt_temp_exit);
 
 MODULE_AUTHOR("François HOYEZ");
-MODULE_DESCRIPTION("Dynamic multi-channel virtual hwmon temperature device");
+MODULE_DESCRIPTION("Dynamic virtual hwmon temperature devices");
 MODULE_LICENSE("GPL");

@@ -1,8 +1,9 @@
 # Expérimentation hwmon virt-temp
 
 Ce prototype publie les températures des disques internes et des HBA d'Unraid
-sous forme de sondes Linux `hwmon` natives sur l'hôte Proxmox. Le module noyau
-crée dynamiquement les canaux d'un périphérique hwmon unique ;
+sous forme de sondes Linux `hwmon` natives sur l'hôte Proxmox. Comme
+`drivetemp`, le module noyau crée dynamiquement un périphérique hwmon par
+sonde, contenant chacun un unique canal `temp1` ;
 `unraid-vsock-sensors hwmon` lui transmet les instantanés récupérés par
 AF_VSOCK via `/dev/virt-temp`.
 
@@ -12,10 +13,10 @@ ainsi une valeur de sécurité au lieu de conserver indéfiniment une ancienne
 température.
 
 Les disques USB ne sont pas publiés. Les maximums HDD, SATA SSD et NVMe sont
-créés lorsqu'au moins deux disques appartiennent au groupe. Les sondes suivent
-dynamiquement les disques et HBA présents à chaque instantané réussi.
-Chaque identifiant conserve son numéro `tempN` pendant toute la durée de
-chargement du module, y compris si la sonde disparaît puis revient.
+créés lorsqu'au moins deux disques appartiennent au groupe. Les périphériques
+suivent dynamiquement les disques et HBA présents à chaque instantané réussi :
+un périphérique disparaît avec sa sonde et retrouve la même identité lorsqu'il
+réapparaît.
 L'identité d'un HBA utilise en priorité son numéro de série, puis son adresse
 SAS, son adresse PCI et enfin son numéro de contrôleur StorCLI.
 
@@ -85,7 +86,7 @@ sudo systemctl enable --now unraid-vsock-hwmon.service
 Vérifier les sondes natives et l'agent :
 
 ```sh
-sensors | sed -n '/virt_temp/,+4p'
+sensors | sed -n '/virt_temp/,+3p'
 systemctl status unraid-vsock-hwmon.service
 ```
 
