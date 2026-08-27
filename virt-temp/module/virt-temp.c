@@ -210,6 +210,7 @@ static int virt_temp_commit(struct virt_temp_session *session,
 {
 	struct virt_temp_sensor *sensor;
 	struct virt_temp_record *record;
+	int sensor_err;
 	int err = 0;
 
 	if (strcmp(namespace, "disk") && strcmp(namespace, "hba"))
@@ -220,22 +221,30 @@ static int virt_temp_commit(struct virt_temp_session *session,
 	}
 
 	mutex_lock(&virt_temp_lock);
+	/*
+	 * Apply sensors independently, as drivetemp does for SCSI add/remove
+	 * events.  The commit marks a complete inventory so absent sensors can be
+	 * removed; it is deliberately not a transaction across hwmon devices.
+	 */
 	list_for_each_entry(record, &session->records, node) {
 		sensor = virt_temp_find_sensor(record->id);
 		if (!sensor) {
 			sensor = kzalloc(sizeof(*sensor), GFP_KERNEL);
 			if (!sensor) {
-				err = -ENOMEM;
-				goto out;
+				if (!err)
+					err = -ENOMEM;
+				continue;
 			}
 			strscpy(sensor->id, record->id, sizeof(sensor->id));
 			strscpy(sensor->label, record->label, sizeof(sensor->label));
 			atomic_long_set(&sensor->temperature, record->temperature);
 			WRITE_ONCE(sensor->last_update, jiffies);
-			err = virt_temp_register_sensor(sensor);
-			if (err) {
+			sensor_err = virt_temp_register_sensor(sensor);
+			if (sensor_err) {
+				if (!err)
+					err = sensor_err;
 				kfree(sensor);
-				goto out;
+				continue;
 			}
 			list_add_tail(&sensor->node, &virt_temp_sensors);
 			continue;
@@ -244,9 +253,9 @@ static int virt_temp_commit(struct virt_temp_session *session,
 			/* Unregister first so no sysfs reader observes a changing label. */
 			virt_temp_unregister_sensor(sensor);
 			strscpy(sensor->label, record->label, sizeof(sensor->label));
-			err = virt_temp_register_sensor(sensor);
-			if (err)
-				goto out;
+			sensor_err = virt_temp_register_sensor(sensor);
+			if (sensor_err && !err)
+				err = sensor_err;
 		}
 		atomic_long_set(&sensor->temperature, record->temperature);
 		WRITE_ONCE(sensor->last_update, jiffies);
@@ -262,7 +271,6 @@ restart:
 			goto restart;
 		}
 	}
-out:
 	mutex_unlock(&virt_temp_lock);
 	return err;
 }

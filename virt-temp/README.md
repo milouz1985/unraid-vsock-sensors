@@ -17,6 +17,14 @@ créés lorsqu'au moins deux disques appartiennent au groupe. Les périphérique
 suivent dynamiquement les disques et HBA présents à chaque instantané réussi :
 un périphérique disparaît avec sa sonde et retrouve la même identité lorsqu'il
 réapparaît.
+
+Comme `drivetemp`, le module crée et supprime chaque périphérique hwmon
+indépendamment. Le `commit` termine un inventaire complet afin d'identifier les
+sondes disparues, mais ne constitue pas une transaction globale : l'échec
+exceptionnel de création d'un périphérique n'annule pas les mises à jour des
+autres sondes. L'erreur est renvoyée à l'agent et la sonde concernée est
+réessayée à l'instantané suivant.
+
 L'identité d'un HBA utilise en priorité son numéro de série, puis son adresse
 SAS, son adresse PCI et enfin son numéro de contrôleur StorCLI.
 
