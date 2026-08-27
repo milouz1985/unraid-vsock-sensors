@@ -195,7 +195,7 @@ func readHBATemperatures(ctx context.Context) ([]sensors.HBA, error) {
 	)
 	out, err := command.Output()
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("storcli timeout: %w", ctx.Err())
+		return nil, storcliContextError("temperature", ctx.Err())
 	}
 	if err != nil {
 		return nil, storcliCommandError("temperature", err)
@@ -208,12 +208,19 @@ func discoverHBAs(ctx context.Context) (map[int]hbaMetadata, error) {
 	command := exec.CommandContext(ctx, "storcli", "/cALL", "show", "J", "nolog")
 	out, err := command.Output()
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("storcli discovery timeout: %w", ctx.Err())
+		return nil, storcliContextError("discovery", ctx.Err())
 	}
 	if err != nil {
 		return nil, storcliCommandError("discovery", err)
 	}
 	return parseStorCLIMetadata(out)
+}
+
+func storcliContextError(operation string, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("storcli %s timeout: %w", operation, err)
+	}
+	return fmt.Errorf("storcli %s canceled: %w", operation, err)
 }
 
 func storcliCommandError(operation string, err error) error {

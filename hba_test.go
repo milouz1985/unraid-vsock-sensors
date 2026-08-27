@@ -267,6 +267,26 @@ func TestStorCLICommandErrorIncludesStderr(t *testing.T) {
 	}
 }
 
+func TestStorCLIContextErrorDescribesCause(t *testing.T) {
+	for name, test := range map[string]struct {
+		cause error
+		want  string
+	}{
+		"timeout":  {cause: context.DeadlineExceeded, want: "storcli temperature timeout: context deadline exceeded"},
+		"canceled": {cause: context.Canceled, want: "storcli temperature canceled: context canceled"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := storcliContextError("temperature", test.cause)
+			if !errors.Is(err, test.cause) {
+				t.Fatalf("wrapped error does not preserve %v", test.cause)
+			}
+			if got := err.Error(); got != test.want {
+				t.Fatalf("error = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestParseStorCLIRejectsUnexpectedOutput(t *testing.T) {
 	for name, data := range map[string]string{
 		"failed status": `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Failure"},"Response Data":{}}]}`,
