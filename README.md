@@ -120,9 +120,11 @@ Lorsque la collecte HBA est active, le serveur exécute en arrière-plan la comm
 `storcli /cALL show temperature J nolog`, immédiatement au démarrage puis toutes
 les 30 secondes par défaut. Une commande `storcli /cALL show J nolog` exécutée
 au premier relevé associe chaque contrôleur à son numéro de série, son modèle et
-son adresse PCI ; ces métadonnées sont ensuite conservées en mémoire. Les
-requêtes utilisent uniquement le dernier état en mémoire et n'attendent donc
-jamais StorCLI. `--storcli-interval 1m` ajuste l'intervalle de rafraîchissement.
+son adresse PCI ; ces métadonnées sont ensuite conservées jusqu'au redémarrage
+du service. La topologie PCI passthrough est supposée immuable pendant son
+exécution. Les requêtes utilisent uniquement le dernier état en mémoire et
+n'attendent donc jamais StorCLI. `--storcli-interval 1m` ajuste l'intervalle de
+rafraîchissement.
 
 La collecte HBA utilise le mode `auto` par défaut : l'absence de StorCLI ou de
 contrôleur n'est pas traitée comme une erreur. `--hba-mode enabled` rend cette

@@ -55,19 +55,8 @@ func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	if err != nil {
 		return nil, err
 	}
-	if applyHBAMetadata(readings, r.metadata) {
-		return readings, nil
-	}
-
-	// Controller indices may change after a hotplug. Refresh metadata once when
-	// a temperature references an index absent from the cached discovery.
-	metadata, err := r.discover(ctx)
-	if err != nil {
-		return nil, err
-	}
-	r.metadata = metadata
 	if !applyHBAMetadata(readings, r.metadata) {
-		return nil, errors.New("storcli metadata missing for a controller")
+		return nil, errors.New("storcli temperature references an unknown controller; restart the service to refresh HBA metadata")
 	}
 	return readings, nil
 }
