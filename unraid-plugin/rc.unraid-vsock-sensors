@@ -28,9 +28,15 @@ load_config() {
 
 running_pid() {
     [[ -r "$pid_file" ]] || return 1
-    local pid
+    local pid executable
     read -r pid < "$pid_file"
     [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+
+    # A stale PID file may refer to an unrelated process after PID reuse. Check
+    # argv[0] rather than /proc/PID/exe because package upgrades may replace the
+    # executable while the old service is still running.
+    IFS= read -r -d '' executable < "/proc/$pid/cmdline" || return 1
+    [[ "$executable" == "$binary" ]] || return 1
     printf '%s\n' "$pid"
 }
 
