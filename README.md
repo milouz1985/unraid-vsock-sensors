@@ -151,16 +151,15 @@ dont le nom ressemble à celui d'un HBA, par exemple `get disk hba1`.
 sans masquer les mesures encore disponibles dans l'autre.
 
 Les commandes autres que `--json` écrivent uniquement un nombre en degrés
-Celsius. Elles conviennent donc à une source `cmd` de fan2go ou CoolerControl.
+Celsius. Elles conviennent donc à une source `cmd` de fan2go.
 
-## Plugin CoolerControl natif
+## Capteurs hwmon natifs
 
-Un service gRPC natif est disponible dans `coolercontrol-plugin`. Contrairement
-à une collection de sondes `cmd`, il effectue une seule requête vsock par cycle
-et présente automatiquement les groupes, les disques et les HBA comme un
-appareil **Unraid Storage**. Consultez
-[`coolercontrol-plugin/README.md`](coolercontrol-plugin/README.md) pour
-l'installation.
+Le module expérimental `virt-temp` présente automatiquement les groupes, les
+disques et les HBA comme des sondes Linux standard. Ils sont utilisables sans
+intégration spécifique par CoolerControl, fan2go, fancontrol et lm-sensors.
+Consultez [`virt-temp/README.md`](virt-temp/README.md) pour la construction et
+l'installation du paquet Proxmox.
 
 ## Fraîcheur et sécurité
 
@@ -170,11 +169,8 @@ simplement la même valeur mise en cache. L'outil ne lance volontairement jamais
 `smartctl`.
 
 La température HBA ne vient pas d'Unraid : elle correspond au champ
-`ROC temperature(Degree Celsius)` de StorCLI. En cas d'erreur, la dernière
-mesure valide reste disponible pendant deux tentatives supplémentaires, puis
-est supprimée au troisième échec consécutif. Un succès remet ce compteur à
-zéro. Une sonde absente ou une commande en erreur ne concerne que la famille
-HBA ; les températures des disques restent utilisables.
+`ROC temperature(Degree Celsius)` de StorCLI. Une collecte en erreur invalide
+immédiatement les mesures HBA sans affecter les températures des disques.
 
 Le transport vsock n'est pas un mécanisme d'authentification. Le serveur accepte
 uniquement les connexions provenant du CID hôte standard `2`. Il accepte
