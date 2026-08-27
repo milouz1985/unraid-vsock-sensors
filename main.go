@@ -146,9 +146,8 @@ func serve(args []string) error {
 		_ = listener.Close()
 	}()
 	hbas := newHBACollector(*storcliInterval, hbaMode)
-	// The `go` keyword starts run in a new goroutine, a lightweight concurrent
-	// task managed by Go. This lets the server accept requests immediately while
-	// StorCLI is refreshed independently in the background.
+	// StorCLI is refreshed independently so VSOCK requests never wait for the
+	// controller command.
 	go hbas.run(ctx)
 	var clients sync.WaitGroup
 	defer clients.Wait()
@@ -170,8 +169,8 @@ func serve(args []string) error {
 			continue
 		}
 
-		// Start one goroutine per accepted connection so a slow client does not
-		// prevent the accept loop from receiving and serving other clients.
+		// Isolate each client so one blocked connection cannot delay sensor data
+		// requested by another host-side consumer.
 		clients.Add(1)
 		go func() {
 			defer clients.Done()

@@ -45,6 +45,8 @@ func newHBAReader() *hbaReader {
 }
 
 func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
+	// PCI passthrough topology is fixed while the VM is running, so controller
+	// identity is discovered once and remains valid until the service restarts.
 	if r.metadata == nil {
 		metadata, err := r.discover(ctx)
 		if err != nil {
@@ -114,13 +116,8 @@ func newHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
 	return collector
 }
 
-// `(c *hbaCollector)` is the method receiver: it means that run belongs to the
-// hbaCollector type. Inside the method, `c` refers to the specific collector on
-// which `hbas.run(ctx)` was called. The asterisk means that the receiver is a
-// pointer, so the method works with the collector's actual shared state
-// (readings, error, and mutex) rather than with a copy.
-//
-// run owns the refresh loop. It is the only goroutine that calls StorCLI.
+// run owns the StorCLI refresh loop and keeps slow controller access outside
+// the VSOCK request path. Requests only read the latest published snapshot.
 func (c *hbaCollector) run(ctx context.Context) {
 	if c.mode == hbaModeDisabled {
 		return
@@ -178,12 +175,11 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	}
 }
 
-// read never invokes StorCLI. The copy keeps callers from modifying the slice
-// shared by the collector and other requests.
+// read returns the cached snapshot without invoking StorCLI. Cloning prevents
+// a request from modifying data shared with the collector and other clients.
 func (c *hbaCollector) read() ([]sensors.HBA, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	// Return another clone so callers cannot modify the collector's snapshot.
 	return slices.Clone(c.readings), c.err
 }
 
@@ -287,6 +283,8 @@ func firstHBAValue(values ...string) string {
 }
 
 func hbaStableID(controller int, serial, sasAddress, pciAddress string) string {
+	// Prefer hardware identities that survive StorCLI index changes. The
+	// controller number is only a last resort for adapters lacking metadata.
 	if serial = firstHBAValue(serial); serial != "" {
 		return "serial:" + strings.ToLower(serial)
 	}
@@ -300,6 +298,8 @@ func hbaStableID(controller int, serial, sasAddress, pciAddress string) string {
 }
 
 func normalizePCIAddress(address string) string {
+	// StorCLI reports domain:bus:device:function; Linux exposes the canonical
+	// domain:bus:device.function form used in sysfs and PCI tooling.
 	parts := strings.Split(strings.TrimSpace(address), ":")
 	if len(parts) != 4 {
 		return ""
