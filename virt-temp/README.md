@@ -105,4 +105,4 @@ systemctl status unraid-vsock-hwmon.service
 Après dix secondes sans mise à jour réussie, chaque `temp1_input` existant
 retourne `100000` milli-degrés Celsius. Le délai peut être modifié au chargement
 du module, par exemple avec `modprobe virt-temp stale_timeout=15`. Les valeurs
-acceptées vont de 1 à 86 400 secondes.
+acceptées vont de 1 à 300 secondes.

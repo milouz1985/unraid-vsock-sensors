@@ -76,7 +76,7 @@ static const struct kernel_param_ops virt_temp_stale_timeout_ops = {
 module_param_cb(stale_timeout, &virt_temp_stale_timeout_ops,
 		&stale_timeout, 0644);
 MODULE_PARM_DESC(stale_timeout,
-		 "Seconds without an update before reporting 100 degrees Celsius (1-86400)");
+		 "Seconds without an update before reporting 100 degrees Celsius (1-300)");
 
 static LIST_HEAD(virt_temp_sensors);
 static DEFINE_MUTEX(virt_temp_lock);
@@ -100,10 +100,13 @@ static const struct hwmon_channel_info * const virt_temp_info[] = {
 static bool virt_temp_is_stale(const struct virt_temp_sensor *sensor)
 {
 	unsigned int timeout = READ_ONCE(stale_timeout);
+	unsigned long last_update;
 
+	/* Acquire the temperature published before this timestamp. */
+	last_update = smp_load_acquire(&sensor->last_update);
 	/* Cast before multiplying to keep the calculation in the jiffies domain. */
 	return time_after(jiffies,
-			  READ_ONCE(sensor->last_update) +
+			  last_update +
 				  (unsigned long)timeout * HZ);
 }
 
@@ -263,7 +266,8 @@ static int virt_temp_commit(struct virt_temp_session *session,
 			strscpy(sensor->id, record->id, sizeof(sensor->id));
 			strscpy(sensor->label, record->label, sizeof(sensor->label));
 			atomic_long_set(&sensor->temperature, record->temperature);
-			WRITE_ONCE(sensor->last_update, jiffies);
+			/* Publish the temperature before making its timestamp visible. */
+			smp_store_release(&sensor->last_update, jiffies);
 			sensor_err = virt_temp_register_sensor(sensor);
 			if (sensor_err) {
 				if (!err)
@@ -283,7 +287,8 @@ static int virt_temp_commit(struct virt_temp_session *session,
 				err = sensor_err;
 		}
 		atomic_long_set(&sensor->temperature, record->temperature);
-		WRITE_ONCE(sensor->last_update, jiffies);
+		/* Publish the temperature before making its timestamp visible. */
+		smp_store_release(&sensor->last_update, jiffies);
 	}
 
 restart:
