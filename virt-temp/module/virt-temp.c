@@ -82,7 +82,6 @@ MODULE_PARM_DESC(stale_timeout,
 
 static LIST_HEAD(virt_temp_sensors);
 static DEFINE_MUTEX(virt_temp_lock);
-static struct miscdevice virt_temp_misc;
 
 static const u32 virt_temp_config[] = {
 	HWMON_T_INPUT | HWMON_T_LABEL,
