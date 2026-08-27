@@ -313,6 +313,11 @@ static ssize_t virt_temp_write(struct file *file, const char __user *user,
 		buffer = NULL;
 		goto out;
 	}
+	/* Reject embedded NUL bytes instead of silently ignoring trailing data. */
+	if (memchr(buffer, '\0', count)) {
+		err = -EINVAL;
+		goto out;
+	}
 	cursor = strim(buffer);
 
 	if (!strncmp(cursor, "commit\t", 7)) {
@@ -326,7 +331,8 @@ static ssize_t virt_temp_write(struct file *file, const char __user *user,
 	temperature = strsep(&cursor, "\t");
 	label = cursor;
 	if (!id || !*id || !temperature || !*temperature || !label || !*label ||
-	    strchr(label, '\t') || strlen(id) >= VIRT_TEMP_ID_SIZE ||
+	    strpbrk(id, "\t\r\n") || strpbrk(label, "\t\r\n") ||
+	    strlen(id) >= VIRT_TEMP_ID_SIZE ||
 	    strlen(label) >= VIRT_TEMP_LABEL_SIZE) {
 		err = -EINVAL;
 		goto out;
