@@ -17,6 +17,8 @@ Le paquet Debian `unraid-vsock-sensors-hwmon` installe :
 
 Au premier démarrage, `/etc/default/unraid-vsock-hwmon` est créé seulement s'il
 n'existe pas. Une configuration existante n'est jamais remplacée.
+L'inventaire persistant est stocké par défaut dans
+`/var/lib/unraid-vsock-sensors/hwmon-inventory.json`.
 
 ## Fonctionnement du pilote
 
@@ -40,14 +42,31 @@ Chaque sonde correspond à un canal `tempN_input` accompagné de
 `tempN_label`. Les ID stables restent internes au protocole ; sysfs expose le
 label configuré au démarrage.
 
-## Inventaire et failsafe
+## Inventaire persistant et failsafe
 
-L'inventaire est fixe pendant la vie du processus agent :
+Après un premier relevé valide, l'agent met en cache les ID, labels et groupes,
+mais jamais les températures. Au démarrage suivant, ce cache recrée les canaux
+à `100 °C` avant que la VM réponde. Un logiciel de ventilation peut donc les
+découvrir dès le boot de Proxmox.
 
-- un ID absent n'est pas supprimé et son canal finit à `100 °C` ;
-- le maximum d'un groupe incomplet finit également à `100 °C` ;
-- un nouvel ID attend le prochain redémarrage du service ;
-- un changement de label n'affecte pas l'identité.
+Une réponse valide dont les ID diffèrent remplace automatiquement la famille
+concernée et le cache. Une erreur de lecture ou une température indisponible ne
+constitue pas une nouvelle topologie : les anciens canaux restent alors en
+place et atteignent le failsafe. Un changement de label seul n'affecte pas
+l'identité.
+
+Les logiciels qui n'observent pas les ajouts hwmon à chaud peuvent être
+relancés après une restauration ou une reconfiguration. La liste est optionnelle
+et générique :
+
+```sh
+UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
+# ou
+UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
+```
+
+L'agent utilise `systemctl try-restart` : une unité absente ou inactive n'est
+pas démarrée. La valeur reste vide par défaut.
 
 Chaque canal retourne `100000` millidegrés Celsius après 10 secondes sans mise
 à jour. Le délai est un paramètre du module compris entre 1 et 300 secondes. Par

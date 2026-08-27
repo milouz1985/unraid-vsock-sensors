@@ -118,7 +118,7 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 			HBAs:  []sensors.HBA{{Name: "hba0", Temp: 51}},
 		}, nil
 	}
-	err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, path, fetch)
+	_, err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, path, fetch)
 	if err == nil {
 		t.Fatal("expected disk error")
 	}
@@ -134,7 +134,7 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 	}
 }
 
-func TestPublisherKeepsMissingSensorAndGroupStale(t *testing.T) {
+func TestPublisherReconfiguresChangedTopology(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "virt-temp")
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
@@ -155,14 +155,61 @@ func TestPublisherKeepsMissingSensorAndGroupStale(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		_ = publishHWMonFamily(path, "disk", &publisher.disks, readings, false)
+		_, _ = publishHWMonFamily(path, "disk", &publisher.disks, readings, false)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "disk:1\t35000\tdisk1 (sda)\ncommit\tdisk\n"; got != want {
-		t.Fatalf("update = %q, want only the available individual sensor %q", got, want)
+	if got, want := string(data), "disk:1\t35000\tdisk1 (sda)\nconfigure\tdisk\n"; got != want {
+		t.Fatalf("update = %q, want replacement inventory %q", got, want)
+	}
+}
+
+func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
+	directory := t.TempDir()
+	device := filepath.Join(directory, "virt-temp")
+	cache := filepath.Join(directory, "inventory.json")
+	if err := os.WriteFile(device, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &hwmonPublisher{
+		cachePath: cache,
+		disks: hwmonInventory{initialized: true, readings: []hwmonReading{
+			{id: "disk:serial", label: "disk1 (sda)", temperature: 35},
+		}},
+	}
+	if err := publisher.saveCache(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(device, 0); err != nil {
+		t.Fatal(err)
+	}
+	restored := &hwmonPublisher{cachePath: cache}
+	if restoredCache, err := restored.restore(device); err != nil {
+		t.Fatal(err)
+	} else if !restoredCache {
+		t.Fatal("cache was not reported as restored")
+	}
+	data, err := os.ReadFile(device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "disk:serial\t100000\tdisk1 (sda)\nconfigure\tdisk\n"; got != want {
+		t.Fatalf("restored inventory = %q, want failsafe inventory %q", got, want)
+	}
+}
+
+func TestParseRestartUnits(t *testing.T) {
+	units, err := parseRestartUnits("coolercontrold.service, fan2go.service,coolercontrold.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"coolercontrold.service", "fan2go.service"}; !reflect.DeepEqual(units, want) {
+		t.Fatalf("units = %#v, want %#v", units, want)
+	}
+	if _, err := parseRestartUnits("--no-block"); err == nil {
+		t.Fatal("option-like unit must be rejected")
 	}
 }
 
@@ -173,14 +220,14 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 	}
 	inventory := hwmonInventory{}
 	initial := []hwmonReading{{id: "disk:serial", label: "disk1 (sda)", temperature: 34}}
-	if err := publishHWMonFamily(path, "disk", &inventory, initial, false); err != nil {
+	if _, err := publishHWMonFamily(path, "disk", &inventory, initial, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatal(err)
 	}
 	changed := []hwmonReading{{id: "disk:serial", label: "disk1 (sdb)", temperature: 35}}
-	if err := publishHWMonFamily(path, "disk", &inventory, changed, false); err != nil {
+	if _, err := publishHWMonFamily(path, "disk", &inventory, changed, false); err != nil {
 		t.Fatalf("a label change must not change sensor identity: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -198,14 +245,14 @@ func TestPublisherWaitsForFirstNonEmptyInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	inventory := hwmonInventory{}
-	if err := publishHWMonFamily(path, "disk", &inventory, nil, false); err == nil {
+	if _, err := publishHWMonFamily(path, "disk", &inventory, nil, false); err == nil {
 		t.Fatal("an empty initial inventory should not be configured")
 	}
 	if inventory.initialized {
 		t.Fatal("empty initial inventory was frozen")
 	}
 	readings := []hwmonReading{{id: "disk:serial", label: "disk1 (sda)", temperature: 35}}
-	if err := publishHWMonFamily(path, "disk", &inventory, readings, false); err != nil {
+	if _, err := publishHWMonFamily(path, "disk", &inventory, readings, false); err != nil {
 		t.Fatal(err)
 	}
 	if !inventory.initialized {
@@ -219,7 +266,7 @@ func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	inventory := hwmonInventory{}
-	if err := publishHWMonFamily(path, "hba", &inventory, nil, true); err != nil {
+	if _, err := publishHWMonFamily(path, "hba", &inventory, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -241,7 +288,7 @@ func TestPublishHWMonStateReturnsFetchError(t *testing.T) {
 	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
 		return sensors.Response{}, want
 	}
-	if err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, want) {
+	if _, err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, want) {
 		t.Fatalf("got %v, want %v", err, want)
 	}
 }

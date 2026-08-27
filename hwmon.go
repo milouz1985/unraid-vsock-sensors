@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,7 +10,10 @@ import (
 	"log"
 	"math"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +25,8 @@ import (
 const (
 	defaultHWMonInterval = time.Second
 	virtTempDevicePath   = "/dev/virt-temp"
+	defaultHWMonCache    = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"
+	hwmonFailsafeTemp    = 100.0
 	minHWMonGroupSize    = 2
 	maxHWMonIDSize       = 63
 	maxHWMonLabelSize    = 95
@@ -39,8 +45,27 @@ type hwmonInventory struct {
 }
 
 type hwmonPublisher struct {
-	disks hwmonInventory
-	hbas  hwmonInventory
+	disks        hwmonInventory
+	hbas         hwmonInventory
+	cachePath    string
+	restartUnits []string
+	cacheDirty   bool
+}
+
+type cachedHWMonInventory struct {
+	Version int                `json:"version"`
+	Disks   *cachedHWMonFamily `json:"disks,omitempty"`
+	HBAs    *cachedHWMonFamily `json:"hbas,omitempty"`
+}
+
+type cachedHWMonFamily struct {
+	Readings []cachedHWMonReading `json:"readings"`
+}
+
+type cachedHWMonReading struct {
+	ID      string   `json:"id"`
+	Label   string   `json:"label"`
+	Members []string `json:"members,omitempty"`
 }
 
 type hwmonDiskGroup struct {
@@ -117,6 +142,8 @@ func hwmon(args []string) error {
 	port := fs.Uint("port", defaultPort, "vsock port")
 	interval := fs.Duration("interval", defaultHWMonInterval, "temperature update interval")
 	device := fs.String("device", virtTempDevicePath, "virt-temp control device")
+	cache := fs.String("cache", defaultHWMonCache, "persistent hwmon inventory cache")
+	restartUnitsFlag := fs.String("restart-units", "", "comma-separated systemd units restarted after a topology change")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -132,15 +159,39 @@ func hwmon(args []string) error {
 	if *interval <= 0 {
 		return errors.New("interval must be greater than zero")
 	}
+	if strings.TrimSpace(*cache) == "" {
+		return errors.New("cache path must not be empty")
+	}
+	restartUnits, err := parseRestartUnits(*restartUnitsFlag)
+	if err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	log.Printf("publishing fixed Unraid hwmon inventories through %s every %s", *device, *interval)
-	publisher := &hwmonPublisher{}
+	publisher := &hwmonPublisher{cachePath: *cache, restartUnits: restartUnits}
+	restored, err := publisher.restore(*device)
+	if err != nil {
+		log.Printf("hwmon inventory cache warning: %s", err)
+	} else if restored {
+		if err := restartSystemdUnits(ctx, publisher.restartUnits); err != nil {
+			log.Printf("topology consumer restart warning: %s", err)
+		} else if len(publisher.restartUnits) != 0 {
+			log.Printf("restarted topology consumers after cache restore: %s", strings.Join(publisher.restartUnits, ", "))
+		}
+	}
 	lastError := ""
 	for {
-		err := publisher.publish(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
+		reconfigured, err := publisher.publish(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
+		if reconfigured {
+			if restartErr := restartSystemdUnits(ctx, publisher.restartUnits); restartErr != nil {
+				log.Printf("topology consumer restart warning: %s", restartErr)
+			} else if len(publisher.restartUnits) != 0 {
+				log.Printf("restarted topology consumers: %s", strings.Join(publisher.restartUnits, ", "))
+			}
+		}
 		if err != nil && err.Error() != lastError {
 			lastError = err.Error()
 			log.Printf("hwmon update warning; unavailable sensors will apply their failsafe: %s", lastError)
@@ -165,26 +216,47 @@ func (publisher *hwmonPublisher) publish(
 	port uint32,
 	device string,
 	fetch func(context.Context, uint32, uint32) (sensors.Response, error),
-) error {
+) (bool, error) {
 	ctx, cancel := context.WithTimeout(parent, requestTimeout)
 	defer cancel()
 	state, err := fetch(ctx, cid, port)
 	if err != nil {
-		return err
+		return false, err
 	}
 	disks, hbas := makeHWMonReadings(state)
 	var diskErr, hbaErr error
+	reconfigured := false
 	if state.Error != "" {
 		diskErr = fmt.Errorf("disks: %s", state.Error)
-	} else if err := publishHWMonFamily(device, "disk", &publisher.disks, disks, false); err != nil {
+	} else if changed, err := publishHWMonFamily(device, "disk", &publisher.disks, disks, false); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
+	} else {
+		reconfigured = reconfigured || changed
+		if changed {
+			log.Printf("configured storage hwmon inventory with %d channels", len(disks))
+		}
 	}
 	if state.HBAError != "" {
 		hbaErr = fmt.Errorf("HBA: %s", state.HBAError)
-	} else if err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas, state.HBADisabled); err != nil {
+	} else if changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas, state.HBADisabled); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
+	} else {
+		reconfigured = reconfigured || changed
+		if changed {
+			log.Printf("configured HBA hwmon inventory with %d channels", len(hbas))
+		}
 	}
-	return errors.Join(diskErr, hbaErr)
+	if reconfigured {
+		publisher.cacheDirty = true
+	}
+	if publisher.cacheDirty {
+		if err := publisher.saveCache(); err != nil {
+			return false, errors.Join(diskErr, hbaErr, fmt.Errorf("save hwmon inventory cache: %w", err))
+		}
+		publisher.cacheDirty = false
+		return true, errors.Join(diskErr, hbaErr)
+	}
+	return false, errors.Join(diskErr, hbaErr)
 }
 
 func publishHWMonFamily(
@@ -192,37 +264,34 @@ func publishHWMonFamily(
 	inventory *hwmonInventory,
 	current []hwmonReading,
 	allowEmpty bool,
-) error {
+) (bool, error) {
+	if len(current) == 0 && !allowEmpty {
+		return false, errors.New("inventory is empty; waiting for sensors")
+	}
 	if !inventory.initialized {
-		if len(current) == 0 && !allowEmpty {
-			return errors.New("initial inventory is empty; waiting for sensors")
-		}
 		if err := writeHWMonReadings(path, namespace, "configure", current); err != nil {
-			return err
+			return false, err
 		}
 		inventory.initialized = true
 		inventory.readings = append([]hwmonReading(nil), current...)
-		return nil
+		return true, nil
+	}
+	if !sameHWMonTopology(inventory.readings, current) {
+		if err := writeHWMonReadings(path, namespace, "configure", current); err != nil {
+			return false, err
+		}
+		inventory.readings = append([]hwmonReading(nil), current...)
+		return true, nil
 	}
 
 	currentByID := make(map[string]hwmonReading, len(current))
 	for _, reading := range current {
 		currentByID[reading.id] = reading
 	}
-	expectedByID := make(map[string]hwmonReading, len(inventory.readings))
-	for _, reading := range inventory.readings {
-		expectedByID[reading.id] = reading
-	}
-
 	updates := make([]hwmonReading, 0, len(inventory.readings))
-	var topologyErrors []error
 	for _, expected := range inventory.readings {
 		reading, found := currentByID[expected.id]
 		if !found {
-			topologyErrors = append(topologyErrors, fmt.Errorf(
-				"expected sensor %q is missing; failsafe active, restart unraid-vsock-hwmon.service if intentional",
-				expected.label,
-			))
 			continue
 		}
 		complete := true
@@ -240,18 +309,156 @@ func publishHWMonFamily(
 			updates = append(updates, reading)
 		}
 	}
+	if err := writeHWMonReadings(path, namespace, "commit", updates); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func sameHWMonTopology(expected, current []hwmonReading) bool {
+	if len(expected) != len(current) {
+		return false
+	}
+	currentByID := make(map[string]hwmonReading, len(current))
 	for _, reading := range current {
-		if _, expected := expectedByID[reading.id]; !expected {
-			topologyErrors = append(topologyErrors, fmt.Errorf(
-				"new sensor %q is not published; restart unraid-vsock-hwmon.service to accept the new topology",
-				reading.label,
-			))
+		currentByID[reading.id] = reading
+	}
+	for _, reading := range expected {
+		other, found := currentByID[reading.id]
+		if !found || !slices.Equal(reading.members, other.members) {
+			return false
 		}
 	}
-	if err := writeHWMonReadings(path, namespace, "commit", updates); err != nil {
-		return errors.Join(append(topologyErrors, err)...)
+	return true
+}
+
+func (publisher *hwmonPublisher) restore(device string) (bool, error) {
+	data, err := os.ReadFile(publisher.cachePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	return errors.Join(topologyErrors...)
+	if err != nil {
+		return false, err
+	}
+	var cached cachedHWMonInventory
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cached); err != nil {
+		return false, fmt.Errorf("decode %s: %w", publisher.cachePath, err)
+	}
+	if cached.Version != 1 {
+		return false, fmt.Errorf("unsupported cache version %d", cached.Version)
+	}
+	if cached.Disks != nil {
+		readings := readingsFromCache(cached.Disks.Readings)
+		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, false); err != nil {
+			return false, fmt.Errorf("restore disks: %w", err)
+		}
+	}
+	if cached.HBAs != nil {
+		readings := readingsFromCache(cached.HBAs.Readings)
+		if _, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings, true); err != nil {
+			return false, fmt.Errorf("restore HBA: %w", err)
+		}
+	}
+	log.Printf("restored cached hwmon inventory from %s", publisher.cachePath)
+	return cached.Disks != nil || cached.HBAs != nil, nil
+}
+
+func (publisher *hwmonPublisher) saveCache() error {
+	cached := cachedHWMonInventory{Version: 1}
+	if publisher.disks.initialized {
+		cached.Disks = &cachedHWMonFamily{Readings: readingsToCache(publisher.disks.readings)}
+	}
+	if publisher.hbas.initialized {
+		cached.HBAs = &cachedHWMonFamily{Readings: readingsToCache(publisher.hbas.readings)}
+	}
+	data, err := json.MarshalIndent(cached, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(publisher.cachePath), 0755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(publisher.cachePath), ".hwmon-inventory-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0644); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, publisher.cachePath)
+}
+
+func readingsToCache(readings []hwmonReading) []cachedHWMonReading {
+	cached := make([]cachedHWMonReading, 0, len(readings))
+	for _, reading := range readings {
+		cached = append(cached, cachedHWMonReading{
+			ID: reading.id, Label: reading.label, Members: append([]string(nil), reading.members...),
+		})
+	}
+	return cached
+}
+
+func readingsFromCache(cached []cachedHWMonReading) []hwmonReading {
+	readings := make([]hwmonReading, 0, len(cached))
+	for _, reading := range cached {
+		readings = append(readings, hwmonReading{
+			id: reading.ID, label: reading.Label, temperature: hwmonFailsafeTemp,
+			members: append([]string(nil), reading.Members...),
+		})
+	}
+	return readings
+}
+
+func parseRestartUnits(value string) ([]string, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	var units []string
+	seen := make(map[string]struct{})
+	for _, item := range strings.Split(value, ",") {
+		unit := strings.TrimSpace(item)
+		if unit == "" || strings.HasPrefix(unit, "-") || strings.ContainsAny(unit, " \t\r\n/") {
+			return nil, fmt.Errorf("invalid systemd unit %q", unit)
+		}
+		if unit == "unraid-vsock-hwmon.service" {
+			return nil, errors.New("unraid-vsock-hwmon.service cannot restart itself")
+		}
+		if _, duplicate := seen[unit]; duplicate {
+			continue
+		}
+		seen[unit] = struct{}{}
+		units = append(units, unit)
+	}
+	return units, nil
+}
+
+func restartSystemdUnits(ctx context.Context, units []string) error {
+	if len(units) == 0 {
+		return nil
+	}
+	args := append([]string{"try-restart", "--"}, units...)
+	output, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("restart topology consumers: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func writeHWMonReadings(path, namespace, operation string, readings []hwmonReading) (err error) {

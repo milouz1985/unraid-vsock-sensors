@@ -3,5 +3,7 @@ set -e
 
 if [ "$1" = "purge" ]; then
     rm -f -- /etc/default/unraid-vsock-hwmon
+    rm -f -- /var/lib/unraid-vsock-sensors/hwmon-inventory.json
+    rmdir --ignore-fail-on-non-empty /var/lib/unraid-vsock-sensors 2>/dev/null || true
 fi
 systemctl daemon-reload 2>/dev/null || true

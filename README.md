@@ -130,12 +130,34 @@ Le fichier `/etc/default/unraid-vsock-hwmon` contient :
 UNRAID_VSOCK_CID=3
 UNRAID_VSOCK_PORT=19090
 UNRAID_VSOCK_INTERVAL=1s
+UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
+# UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
 ```
 
 - `UNRAID_VSOCK_CID` désigne la VM Unraid configurée dans Proxmox ;
 - `UNRAID_VSOCK_PORT` doit correspondre au port du plugin Unraid ;
 - `UNRAID_VSOCK_INTERVAL` définit la fréquence de lecture du cache par l'agent
-  Proxmox. Il ne détermine pas la fréquence SMART d'Unraid.
+  Proxmox. Il ne détermine pas la fréquence SMART d'Unraid ;
+- `UNRAID_VSOCK_CACHE` conserve la structure des canaux entre deux démarrages ;
+- `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
+  des virgules. Les unités actives sont redémarrées après la restauration du
+  cache ou un changement de topologie, afin qu'elles rescannent les hwmon.
+
+Pour CoolerControl :
+
+```sh
+UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
+```
+
+Pour plusieurs consommateurs :
+
+```sh
+UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
+```
+
+La valeur est vide par défaut : le projet ne suppose pas quel logiciel de
+ventilation est installé. `systemctl try-restart` ne démarre que les unités déjà
+actives.
 
 Après une modification :
 
@@ -189,32 +211,34 @@ Un disque en veille est conservé dans l'inventaire avec une température de
 `0 °C`. Cette valeur signifie que la sonde est inactive et évite de déclencher
 le failsafe pendant un spindown normal.
 
-## Inventaire fixe et changement de topologie
+## Inventaire persistant et changement de topologie
 
-Au démarrage de l'agent Proxmox, le premier relevé non vide de chaque famille
-configure ses canaux hwmon. Un premier relevé vide est ignoré afin de ne pas
-figer un démarrage incomplet d'Unraid ou de StorCLI. Seul le mode HBA
-explicitement `disabled` autorise un inventaire HBA vide.
+Après le premier relevé valide, l'agent enregistre la structure des canaux dans
+`UNRAID_VSOCK_CACHE`. Au démarrage suivant, il la restaure immédiatement avec
+des températures failsafe de `100 °C`, sans attendre la VM Unraid. Les logiciels
+comme CoolerControl peuvent ainsi découvrir les canaux pendant le boot de
+Proxmox, même si Unraid met plusieurs minutes à démarrer.
+
+Sans cache, le premier relevé non vide de chaque famille configure ses canaux.
+Un relevé vide est ignoré afin de ne pas figer un démarrage incomplet d'Unraid
+ou de StorCLI. Seul le mode HBA explicitement `disabled` autorise un inventaire
+HBA vide.
 
 L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
 pour un disque, puis numéro de série, adresse SAS, adresse PCI ou index StorCLI
-pour un HBA. Le label est une information d'affichage figée jusqu'au prochain
-démarrage de l'agent.
+pour un HBA. Le label est une information d'affichage conservée tant que l'ID
+reste présent.
 
 Pendant l'exécution :
 
-- une sonde attendue qui disparaît reste présente et atteint le failsafe ;
-- le maximum de son groupe atteint également le failsafe ;
-- une nouvelle sonde est signalée dans le journal, mais n'est pas ajoutée ;
+- une erreur de lecture ou une température indisponible ne modifie jamais le
+  cache et laisse les canaux concernés atteindre le failsafe ;
+- un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
+  automatiquement la famille hwmon concernée et met à jour le cache ;
 - un changement de `/dev/sdX`, de nom affiché ou d'index StorCLI ne modifie pas
-  l'identité si l'ID stable reste identique.
-
-Après un ajout, un retrait ou un remplacement volontaire, accepter la nouvelle
-topologie avec :
-
-```sh
-systemctl restart unraid-vsock-hwmon.service
-```
+  l'identité si l'ID stable reste identique ;
+- les consommateurs configurés dans `UNRAID_VSOCK_RESTART_UNITS` sont relancés
+  après la reconfiguration afin de découvrir les nouveaux canaux.
 
 ## Failsafe et fraîcheur des mesures
 
