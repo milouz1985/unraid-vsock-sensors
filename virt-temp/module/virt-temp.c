@@ -15,6 +15,7 @@
 
 #define VIRT_TEMP_FAILSAFE_MILLIC 100000L
 #define VIRT_TEMP_MAX_MILLIC 150000L
+#define VIRT_TEMP_MAX_STALE_TIMEOUT 300U
 #define VIRT_TEMP_ID_SIZE 64
 #define VIRT_TEMP_LABEL_SIZE 96
 #define VIRT_TEMP_MAX_RECORDS 1024
@@ -52,9 +53,30 @@ struct virt_temp_session {
 };
 
 static unsigned int stale_timeout = 10;
-module_param(stale_timeout, uint, 0644);
+
+static int virt_temp_set_stale_timeout(const char *value,
+				       const struct kernel_param *parameter)
+{
+	unsigned int timeout;
+	int err;
+
+	err = kstrtouint(value, 0, &timeout);
+	if (err)
+		return err;
+	if (!timeout || timeout > VIRT_TEMP_MAX_STALE_TIMEOUT)
+		return -ERANGE;
+	return param_set_uint(value, parameter);
+}
+
+static const struct kernel_param_ops virt_temp_stale_timeout_ops = {
+	.set = virt_temp_set_stale_timeout,
+	.get = param_get_uint,
+};
+
+module_param_cb(stale_timeout, &virt_temp_stale_timeout_ops,
+		&stale_timeout, 0644);
 MODULE_PARM_DESC(stale_timeout,
-		 "Seconds without an update before reporting 100 degrees Celsius");
+		 "Seconds without an update before reporting 100 degrees Celsius (1-86400)");
 
 static LIST_HEAD(virt_temp_sensors);
 static DEFINE_MUTEX(virt_temp_lock);
@@ -77,7 +99,7 @@ static const struct hwmon_channel_info * const virt_temp_info[] = {
 
 static bool virt_temp_is_stale(const struct virt_temp_sensor *sensor)
 {
-	unsigned int timeout = max(stale_timeout, 1U);
+	unsigned int timeout = READ_ONCE(stale_timeout);
 
 	/* Cast before multiplying to keep the calculation in the jiffies domain. */
 	return time_after(jiffies,
