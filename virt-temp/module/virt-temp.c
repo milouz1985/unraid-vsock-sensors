@@ -186,7 +186,13 @@ static const struct hwmon_chip_info virt_temp_chip_info = {
 	.info = virt_temp_info,
 };
 
-/* Build a stable, hwmon-safe name while retaining a readable family prefix. */
+/*
+ * Build a short, stable platform/hwmon name from an ID that may contain
+ * characters forbidden in hwmon names.  The hash is only used for the Linux
+ * device name; sensors are still identified by comparing their complete IDs.
+ * A hash collision therefore makes device registration fail instead of
+ * associating a temperature with the wrong sensor.
+ */
 static void virt_temp_make_name(struct virt_temp_sensor *sensor)
 {
 	const char *family = virt_temp_in_namespace(sensor->id, "hba") ?
