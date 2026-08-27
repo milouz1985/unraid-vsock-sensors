@@ -48,23 +48,25 @@ ou plus récent est nécessaire uniquement pour compiler.
 
 ## Versionner une release
 
-Pour une release qui inclut le plugin Unraid, partir d'un commit propre, le
-taguer, puis générer le package et commiter son descripteur :
+Pour une release qui inclut le plugin Unraid, partir d'un commit propre,
+générer tous les artefacts avec la version finale explicite, commiter le
+descripteur produit, puis taguer ce commit final :
 
 ```sh
-git tag -a v0.1.3 -m "Release v0.1.3"
-make unraid-package
+make all VERSION=X.Y.Z
 git add unraid-plugin/unraid-vsock-sensors.plg
-git commit -m "Publie le descripteur Unraid 0.1.3"
-git push origin main v0.1.3
+git commit -m "Publie le descripteur Unraid X.Y.Z"
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin main vX.Y.Z
 ```
 
-Le tag doit être créé depuis un arbre de travail propre. `make unraid-package`
-en dérive automatiquement la version ; `VERSION` n'est utile que pour construire
-hors d'un dépôt Git. La commande modifie ensuite le descripteur `.plg`, d'où son
-commit après la création du tag.
+La version explicite évite qu'un arbre non encore tagué produise un suffixe
+`-dev`. Le tag est posé après le commit du `.plg` afin que l'archive source
+automatique de Gitea contienne elle aussi le descripteur de la bonne version.
+En dehors de ce processus de release, les commandes de construction continuent
+à dériver automatiquement leur version depuis Git.
 
-Créer ensuite la release `v0.1.3` dans Gitea et y joindre le fichier `.txz`
+Créer ensuite la release `vX.Y.Z` dans Gitea et y joindre le fichier `.txz`
 présent dans `dist/`. Le `.plg` commité fournit à Unraid une URL stable pour
 l'installation et les mises à jour.
 
@@ -94,13 +96,13 @@ make unraid-package
 
 La commande produit dans `dist/` :
 
-- `unraid-vsock-sensors-0.1.3-x86_64-1.txz`, le package serveur ;
+- `unraid-vsock-sensors-X.Y.Z-x86_64-1.txz`, le package serveur ;
 - `unraid-vsock-sensors.plg`, le descripteur à donner au gestionnaire de
   plugins Unraid.
 
 Elle met également à jour `unraid-plugin/unraid-vsock-sensors.plg`, qui doit
 être commité sur la branche `main`. Le package `.txz` doit être joint à la
-release `v0.1.3` sur `git.lan.home`. Les URL peuvent être adaptées avec
+release `vX.Y.Z` sur `git.lan.home`. Les URL peuvent être adaptées avec
 `REPOSITORY_URL`, `PLUGIN_URL` et `PACKAGE_URL` si l'emplacement de publication
 change.
 

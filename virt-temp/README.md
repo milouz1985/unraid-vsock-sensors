@@ -51,7 +51,7 @@ sa somme SHA-256 :
 ./virt-temp/package.sh
 ```
 
-Une release taguée `v0.3.0` produit un module DKMS `virt-temp/0.3.0`, tandis
+Une release taguée `vX.Y.Z` produit un module DKMS `virt-temp/X.Y.Z`, tandis
 qu'une branche de développement conserve son suffixe `-dev`.
 
 ## Installer sur Proxmox
