@@ -40,6 +40,31 @@ func TestServerResponseIncludesVersion(t *testing.T) {
 	}
 }
 
+func TestServerResponseReportsDisabledHBACollection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	if err := os.WriteFile(path, []byte("[disk1]\nid=serial\ndevice=sdb\ntemp=35\nrotational=1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		handle(server, path, newHBACollector(time.Minute, hbaModeDisabled))
+		close(done)
+	}()
+	if _, err := io.WriteString(client, "GET\n"); err != nil {
+		t.Fatal(err)
+	}
+	var response sensors.Response
+	if err := json.NewDecoder(client).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	<-done
+	if !response.HBADisabled {
+		t.Fatal("disabled HBA collection was not reported")
+	}
+}
+
 func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {
 	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{Name: "hba0", Temp: 46}}}
 	var out bytes.Buffer

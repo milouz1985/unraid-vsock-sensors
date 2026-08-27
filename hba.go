@@ -18,12 +18,11 @@ import (
 )
 
 type hbaCollector struct {
-	interval    time.Duration
-	mode        hbaMode
-	mu          sync.RWMutex
-	readings    []sensors.HBA
-	err         error
-	hadReadings bool
+	interval time.Duration
+	mode     hbaMode
+	mu       sync.RWMutex
+	readings []sensors.HBA
+	err      error
 	// collect is replaceable in tests to simulate a slow StorCLI command.
 	collect func(context.Context) ([]sensors.HBA, error)
 }
@@ -95,7 +94,6 @@ const storcliTimeout = 5 * time.Second
 type hbaMode string
 
 const (
-	hbaModeAuto     hbaMode = "auto"
 	hbaModeEnabled  hbaMode = "enabled"
 	hbaModeDisabled hbaMode = "disabled"
 )
@@ -153,15 +151,6 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	// readers from observing parts of two different refreshes.
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// In auto mode, an initially absent StorCLI executable or controller means
-	// that this system has no HBA monitoring to expose. Once an HBA has been
-	// detected, the same condition is a collection failure: keeping the error
-	// prevents the fixed HBA channels from receiving incomplete updates and lets
-	// their watchdog apply its failsafe.
-	absent := errors.Is(err, exec.ErrNotFound) || errors.Is(err, errNoHBA)
-	if c.mode == hbaModeAuto && !c.hadReadings && absent {
-		err = nil
-	}
 	c.err = err
 	if err != nil {
 		// Do not publish a stale temperature. Downstream consumers such as
@@ -170,9 +159,6 @@ func (c *hbaCollector) refresh(parent context.Context) {
 		return
 	}
 	c.readings = readings
-	if len(readings) > 0 {
-		c.hadReadings = true
-	}
 }
 
 // read returns the cached snapshot without invoking StorCLI. Cloning prevents

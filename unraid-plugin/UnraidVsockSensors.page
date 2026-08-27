@@ -6,7 +6,10 @@ Icon="refresh"
 $plugin = 'unraid-vsock-sensors';
 $cfg = parse_plugin_cfg($plugin);
 $port = htmlspecialchars($cfg['PORT'] ?? '19090', ENT_QUOTES);
-$hbaMode = $cfg['HBA_MODE'] ?? 'auto';
+$hbaMode = $cfg['HBA_MODE'] ?? 'enabled';
+if ($hbaMode === 'auto') {
+    $hbaMode = 'enabled';
+}
 $interval = $cfg['STORCLI_INTERVAL'] ?? '30s';
 
 $statusOutput = [];
@@ -53,12 +56,11 @@ _(VSOCK port)_:
 
 _(HBA monitoring)_:
 : <select name="HBA_MODE">
-<option value="auto" <?=$hbaMode === 'auto' ? 'selected' : ''?>>Auto</option>
 <option value="enabled" <?=$hbaMode === 'enabled' ? 'selected' : ''?>>Enabled</option>
 <option value="disabled" <?=$hbaMode === 'disabled' ? 'selected' : ''?>>Disabled</option>
 </select>
 
-> Auto silently disables HBA sensors when StorCLI or a controller is absent. Enabled reports their absence as an error. Disabled never runs StorCLI.
+> Enabled expects StorCLI and at least one controller. Disabled never runs StorCLI and explicitly clears the HBA inventory when the host agent restarts.
 
 _(StorCLI refresh interval)_:
 : <select name="STORCLI_INTERVAL">

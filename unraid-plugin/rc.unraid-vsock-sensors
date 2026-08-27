@@ -8,7 +8,7 @@ log_file="/var/log/$name.log"
 
 load_config() {
     PORT="19090"
-    HBA_MODE="auto"
+    HBA_MODE="enabled"
     STORCLI_INTERVAL="30s"
     [[ ! -r "$config" ]] || source "$config"
 
@@ -21,7 +21,8 @@ load_config() {
         *) echo "Invalid StorCLI refresh interval: $STORCLI_INTERVAL" >&2; return 1 ;;
     esac
     case "$HBA_MODE" in
-        auto|enabled|disabled) ;;
+        enabled|disabled) ;;
+        auto) HBA_MODE="enabled" ;;
         *) echo "Invalid HBA mode: $HBA_MODE" >&2; return 1 ;;
     esac
 }

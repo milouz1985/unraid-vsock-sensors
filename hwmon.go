@@ -176,12 +176,12 @@ func (publisher *hwmonPublisher) publish(
 	var diskErr, hbaErr error
 	if state.Error != "" {
 		diskErr = fmt.Errorf("disks: %s", state.Error)
-	} else if err := publishHWMonFamily(device, "disk", &publisher.disks, disks); err != nil {
+	} else if err := publishHWMonFamily(device, "disk", &publisher.disks, disks, false); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
 	}
 	if state.HBAError != "" {
 		hbaErr = fmt.Errorf("HBA: %s", state.HBAError)
-	} else if err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas); err != nil {
+	} else if err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas, state.HBADisabled); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
 	}
 	return errors.Join(diskErr, hbaErr)
@@ -191,8 +191,12 @@ func publishHWMonFamily(
 	path, namespace string,
 	inventory *hwmonInventory,
 	current []hwmonReading,
+	allowEmpty bool,
 ) error {
 	if !inventory.initialized {
+		if len(current) == 0 && !allowEmpty {
+			return errors.New("initial inventory is empty; waiting for sensors")
+		}
 		if err := writeHWMonReadings(path, namespace, "configure", current); err != nil {
 			return err
 		}

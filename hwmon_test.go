@@ -155,7 +155,7 @@ func TestPublisherKeepsMissingSensorAndGroupStale(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		_ = publishHWMonFamily(path, "disk", &publisher.disks, readings)
+		_ = publishHWMonFamily(path, "disk", &publisher.disks, readings, false)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -173,14 +173,14 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 	}
 	inventory := hwmonInventory{}
 	initial := []hwmonReading{{id: "disk:serial", label: "disk1 (sda)", temperature: 34}}
-	if err := publishHWMonFamily(path, "disk", &inventory, initial); err != nil {
+	if err := publishHWMonFamily(path, "disk", &inventory, initial, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatal(err)
 	}
 	changed := []hwmonReading{{id: "disk:serial", label: "disk1 (sdb)", temperature: 35}}
-	if err := publishHWMonFamily(path, "disk", &inventory, changed); err != nil {
+	if err := publishHWMonFamily(path, "disk", &inventory, changed, false); err != nil {
 		t.Fatalf("a label change must not change sensor identity: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -189,6 +189,45 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 	}
 	if got, want := string(data), "disk:serial\t35000\tdisk1 (sda)\ncommit\tdisk\n"; got != want {
 		t.Fatalf("update = %q, want configured label %q", got, want)
+	}
+}
+
+func TestPublisherWaitsForFirstNonEmptyInventory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "virt-temp")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	inventory := hwmonInventory{}
+	if err := publishHWMonFamily(path, "disk", &inventory, nil, false); err == nil {
+		t.Fatal("an empty initial inventory should not be configured")
+	}
+	if inventory.initialized {
+		t.Fatal("empty initial inventory was frozen")
+	}
+	readings := []hwmonReading{{id: "disk:serial", label: "disk1 (sda)", temperature: 35}}
+	if err := publishHWMonFamily(path, "disk", &inventory, readings, false); err != nil {
+		t.Fatal(err)
+	}
+	if !inventory.initialized {
+		t.Fatal("non-empty inventory was not configured")
+	}
+}
+
+func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "virt-temp")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	inventory := hwmonInventory{}
+	if err := publishHWMonFamily(path, "hba", &inventory, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "configure\thba\n"; got != want {
+		t.Fatalf("configuration = %q, want %q", got, want)
 	}
 }
 

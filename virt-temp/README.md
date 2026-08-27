@@ -14,9 +14,11 @@ température.
 
 Les disques USB ne sont pas publiés. Les maximums HDD, SATA SSD et NVMe sont
 créés lorsqu'au moins deux disques appartiennent au groupe. Le premier
-instantané valide reçu après le démarrage de l'agent configure l'inventaire de
-chaque périphérique. Cet inventaire et l'ordre de ses canaux restent ensuite
-fixes jusqu'au prochain redémarrage de l'agent.
+instantané non vide reçu après le démarrage de l'agent configure l'inventaire
+de chaque périphérique. Un état initial vide reste en attente afin de ne pas
+figer un démarrage incomplet d'Unraid ou de StorCLI. Seul le mode HBA
+explicitement `disabled` configure une famille vide. L'inventaire et l'ordre de
+ses canaux restent ensuite fixes jusqu'au prochain redémarrage de l'agent.
 
 Une mise à jour ne rafraîchit que les identifiants connus. Si une sonde attendue
 disparaît, son canal n'est pas supprimé : son watchdog atteint 100 °C. Le canal

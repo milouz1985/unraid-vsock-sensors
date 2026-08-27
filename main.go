@@ -82,7 +82,7 @@ Commands:
 Serve options:
   --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
   --port PORT               AF_VSOCK port (default: 19090)
-  --hba-mode MODE           HBA collection: auto, enabled, or disabled (default: auto)
+  --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --storcli-interval DURATION
                             Delay between StorCLI refreshes (default: 30s)
 
@@ -118,7 +118,7 @@ func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	path := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
 	port := fs.Uint("port", defaultPort, "vsock port")
-	hbaModeValue := fs.String("hba-mode", string(hbaModeAuto), "HBA collection mode")
+	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	storcliInterval := fs.Duration("storcli-interval", 30*time.Second, "delay between StorCLI refreshes")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -127,8 +127,8 @@ func serve(args []string) error {
 		return errors.New("storcli-interval must be greater than zero")
 	}
 	hbaMode := hbaMode(*hbaModeValue)
-	if hbaMode != hbaModeAuto && hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
-		return fmt.Errorf("invalid HBA mode %q (expected auto, enabled, or disabled)", *hbaModeValue)
+	if hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
+		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
 	}
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
@@ -193,7 +193,10 @@ func handle(conn net.Conn, path string, collector *hbaCollector) {
 		return
 	}
 	disks, err := readDisks(path)
-	r := sensors.Response{Version: version, Timestamp: time.Now().UTC(), Disks: disks}
+	r := sensors.Response{
+		Version: version, Timestamp: time.Now().UTC(), Disks: disks,
+		HBADisabled: collector.mode == hbaModeDisabled,
+	}
 	if err != nil {
 		r.Error = err.Error()
 	}
