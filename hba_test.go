@@ -251,6 +251,22 @@ func TestHBAReaderRejectsUnknownControllerWithoutRediscovery(t *testing.T) {
 	}
 }
 
+func TestStorCLICommandErrorIncludesStderr(t *testing.T) {
+	command := exec.Command("sh", "-c", "printf 'controller not found\\n' >&2; exit 1")
+	_, commandErr := command.Output()
+	if commandErr == nil {
+		t.Fatal("command should fail")
+	}
+
+	err := storcliCommandError("discovery", commandErr)
+	if !errors.Is(err, commandErr) {
+		t.Fatalf("wrapped error does not preserve %v", commandErr)
+	}
+	if got, want := err.Error(), "storcli discovery: exit status 1: controller not found"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
 func TestParseStorCLIRejectsUnexpectedOutput(t *testing.T) {
 	for name, data := range map[string]string{
 		"failed status": `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Failure"},"Response Data":{}}]}`,
