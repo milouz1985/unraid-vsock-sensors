@@ -25,6 +25,12 @@ exceptionnel de création d'un périphérique n'annule pas les mises à jour des
 autres sondes. L'erreur est renvoyée à l'agent et la sonde concernée est
 réessayée à l'instantané suivant.
 
+Un instantané validé est autoritaire : une sonde absente est considérée comme
+supprimée. L'agent ne valide donc jamais une famille dont la collecte a échoué ;
+les périphériques existants restent enregistrés et passent au failsafe par leur
+watchdog. Un disque endormi reste quant à lui présent dans l'instantané avec
+une température de 0 °C, conformément au cache `disks.ini` d'Unraid.
+
 Une session accepte au maximum 1 024 sondes distinctes avant son `commit`.
 Cette borne protège les allocations de mémoire noyau contrôlées depuis
 l'espace utilisateur ; elle ne représente pas une limite matérielle des HBA.

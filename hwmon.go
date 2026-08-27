@@ -157,6 +157,9 @@ func publishHWMonState(
 	}
 	disks, hbas := makeHWMonReadings(state)
 	var diskErr, hbaErr error
+	// A committed snapshot is authoritative: any omitted sensor is removed by
+	// virt-temp. Never commit a family whose collection failed; leave its
+	// existing devices untouched so their watchdog can apply the failsafe.
 	if state.Error != "" {
 		diskErr = fmt.Errorf("disks: %s", state.Error)
 	} else if err := writeHWMonReadings(device, "disk", disks); err != nil {
