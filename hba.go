@@ -23,6 +23,7 @@ type hbaCollector struct {
 	mu       sync.RWMutex
 	readings []sensors.HBA
 	err      error
+	detected bool
 	// collect is replaceable in tests to simulate a slow StorCLI command.
 	collect func(context.Context) ([]sensors.HBA, error)
 }
@@ -155,11 +156,13 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	// readers from observing parts of two different refreshes.
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// In auto mode, a missing StorCLI executable or an empty controller list
-	// means that this system has no HBA monitoring to expose, not that collection
-	// failed. Other errors still identify a broken or unreadable HBA and remain
-	// visible to clients.
-	if c.mode == hbaModeAuto && (errors.Is(err, exec.ErrNotFound) || errors.Is(err, errNoHBA)) {
+	// In auto mode, an initially absent StorCLI executable or controller means
+	// that this system has no HBA monitoring to expose. Once an HBA has been
+	// detected, the same condition is a collection failure: keeping the error
+	// prevents hwmon clients from deleting existing sensors instead of letting
+	// their watchdog apply its failsafe.
+	absent := errors.Is(err, exec.ErrNotFound) || errors.Is(err, errNoHBA)
+	if c.mode == hbaModeAuto && !c.detected && absent {
 		err = nil
 	}
 	c.err = err
@@ -170,6 +173,9 @@ func (c *hbaCollector) refresh(parent context.Context) {
 		return
 	}
 	c.readings = readings
+	if len(readings) > 0 {
+		c.detected = true
+	}
 }
 
 // read never invokes StorCLI. The copy keeps callers from modifying the slice

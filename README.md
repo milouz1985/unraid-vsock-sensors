@@ -127,8 +127,11 @@ n'attendent donc jamais StorCLI. `--storcli-interval 1m` ajuste l'intervalle de
 rafraîchissement.
 
 La collecte HBA utilise le mode `auto` par défaut : l'absence de StorCLI ou de
-contrôleur n'est pas traitée comme une erreur. `--hba-mode enabled` rend cette
-absence explicite, tandis que `--hba-mode disabled` n'exécute jamais StorCLI.
+contrôleur au démarrage n'est pas traitée comme une erreur. Après la détection
+d'un HBA, sa disparition devient une erreur de collecte afin que les sondes
+hwmon existantes restent enregistrées et atteignent leur valeur de sécurité.
+`--hba-mode enabled` rend toute absence explicite, tandis que
+`--hba-mode disabled` n'exécute jamais StorCLI.
 
 Sans le plugin, le script de démarrage `/boot/config/go` peut servir pour un
 essai ponctuel.

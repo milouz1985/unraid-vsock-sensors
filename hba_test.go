@@ -97,6 +97,31 @@ func TestHBACollectorAutoIgnoresAbsentHBA(t *testing.T) {
 	}
 }
 
+func TestHBACollectorAutoReportsHBAThatDisappears(t *testing.T) {
+	for name, absent := range map[string]error{
+		"StorCLI missing": exec.ErrNotFound,
+		"no controller":   errNoHBA,
+	} {
+		t.Run(name, func(t *testing.T) {
+			collector := newHBACollector(time.Minute, hbaModeAuto)
+			collector.collect = func(context.Context) ([]sensors.HBA, error) {
+				return []sensors.HBA{{Name: "hba0", Temp: 42}}, nil
+			}
+			collector.refresh(context.Background())
+
+			collector.collect = func(context.Context) ([]sensors.HBA, error) {
+				return nil, absent
+			}
+			collector.refresh(context.Background())
+
+			readings, err := collector.read()
+			if len(readings) != 0 || !errors.Is(err, absent) {
+				t.Fatalf("got readings %#v and error %v, want no readings and %v", readings, err, absent)
+			}
+		})
+	}
+}
+
 func TestHBACollectorAutoReportsControllerFailure(t *testing.T) {
 	collector := newHBACollector(time.Minute, hbaModeAuto)
 	collector.collect = func(context.Context) ([]sensors.HBA, error) {
