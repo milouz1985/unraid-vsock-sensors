@@ -4,6 +4,8 @@ GO ?= go
 BIN_DIR := bin
 BINARY := $(BIN_DIR)/unraid-vsock-sensors
 VERSION ?= $(shell ./version.sh)
+# Freeze the inferred version before packaging modifies generated tracked files.
+VERSION := $(VERSION)
 LDFLAGS = -s -w -X main.version=$(VERSION)
 
 .PHONY: help
