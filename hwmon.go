@@ -121,15 +121,15 @@ func hwmon(args []string) error {
 	defer stop()
 
 	log.Printf("publishing dynamic Unraid temperatures through %s every %s", *device, *interval)
-	failed := false
+	lastError := ""
 	for {
 		err := publishHWMonState(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
-		if err != nil && !failed {
-			log.Printf("hwmon update failed; existing sensors will apply their failsafe: %v", err)
-			failed = true
-		} else if err == nil && failed {
+		if err != nil && err.Error() != lastError {
+			lastError = err.Error()
+			log.Printf("hwmon update failed; existing sensors will apply their failsafe: %s", lastError)
+		} else if err == nil && lastError != "" {
 			log.Printf("hwmon updates recovered")
-			failed = false
+			lastError = ""
 		}
 
 		timer := time.NewTimer(*interval)
