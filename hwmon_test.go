@@ -166,6 +166,32 @@ func TestPublisherKeepsMissingSensorAndGroupStale(t *testing.T) {
 	}
 }
 
+func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "virt-temp")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	inventory := hwmonInventory{}
+	initial := []hwmonReading{{id: "disk:serial", label: "disk1 (sda)", temperature: 34}}
+	if err := publishHWMonFamily(path, "disk", &inventory, initial); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	changed := []hwmonReading{{id: "disk:serial", label: "disk1 (sdb)", temperature: 35}}
+	if err := publishHWMonFamily(path, "disk", &inventory, changed); err != nil {
+		t.Fatalf("a label change must not change sensor identity: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "disk:serial\t35000\tdisk1 (sda)\ncommit\tdisk\n"; got != want {
+		t.Fatalf("update = %q, want configured label %q", got, want)
+	}
+}
+
 func makeDiskReadings(state sensors.Response) []hwmonReading {
 	disks, _ := makeHWMonReadings(state)
 	return disks

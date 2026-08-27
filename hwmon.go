@@ -214,23 +214,25 @@ func publishHWMonFamily(
 	var topologyErrors []error
 	for _, expected := range inventory.readings {
 		reading, found := currentByID[expected.id]
-		if !found || reading.label != expected.label {
+		if !found {
 			topologyErrors = append(topologyErrors, fmt.Errorf(
-				"expected sensor %q is missing or changed; failsafe active, restart unraid-vsock-hwmon.service if intentional",
+				"expected sensor %q is missing; failsafe active, restart unraid-vsock-hwmon.service if intentional",
 				expected.label,
 			))
 			continue
 		}
 		complete := true
 		for _, member := range expected.members {
-			currentMember, found := currentByID[member]
-			expectedMember, expected := expectedByID[member]
-			if !found || !expected || currentMember.label != expectedMember.label {
+			if _, found := currentByID[member]; !found {
 				complete = false
 				break
 			}
 		}
 		if complete {
+			// Labels describe the fixed inventory and may contain volatile names
+			// such as /dev/sdX or a StorCLI index. Keep the configured label and
+			// use only the stable ID to associate a new temperature.
+			reading.label = expected.label
 			updates = append(updates, reading)
 		}
 	}
