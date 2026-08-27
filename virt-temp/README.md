@@ -25,6 +25,10 @@ exceptionnel de création d'un périphérique n'annule pas les mises à jour des
 autres sondes. L'erreur est renvoyée à l'agent et la sonde concernée est
 réessayée à l'instantané suivant.
 
+Une session accepte au maximum 1 024 sondes distinctes avant son `commit`.
+Cette borne protège les allocations de mémoire noyau contrôlées depuis
+l'espace utilisateur ; elle ne représente pas une limite matérielle des HBA.
+
 L'identité d'un HBA utilise en priorité son numéro de série, puis son adresse
 SAS, son adresse PCI et enfin son numéro de contrôleur StorCLI.
 

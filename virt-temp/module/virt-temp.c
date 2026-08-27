@@ -17,6 +17,7 @@
 #define VIRT_TEMP_MAX_MILLIC 150000L
 #define VIRT_TEMP_ID_SIZE 64
 #define VIRT_TEMP_LABEL_SIZE 96
+#define VIRT_TEMP_MAX_RECORDS 1024
 #define VIRT_TEMP_NAME_SIZE 64
 #define VIRT_TEMP_WRITE_SIZE 256
 
@@ -46,6 +47,7 @@ struct virt_temp_record {
 struct virt_temp_session {
 	struct list_head records;
 	struct mutex lock;
+	unsigned int record_count;
 	bool committed;
 };
 
@@ -339,6 +341,11 @@ static ssize_t virt_temp_write(struct file *file, const char __user *user,
 
 	record = virt_temp_find_record(session, id);
 	if (!record) {
+		/* Bound userspace-controlled kernel allocations before commit. */
+		if (session->record_count >= VIRT_TEMP_MAX_RECORDS) {
+			err = -ENOSPC;
+			goto out;
+		}
 		record = kzalloc(sizeof(*record), GFP_KERNEL);
 		if (!record) {
 			err = -ENOMEM;
@@ -346,6 +353,7 @@ static ssize_t virt_temp_write(struct file *file, const char __user *user,
 		}
 		strscpy(record->id, id, sizeof(record->id));
 		list_add_tail(&record->node, &session->records);
+		session->record_count++;
 	}
 	strscpy(record->label, label, sizeof(record->label));
 	record->temperature = value;
