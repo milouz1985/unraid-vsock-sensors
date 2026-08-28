@@ -46,7 +46,7 @@ func readDisks(disksINIPath string) ([]sensors.Disk, error) {
 			// fan curve to maximum while the disk is intentionally asleep.
 		} else {
 			temp, err = strconv.ParseFloat(rawTemp, 64)
-			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) {
+			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) || temp < 0 || temp > 150 {
 				temp = 0
 				unavailable = true
 			}

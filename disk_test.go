@@ -72,10 +72,11 @@ func TestReadAndSelect(t *testing.T) {
 }
 
 func TestReadDisksMarksInvalidTemperatureUnavailable(t *testing.T) {
-	for _, temperature := range []string{"broken", "NaN", "+Inf", "-Inf"} {
+	for _, temperature := range []string{"broken", "NaN", "+Inf", "-Inf", "-20", "255", "10000"} {
 		t.Run(temperature, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), "disks.ini")
-			data := "[disk1]\nid=serial\ndevice=sdb\ntemp=" + temperature + "\nrotational=1\n"
+			data := "[disk1]\nid=serial1\ndevice=sdb\ntemp=" + temperature + "\nrotational=1\n" +
+				"[disk2]\nid=serial2\ndevice=sdc\ntemp=35\nrotational=1\n"
 			if err := os.WriteFile(p, []byte(data), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -83,8 +84,11 @@ func TestReadDisksMarksInvalidTemperatureUnavailable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(disks) != 1 || !disks[0].Unavailable {
+			if len(disks) != 2 || !disks[0].Unavailable || disks[0].Temp != 0 {
 				t.Fatalf("invalid temperature should affect only its disk: %#v", disks)
+			}
+			if disks[1].Unavailable || disks[1].Temp != 35 {
+				t.Fatalf("invalid temperature should not affect another disk: %#v", disks)
 			}
 		})
 	}
