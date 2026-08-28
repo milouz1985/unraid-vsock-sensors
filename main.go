@@ -76,7 +76,7 @@ func usage() {
 Commands:
   serve                     Serve sensor data over AF_VSOCK
   get                       Read sensor data from an AF_VSOCK server
-	  hwmon                     Publish fixed storage and HBA hwmon inventories
+  hwmon                     Publish fixed storage and HBA hwmon inventories
   version                   Print the build version
 
 Serve options:
