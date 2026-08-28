@@ -92,5 +92,5 @@ _(StorCLI refresh interval)_:
 
 &nbsp;
 
-: <input type="submit" name="Apply" value="_(Apply)_">
+: <input type="submit" value="_(Apply)_">
 </form>
