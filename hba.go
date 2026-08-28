@@ -23,8 +23,8 @@ type hbaCollector struct {
 	mu       sync.RWMutex
 	readings []sensors.HBA
 	err      error
-	// collect is replaceable in tests to simulate a slow StorCLI command.
-	collect func(context.Context) ([]sensors.HBA, error)
+	// collectSnapshot retrieves the next complete HBA temperature snapshot.
+	collectSnapshot func(context.Context) ([]sensors.HBA, error)
 }
 
 type hbaMetadata struct {
@@ -44,8 +44,9 @@ func newHBAReader() *hbaReader {
 }
 
 func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
-	// PCI passthrough topology is fixed while the VM is running, so controller
-	// identity is discovered once and remains valid until the service restarts.
+	// Assume the set and StorCLI ordering of PCI-passthrough controllers remain
+	// stable while the VM is running. Cache this relatively expensive discovery;
+	// a service restart rebuilds the index-to-hardware mapping.
 	if r.metadata == nil {
 		metadata, err := r.discover(ctx)
 		if err != nil {
@@ -102,10 +103,10 @@ var errNoHBA = errors.New("storcli returned no controllers")
 func newHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
 	reader := newHBAReader()
 	collector := &hbaCollector{
-		interval: interval,
-		mode:     mode,
-		err:      errors.New("HBA temperatures have not been collected yet"),
-		collect:  reader.collect,
+		interval:        interval,
+		mode:            mode,
+		err:             errors.New("HBA temperatures have not been collected yet"),
+		collectSnapshot: reader.collect,
 	}
 	if mode == hbaModeDisabled {
 		collector.err = nil
@@ -144,7 +145,7 @@ func (c *hbaCollector) refresh(parent context.Context) {
 
 	// Do not hold the lock here: StorCLI may take up to five seconds, while
 	// incoming vsock requests must remain able to read the current snapshot.
-	readings, err := c.collect(ctx)
+	readings, err := c.collectSnapshot(ctx)
 
 	// Publishing the values and their error under the same short lock prevents
 	// readers from observing parts of two different refreshes.

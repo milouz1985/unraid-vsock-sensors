@@ -14,7 +14,7 @@ func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	collector := newHBACollector(time.Minute, hbaModeEnabled)
-	collector.collect = func(context.Context) ([]sensors.HBA, error) {
+	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
 		close(started)
 		<-release
 		return []sensors.HBA{{Name: "hba0", Temp: 42}}, nil
@@ -44,13 +44,13 @@ func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 func TestHBACollectorFailurePolicy(t *testing.T) {
 	collector := newHBACollector(time.Minute, hbaModeEnabled)
 	setSuccessfulRefresh := func(temp float64) {
-		collector.collect = func(context.Context) ([]sensors.HBA, error) {
+		collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
 			return []sensors.HBA{{Name: "hba0", Temp: temp}}, nil
 		}
 		collector.refresh(context.Background())
 	}
 	setFailedRefresh := func() {
-		collector.collect = func(context.Context) ([]sensors.HBA, error) {
+		collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
 			return nil, errors.New("storcli failed")
 		}
 		collector.refresh(context.Background())
@@ -79,7 +79,7 @@ func TestHBACollectorFailurePolicy(t *testing.T) {
 
 func TestHBACollectorEnabledReportsAbsentHBA(t *testing.T) {
 	collector := newHBACollector(time.Minute, hbaModeEnabled)
-	collector.collect = func(context.Context) ([]sensors.HBA, error) {
+	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
 		return nil, errNoHBA
 	}
 	collector.refresh(context.Background())
@@ -91,7 +91,7 @@ func TestHBACollectorEnabledReportsAbsentHBA(t *testing.T) {
 
 func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {
 	collector := newHBACollector(time.Millisecond, hbaModeDisabled)
-	collector.collect = func(context.Context) ([]sensors.HBA, error) {
+	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
 		t.Fatal("disabled collector invoked StorCLI")
 		return nil, nil
 	}
