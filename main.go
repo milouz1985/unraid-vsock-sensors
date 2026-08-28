@@ -96,6 +96,10 @@ Hwmon options:
   --port PORT               AF_VSOCK port (default: 19090)
   --interval DURATION       Delay between updates (default: 1s)
   --device PATH             virt-temp control device (default: /dev/virt-temp)
+  --cache PATH              Persistent hwmon inventory cache
+                            (default: /var/lib/unraid-vsock-sensors/hwmon-inventory.json)
+  --restart-units UNITS     Comma-separated systemd units restarted after a
+                            topology change
 
 Sensor types:
   disk                      Select disks, pools, or disk groups
