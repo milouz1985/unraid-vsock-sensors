@@ -1,6 +1,6 @@
 [Unit]
 Description=Publish Unraid VSOCK temperatures through hwmon
-After=systemd-modules-load.service network.target
+After=systemd-modules-load.service
 
 [Service]
 Type=simple

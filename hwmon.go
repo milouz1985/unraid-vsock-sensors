@@ -251,12 +251,13 @@ func (publisher *hwmonPublisher) publish(
 	}
 	if publisher.cacheDirty {
 		if err := publisher.saveCache(); err != nil {
-			return false, errors.Join(diskErr, hbaErr, fmt.Errorf("save hwmon inventory cache: %w", err))
+			// The kernel inventory has already changed. Notify consumers even if
+			// persistence failed, and keep cacheDirty set so the next cycle retries.
+			return reconfigured, errors.Join(diskErr, hbaErr, fmt.Errorf("save hwmon inventory cache: %w", err))
 		}
 		publisher.cacheDirty = false
-		return true, errors.Join(diskErr, hbaErr)
 	}
-	return false, errors.Join(diskErr, hbaErr)
+	return reconfigured, errors.Join(diskErr, hbaErr)
 }
 
 func publishHWMonFamily(
@@ -453,7 +454,7 @@ func restartSystemdUnits(ctx context.Context, units []string) error {
 	if len(units) == 0 {
 		return nil
 	}
-	args := append([]string{"try-restart", "--"}, units...)
+	args := append([]string{"try-restart", "--no-block", "--"}, units...)
 	output, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("restart topology consumers: %w: %s", err, strings.TrimSpace(string(output)))

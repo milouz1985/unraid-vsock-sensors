@@ -292,3 +292,32 @@ func TestPublishHWMonStateReturnsFetchError(t *testing.T) {
 		t.Fatalf("got %v, want %v", err, want)
 	}
 }
+
+func TestPublisherReportsReconfigurationWhenCacheSaveFails(t *testing.T) {
+	directory := t.TempDir()
+	device := filepath.Join(directory, "virt-temp")
+	blockingFile := filepath.Join(directory, "not-a-directory")
+	if err := os.WriteFile(device, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blockingFile, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &hwmonPublisher{cachePath: filepath.Join(blockingFile, "inventory.json")}
+	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
+		return sensors.Response{
+			Disks:       []sensors.Disk{{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34}},
+			HBADisabled: true,
+		}, nil
+	}
+	reconfigured, err := publisher.publish(context.Background(), 42, 19090, device, fetch)
+	if !reconfigured {
+		t.Fatal("kernel reconfiguration must be reported even when the cache cannot be saved")
+	}
+	if err == nil || !strings.Contains(err.Error(), "save hwmon inventory cache") {
+		t.Fatalf("error = %v, want cache save failure", err)
+	}
+	if !publisher.cacheDirty {
+		t.Fatal("failed cache save must remain pending for the next cycle")
+	}
+}
