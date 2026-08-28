@@ -18,13 +18,13 @@ Le serveur lit le cache de températures d'Unraid. Il n'exécute jamais
 ```text
 VM Unraid                                      Hôte Proxmox
 ┌────────────────────────────┐                 ┌─────────────────────────────┐
-│ disks.ini                  │                 │ unraid-vsock-sensors hwmon │
+│ disks.ini                  │                 │ unraid-vsock-sensors hwmon  │
 │ StorCLI (HBA, optionnel)   │                 │            │                │
 │            │               │     AF_VSOCK    │            ▼                │
-│ unraid-vsock-sensors serve ├────────────────►│ /dev/virt-temp             │
+│ unraid-vsock-sensors serve ├────────────────►│ /dev/virt-temp              │
 └────────────────────────────┘                 │            │                │
                                                │            ▼                │
-                                               │ unraid_storage / unraid_hba│
+                                               │ unraid_storage / unraid_hba │
                                                └─────────────────────────────┘
 ```
 
