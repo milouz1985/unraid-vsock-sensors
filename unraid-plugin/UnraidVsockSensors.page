@@ -10,7 +10,9 @@ $hbaMode = $cfg['HBA_MODE'] ?? 'enabled';
 if ($hbaMode === 'auto') {
     $hbaMode = 'enabled';
 }
-$interval = $cfg['STORCLI_INTERVAL'] ?? '30s';
+$hbaBackend = $cfg['HBA_BACKEND'] ?? 'auto';
+$mpt3ctlInterval = $cfg['MPT3CTL_INTERVAL'] ?? '15s';
+$storcliInterval = $cfg['STORCLI_INTERVAL'] ?? ($cfg['HBA_INTERVAL'] ?? '30s');
 
 $statusOutput = [];
 exec('/etc/rc.d/rc.unraid-vsock-sensors status 2>/dev/null', $statusOutput, $statusCode);
@@ -60,17 +62,33 @@ _(HBA monitoring)_:
 <option value="disabled" <?=$hbaMode === 'disabled' ? 'selected' : ''?>>Disabled</option>
 </select>
 
-> Enabled expects StorCLI and at least one controller. Disabled never runs StorCLI and explicitly clears the HBA inventory when the host agent restarts.
+> Enabled reads mpt3sas controllers directly through /dev/mpt3ctl. StorCLI remains an optional fallback for other supported controllers. Disabled explicitly clears the HBA inventory when the host agent restarts.
+
+_(HBA backend)_:
+: <select name="HBA_BACKEND">
+<option value="auto" <?=$hbaBackend === 'auto' ? 'selected' : ''?>>Automatic (mpt3ctl, then StorCLI)</option>
+<option value="mpt3ctl" <?=$hbaBackend === 'mpt3ctl' ? 'selected' : ''?>>Native /dev/mpt3ctl</option>
+<option value="storcli" <?=$hbaBackend === 'storcli' ? 'selected' : ''?>>StorCLI</option>
+</select>
+
+> Automatic prefers /dev/mpt3ctl and uses StorCLI only when no mpt3sas IOC is found. Selecting a backend explicitly disables fallback.
+
+_(mpt3ctl refresh interval)_:
+: <select name="MPT3CTL_INTERVAL">
+<option value="10s" <?=$mpt3ctlInterval === '10s' ? 'selected' : ''?>>10 seconds</option>
+<option value="15s" <?=$mpt3ctlInterval === '15s' ? 'selected' : ''?>>15 seconds</option>
+<option value="30s" <?=$mpt3ctlInterval === '30s' ? 'selected' : ''?>>30 seconds</option>
+<option value="1m" <?=$mpt3ctlInterval === '1m' ? 'selected' : ''?>>1 minute</option>
+</select>
 
 _(StorCLI refresh interval)_:
 : <select name="STORCLI_INTERVAL">
-<option value="10s" <?=$interval === '10s' ? 'selected' : ''?>>10 seconds</option>
-<option value="30s" <?=$interval === '30s' ? 'selected' : ''?>>30 seconds</option>
-<option value="1m" <?=$interval === '1m' ? 'selected' : ''?>>1 minute</option>
-<option value="5m" <?=$interval === '5m' ? 'selected' : ''?>>5 minutes</option>
+<option value="30s" <?=$storcliInterval === '30s' ? 'selected' : ''?>>30 seconds</option>
+<option value="1m" <?=$storcliInterval === '1m' ? 'selected' : ''?>>1 minute</option>
+<option value="5m" <?=$storcliInterval === '5m' ? 'selected' : ''?>>5 minutes</option>
 </select>
 
-> Delay between two StorCLI temperature refreshes. VSOCK requests always use the cached value.
+> Native access can be refreshed more frequently. Automatic uses the conservative StorCLI interval because it may fall back to that backend. VSOCK requests always use the cached value.
 
 &nbsp;
 

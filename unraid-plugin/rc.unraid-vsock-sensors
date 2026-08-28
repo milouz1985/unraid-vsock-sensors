@@ -9,6 +9,8 @@ log_file="/var/log/$name.log"
 load_config() {
     PORT="990"
     HBA_MODE="enabled"
+    HBA_BACKEND="auto"
+    MPT3CTL_INTERVAL="15s"
     STORCLI_INTERVAL="30s"
 
     if [[ -r "$config" ]]; then
@@ -20,10 +22,16 @@ load_config() {
 
             # update.php writes KEY="value". Parse that format as data: sourcing
             # this file would execute shell syntax embedded in a crafted value.
-            if [[ "$line" =~ ^(PORT|HBA_MODE|STORCLI_INTERVAL)=\"([^\"]*)\"$ ]]; then
+            if [[ "$line" =~ ^(PORT|HBA_MODE|HBA_BACKEND|MPT3CTL_INTERVAL|STORCLI_INTERVAL|HBA_INTERVAL)=\"([^\"]*)\"$ ]]; then
                 key="${BASH_REMATCH[1]}"
                 value="${BASH_REMATCH[2]}"
-                printf -v "$key" '%s' "$value"
+                if [[ "$key" == "HBA_INTERVAL" ]]; then
+                    # Preserve the former generic interval as the conservative
+                    # StorCLI/automatic interval during upgrades.
+                    STORCLI_INTERVAL="$value"
+                else
+                    printf -v "$key" '%s' "$value"
+                fi
             else
                 echo "Invalid configuration at $config:$line_number" >&2
                 return 1
@@ -35,14 +43,23 @@ load_config() {
         echo "Invalid VSOCK port: $PORT" >&2
         return 1
     fi
+    case "$MPT3CTL_INTERVAL" in
+        10s|15s|30s|1m) ;;
+        *) echo "Invalid mpt3ctl refresh interval: $MPT3CTL_INTERVAL" >&2; return 1 ;;
+    esac
     case "$STORCLI_INTERVAL" in
-        10s|30s|1m|5m) ;;
+        30s|1m|5m) ;;
         *) echo "Invalid StorCLI refresh interval: $STORCLI_INTERVAL" >&2; return 1 ;;
     esac
     case "$HBA_MODE" in
         enabled|disabled) ;;
         auto) HBA_MODE="enabled" ;;
         *) echo "Invalid HBA mode: $HBA_MODE" >&2; return 1 ;;
+    esac
+    case "$HBA_BACKEND" in
+        mpt3ctl) HBA_INTERVAL="$MPT3CTL_INTERVAL" ;;
+        storcli|auto) HBA_INTERVAL="$STORCLI_INTERVAL" ;;
+        *) echo "Invalid HBA backend: $HBA_BACKEND" >&2; return 1 ;;
     esac
 }
 
@@ -73,7 +90,8 @@ start() {
         return 1
     fi
 
-    nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" --storcli-interval "$STORCLI_INTERVAL" \
+    nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" --hba-backend "$HBA_BACKEND" \
+        --hba-interval "$HBA_INTERVAL" \
         </dev/null >>"$log_file" 2>&1 &
     pid=$!
     printf '%s\n' "$pid" > "$pid_file"

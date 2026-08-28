@@ -42,7 +42,7 @@ attend la fin des lectures en cours avant que l'ancien inventaire soit libéré.
 Le pilote expose au maximum deux périphériques hwmon :
 
 - `unraid_storage`, avec les disques internes et leurs maximums de groupe ;
-- `unraid_hba`, avec les contrôleurs StorCLI.
+- `unraid_hba`, avec les contrôleurs HBA transmis par la VM.
 
 Chaque sonde correspond à un canal `tempN_input` accompagné de
 `tempN_label`. Les ID stables restent internes au protocole ; sysfs expose le
@@ -64,7 +64,7 @@ sa catégorie est recalculé avec les membres encore disponibles. Le maximum
 atteint le failsafe uniquement si tout le groupe est indisponible. Un changement
 de label seul n'affecte pas l'identité.
 
-De même, une lecture StorCLI qui ne correspond à aucune métadonnée HBA mise en
+De même, une lecture HBA qui ne correspond à aucune métadonnée mise en
 cache est écartée seule. Les contrôleurs correctement identifiés continuent
 d'être actualisés ; si aucun ne l'est, l'inventaire précédent reste en place et
 atteint le failsafe.

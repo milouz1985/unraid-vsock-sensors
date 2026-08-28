@@ -306,7 +306,7 @@ func publishHWMonFamily(
 		}
 		if complete {
 			// Labels describe the fixed inventory and may contain volatile names
-			// such as /dev/sdX or a StorCLI index. Keep the configured label and
+			// such as /dev/sdX or an HBA controller index. Keep the configured label and
 			// use only the stable ID to associate a new temperature.
 			reading.label = expected.label
 			updates = append(updates, reading)

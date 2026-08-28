@@ -84,8 +84,8 @@ Serve options:
   --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
   --port PORT               AF_VSOCK port (default: 990)
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
-  --storcli-interval DURATION
-                            Delay between StorCLI refreshes (default: 30s)
+  --hba-backend BACKEND     HBA backend: auto, mpt3ctl or storcli (default: auto)
+  --hba-interval DURATION   Delay between HBA temperature refreshes (default: 30s)
 
 Get options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
@@ -124,16 +124,24 @@ func serve(args []string) error {
 	disksINIPath := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
 	port := fs.Uint("port", defaultPort, "vsock port")
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
-	storcliInterval := fs.Duration("storcli-interval", 30*time.Second, "delay between StorCLI refreshes")
+	hbaBackendValue := fs.String("hba-backend", string(hbaBackendAuto), "HBA backend")
+	hbaInterval := fs.Duration("hba-interval", 30*time.Second, "delay between HBA temperature refreshes")
+	// Keep the former option for upgrades whose service script has not yet been
+	// replaced. Both flags update the same value.
+	fs.DurationVar(hbaInterval, "storcli-interval", 30*time.Second, "deprecated alias for --hba-interval")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *storcliInterval <= 0 {
-		return errors.New("storcli-interval must be greater than zero")
+	if *hbaInterval <= 0 {
+		return errors.New("hba-interval must be greater than zero")
 	}
 	hbaMode := hbaMode(*hbaModeValue)
 	if hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
 		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
+	}
+	hbaBackend := hbaBackendMode(*hbaBackendValue)
+	if hbaBackend != hbaBackendAuto && hbaBackend != hbaBackendMPT3CTL && hbaBackend != hbaBackendStorCLI {
+		return fmt.Errorf("invalid HBA backend %q (expected auto, mpt3ctl or storcli)", *hbaBackendValue)
 	}
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
@@ -151,9 +159,9 @@ func serve(args []string) error {
 		<-ctx.Done()
 		_ = listener.Close()
 	}()
-	hbas := newHBACollector(*storcliInterval, hbaMode)
-	// StorCLI is refreshed independently so VSOCK requests never wait for the
-	// controller command.
+	hbas := newConfiguredHBACollector(*hbaInterval, hbaMode, hbaBackend)
+	// HBA temperatures are refreshed independently so VSOCK requests never wait
+	// for a controller command.
 	go hbas.run(ctx)
 	var clients sync.WaitGroup
 	clientSlots := make(chan struct{}, maxConcurrentClients)

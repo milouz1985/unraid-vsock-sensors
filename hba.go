@@ -2,11 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"os/exec"
 	"slices"
 	"sort"
 	"strconv"
@@ -18,43 +15,78 @@ import (
 )
 
 type hbaCollector struct {
-	interval time.Duration
-	mode     hbaMode
-	mu       sync.RWMutex
-	readings []sensors.HBA
-	err      error
-	// collectSnapshot retrieves the next complete HBA temperature snapshot.
+	interval        time.Duration
+	mode            hbaMode
+	mu              sync.RWMutex
+	readings        []sensors.HBA
+	err             error
 	collectSnapshot func(context.Context) ([]sensors.HBA, error)
 }
 
-type hbaMetadata struct {
-	id         string
-	model      string
-	pciAddress string
+type hbaMetadata struct{ id, model, pciAddress string }
+
+type hbaBackend struct {
+	name             string
+	discover         func(context.Context) (map[int]hbaMetadata, error)
+	readTemperatures func(context.Context, []int) ([]sensors.HBA, error)
 }
 
+type hbaBackendMode string
+
+const (
+	hbaBackendAuto    hbaBackendMode = "auto"
+	hbaBackendMPT3CTL hbaBackendMode = "mpt3ctl"
+	hbaBackendStorCLI hbaBackendMode = "storcli"
+)
+
 type hbaReader struct {
-	metadata         map[int]hbaMetadata
-	discover         func(context.Context) (map[int]hbaMetadata, error)
-	readTemperatures func(context.Context) ([]sensors.HBA, error)
+	metadata map[int]hbaMetadata
+	backend  *hbaBackend
+	backends []hbaBackend
 }
 
 func newHBAReader() *hbaReader {
-	return &hbaReader{discover: discoverHBAs, readTemperatures: readHBATemperatures}
+	return newHBAReaderForBackend(hbaBackendAuto)
+}
+
+func newHBAReaderForBackend(mode hbaBackendMode) *hbaReader {
+	backends := []hbaBackend{
+		{name: "mpt3ctl", discover: discoverMPT3HBAs, readTemperatures: readMPT3Temperatures},
+		{name: "storcli", discover: discoverStorCLIHBAs, readTemperatures: readStorCLITemperatures},
+	}
+	switch mode {
+	case hbaBackendMPT3CTL:
+		backends = backends[:1]
+	case hbaBackendStorCLI:
+		backends = backends[1:]
+	}
+	return &hbaReader{backends: backends}
 }
 
 func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
-	// Assume the set and StorCLI ordering of PCI-passthrough controllers remain
-	// stable while the VM is running. Cache this relatively expensive discovery;
-	// a service restart rebuilds the index-to-hardware mapping.
-	if r.metadata == nil {
-		metadata, err := r.discover(ctx)
-		if err != nil {
-			return nil, err
+	if r.backend == nil {
+		var unavailable []error
+		for i := range r.backends {
+			metadata, err := r.backends[i].discover(ctx)
+			if err == nil {
+				r.backend, r.metadata = &r.backends[i], metadata
+				break
+			}
+			if !errors.Is(err, errHBABackendUnavailable) && !errors.Is(err, errNoHBA) {
+				return nil, err
+			}
+			unavailable = append(unavailable, fmt.Errorf("%s: %w", r.backends[i].name, err))
 		}
-		r.metadata = metadata
+		if r.backend == nil {
+			return nil, fmt.Errorf("no HBA backend found: %w", errors.Join(unavailable...))
+		}
 	}
-	readings, err := r.readTemperatures(ctx)
+	controllers := make([]int, 0, len(r.metadata))
+	for controller := range r.metadata {
+		controllers = append(controllers, controller)
+	}
+	sort.Ints(controllers)
+	readings, err := r.backend.readTemperatures(ctx, controllers)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +94,7 @@ func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 }
 
 func applyHBAMetadata(readings []sensors.HBA, metadata map[int]hbaMetadata) []sensors.HBA {
-	matchedReadings := make([]sensors.HBA, 0, len(readings))
+	matched := make([]sensors.HBA, 0, len(readings))
 	for _, reading := range readings {
 		controller, err := hbaControllerNumber(reading.Name)
 		if err != nil {
@@ -72,12 +104,10 @@ func applyHBAMetadata(readings []sensors.HBA, metadata map[int]hbaMetadata) []se
 		if !ok {
 			continue
 		}
-		reading.ID = identity.id
-		reading.Model = identity.model
-		reading.PCIAddress = identity.pciAddress
-		matchedReadings = append(matchedReadings, reading)
+		reading.ID, reading.Model, reading.PCIAddress = identity.id, identity.model, identity.pciAddress
+		matched = append(matched, reading)
 	}
-	return matchedReadings
+	return matched
 }
 
 func hbaControllerNumber(name string) (int, error) {
@@ -87,47 +117,39 @@ func hbaControllerNumber(name string) (int, error) {
 	return strconv.Atoi(strings.TrimPrefix(name, "hba"))
 }
 
-// StorCLI normally completes in about 1.5 seconds. Five seconds leaves enough
-// margin under load while limiting how long stale readings survive a hung call.
-const storcliTimeout = 5 * time.Second
-
 type hbaMode string
 
 const (
-	hbaModeEnabled  hbaMode = "enabled"
-	hbaModeDisabled hbaMode = "disabled"
+	hbaModeEnabled       hbaMode = "enabled"
+	hbaModeDisabled      hbaMode = "disabled"
+	hbaCollectionTimeout         = 15 * time.Second
 )
 
-var errNoHBA = errors.New("storcli returned no controllers")
+var (
+	errNoHBA                 = errors.New("no HBA controllers found")
+	errHBABackendUnavailable = errors.New("HBA backend unavailable")
+)
 
 func newHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
-	reader := newHBAReader()
-	collector := &hbaCollector{
-		interval:        interval,
-		mode:            mode,
-		err:             errors.New("HBA temperatures have not been collected yet"),
-		collectSnapshot: reader.collect,
-	}
-	if mode == hbaModeDisabled {
-		collector.err = nil
-	}
-	return collector
+	return newConfiguredHBACollector(interval, mode, hbaBackendAuto)
 }
 
-// run owns the StorCLI refresh loop and keeps slow controller access outside
-// the VSOCK request path. Requests only read the latest published snapshot.
+func newConfiguredHBACollector(interval time.Duration, mode hbaMode, backend hbaBackendMode) *hbaCollector {
+	reader := newHBAReaderForBackend(backend)
+	c := &hbaCollector{interval: interval, mode: mode, err: errors.New("HBA temperatures have not been collected yet"), collectSnapshot: reader.collect}
+	if mode == hbaModeDisabled {
+		c.err = nil
+	}
+	return c
+}
+
 func (c *hbaCollector) run(ctx context.Context) {
 	if c.mode == hbaModeDisabled {
 		return
 	}
-	// Collect immediately so the first value is available as soon as possible.
 	c.refresh(ctx)
-	// Use a timer rather than a ticker so the interval starts after each refresh.
-	// A ticker could queue a tick while StorCLI is slow and trigger another call
-	// immediately after the first one completes.
 	timer := time.NewTimer(c.interval)
 	defer timer.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -140,236 +162,23 @@ func (c *hbaCollector) run(ctx context.Context) {
 }
 
 func (c *hbaCollector) refresh(parent context.Context) {
-	ctx, cancel := context.WithTimeout(parent, storcliTimeout)
+	ctx, cancel := context.WithTimeout(parent, hbaCollectionTimeout)
 	defer cancel()
-
-	// Do not hold the lock here: StorCLI may take up to five seconds, while
-	// incoming vsock requests must remain able to read the current snapshot.
 	readings, err := c.collectSnapshot(ctx)
-
-	// Publishing the values and their error under the same short lock prevents
-	// readers from observing parts of two different refreshes.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.err = err
 	if err != nil {
-		// Do not publish a stale temperature. Downstream consumers such as
-		// CoolerControl apply their own missing-reading policy.
 		c.readings = nil
 		return
 	}
 	c.readings = readings
 }
 
-// read returns the cached snapshot without invoking StorCLI. Cloning prevents
-// a request from modifying data shared with the collector and other clients.
 func (c *hbaCollector) read() ([]sensors.HBA, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return slices.Clone(c.readings), c.err
-}
-
-func readHBATemperatures(ctx context.Context) ([]sensors.HBA, error) {
-	command := exec.CommandContext(
-		ctx,
-		"storcli",
-		"/cALL",
-		"show",
-		"temperature",
-		"J",
-		"nolog",
-	)
-	out, err := command.Output()
-	if ctx.Err() != nil {
-		return nil, storcliContextError("temperature", ctx.Err())
-	}
-	if err != nil {
-		return nil, storcliCommandError("temperature", err)
-	}
-	readings, err := parseStorCLI(out)
-	return readings, err
-}
-
-func discoverHBAs(ctx context.Context) (map[int]hbaMetadata, error) {
-	command := exec.CommandContext(ctx, "storcli", "/cALL", "show", "J", "nolog")
-	out, err := command.Output()
-	if ctx.Err() != nil {
-		return nil, storcliContextError("discovery", ctx.Err())
-	}
-	if err != nil {
-		return nil, storcliCommandError("discovery", err)
-	}
-	return parseStorCLIMetadata(out)
-}
-
-func storcliContextError(operation string, err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("storcli %s timeout: %w", operation, err)
-	}
-	return fmt.Errorf("storcli %s canceled: %w", operation, err)
-}
-
-func storcliCommandError(operation string, err error) error {
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
-			return fmt.Errorf("storcli %s: %w: %s", operation, err, stderr)
-		}
-	}
-	return fmt.Errorf("storcli %s: %w", operation, err)
-}
-
-func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
-	type basics struct {
-		Model        string `json:"Model"`
-		ProductName  string `json:"Product Name"`
-		SerialNumber string `json:"Serial Number"`
-		SASAddress   string `json:"SAS Address"`
-		PCIAddress   string `json:"PCI Address"`
-	}
-	var root struct {
-		Controllers []struct {
-			CommandStatus struct {
-				Controller int    `json:"Controller"`
-				Status     string `json:"Status"`
-			} `json:"Command Status"`
-			ResponseData struct {
-				Basics     basics `json:"Basics"`
-				Model      string `json:"Model"`
-				Product    string `json:"Product Name"`
-				Serial     string `json:"Serial Number"`
-				SASAddress string `json:"SAS Address"`
-				PCIAddress string `json:"PCI Address"`
-			} `json:"Response Data"`
-		} `json:"Controllers"`
-	}
-	if err := json.Unmarshal(data, &root); err != nil {
-		return nil, fmt.Errorf("parse storcli discovery JSON: %w", err)
-	}
-	if len(root.Controllers) == 0 {
-		return nil, errNoHBA
-	}
-
-	metadataByController := make(map[int]hbaMetadata, len(root.Controllers))
-	ids := make(map[string]int, len(root.Controllers))
-	for _, controller := range root.Controllers {
-		number := controller.CommandStatus.Controller
-		if controller.CommandStatus.Status != "Success" {
-			return nil, fmt.Errorf("storcli controller %d status is %q", number, controller.CommandStatus.Status)
-		}
-		data := controller.ResponseData
-		serial := firstHBAValue(data.Basics.SerialNumber, data.Serial)
-		sasAddress := firstHBAValue(data.Basics.SASAddress, data.SASAddress)
-		pciAddress := normalizePCIAddress(firstHBAValue(data.Basics.PCIAddress, data.PCIAddress))
-		model := firstHBAValue(data.Basics.Model, data.Basics.ProductName, data.Model, data.Product)
-		id := hbaStableID(number, serial, sasAddress, pciAddress)
-		if previous, duplicate := ids[id]; duplicate {
-			return nil, fmt.Errorf("storcli controllers %d and %d have duplicate identity %q", previous, number, id)
-		}
-		ids[id] = number
-		metadataByController[number] = hbaMetadata{id: id, model: model, pciAddress: pciAddress}
-	}
-	return metadataByController, nil
-}
-
-func firstHBAValue(values ...string) string {
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		switch strings.ToLower(value) {
-		case "", "n/a", "na", "none", "unknown":
-			continue
-		default:
-			return value
-		}
-	}
-	return ""
-}
-
-func hbaStableID(controller int, serial, sasAddress, pciAddress string) string {
-	// Prefer hardware identities that survive StorCLI index changes. The
-	// controller number is only a last resort for adapters lacking metadata.
-	if serial = firstHBAValue(serial); serial != "" {
-		return "serial:" + strings.ToLower(serial)
-	}
-	if sasAddress = firstHBAValue(sasAddress); sasAddress != "" {
-		return "sas:" + strings.TrimPrefix(strings.ToLower(sasAddress), "0x")
-	}
-	if pciAddress != "" {
-		return "pci:" + pciAddress
-	}
-	return fmt.Sprintf("controller:%d", controller)
-}
-
-func normalizePCIAddress(address string) string {
-	// StorCLI reports domain:bus:device:function; Linux exposes the canonical
-	// domain:bus:device.function form used in sysfs and PCI tooling.
-	parts := strings.Split(strings.TrimSpace(address), ":")
-	if len(parts) != 4 {
-		return ""
-	}
-	values := make([]uint64, len(parts))
-	for index, part := range parts {
-		value, err := strconv.ParseUint(part, 16, 16)
-		if err != nil {
-			return ""
-		}
-		values[index] = value
-	}
-	if values[0] > 0xffff || values[1] > 0xff || values[2] > 0x1f || values[3] > 7 {
-		return ""
-	}
-	return fmt.Sprintf("%04x:%02x:%02x.%x", values[0], values[1], values[2], values[3])
-}
-
-func parseStorCLI(data []byte) ([]sensors.HBA, error) {
-	var root struct {
-		Controllers []struct {
-			CommandStatus struct {
-				Controller int    `json:"Controller"`
-				Status     string `json:"Status"`
-			} `json:"Command Status"`
-			ResponseData struct {
-				ControllerProperties []struct {
-					Property string `json:"Ctrl_Prop"`
-					Value    string `json:"Value"`
-				} `json:"Controller Properties"`
-			} `json:"Response Data"`
-		} `json:"Controllers"`
-	}
-	if err := json.Unmarshal(data, &root); err != nil {
-		return nil, fmt.Errorf("parse storcli JSON: %w", err)
-	}
-	if len(root.Controllers) == 0 {
-		return nil, errNoHBA
-	}
-
-	var readings []sensors.HBA
-	for _, controller := range root.Controllers {
-		id := controller.CommandStatus.Controller
-		if controller.CommandStatus.Status != "Success" {
-			return nil, fmt.Errorf("storcli controller %d status is %q", id, controller.CommandStatus.Status)
-		}
-
-		found := false
-		for _, property := range controller.ResponseData.ControllerProperties {
-			if property.Property != "ROC temperature(Degree Celsius)" {
-				continue
-			}
-			temp, err := strconv.ParseFloat(property.Value, 64)
-			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) {
-				return nil, fmt.Errorf("storcli controller %d invalid temperature %q", id, property.Value)
-			}
-			readings = append(readings, sensors.HBA{Name: fmt.Sprintf("hba%d", id), Temp: temp})
-			found = true
-			break
-		}
-		if !found {
-			return nil, fmt.Errorf("storcli controller %d has no ROC temperature", id)
-		}
-	}
-
-	sort.Slice(readings, func(i, j int) bool { return readings[i].Name < readings[j].Name })
-	return readings, nil
 }
 
 func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {

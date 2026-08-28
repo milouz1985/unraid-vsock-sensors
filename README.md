@@ -19,7 +19,7 @@ Le serveur lit le cache de températures d'Unraid. Il n'exécute jamais
 VM Unraid                                      Hôte Proxmox
 ┌────────────────────────────┐                 ┌─────────────────────────────┐
 │ disks.ini                  │                 │ unraid-vsock-sensors hwmon  │
-│ StorCLI (HBA, optionnel)   │                 │            │                │
+│ /dev/mpt3ctl (HBA)         │                 │            │                │
 │            │               │     AF_VSOCK    │            ▼                │
 │ unraid-vsock-sensors serve ├────────────────►│ /dev/virt-temp              │
 └────────────────────────────┘                 │            │                │
@@ -72,13 +72,21 @@ https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin
 Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 
 - **VSOCK port** : `990` ;
-- **HBA monitoring** : `enabled` si StorCLI et un HBA compatible sont
-  disponibles, sinon `disabled` ;
-- **StorCLI refresh interval** : `30 seconds` convient généralement.
+- **HBA monitoring** : `enabled` si un HBA compatible est disponible, sinon
+  `disabled` ;
+- **HBA backend** : `Automatic` préfère l'accès natif puis essaie StorCLI ;
+- **mpt3ctl refresh interval** : `15 seconds` ;
+- **StorCLI refresh interval** : `30 seconds`.
 
-Le mode HBA `enabled` exige StorCLI et au moins un contrôleur. Le mode
-`disabled` n'exécute jamais StorCLI. Une ancienne configuration `auto` est
-interprétée comme `enabled`.
+Le serveur lit directement `/dev/mpt3ctl` pour les contrôleurs gérés par
+`mpt3sas` : aucun utilitaire supplémentaire n'est nécessaire. Si aucun IOC
+`mpt3sas` n'est trouvé, une installation existante de StorCLI peut servir de
+repli pour les contrôleurs qu'il prend en charge. Le mode `disabled` ne consulte
+aucun contrôleur. La sélection explicite de `mpt3ctl` ou `storcli` désactive le
+repli. Le mode automatique utilise l'intervalle StorCLI, plus conservateur. Une
+ancienne valeur `auto` de `HBA_MODE` est interprétée comme `enabled` et l'ancienne
+clé générique `HBA_INTERVAL` est conservée comme intervalle StorCLI lors d'une
+mise à niveau.
 
 Vérification depuis le terminal Unraid :
 
@@ -199,8 +207,8 @@ unraid-vsock-sensors get --cid 3 --port 990 --json
 - `HDD maximum`, `SATA SSD maximum` ou `NVMe SSD maximum` lorsqu'au moins deux
   disques appartiennent au groupe correspondant.
 
-`unraid_hba` contient un canal par contrôleur StorCLI lorsque la collecte HBA
-est activée.
+`unraid_hba` contient un canal par contrôleur lorsque la collecte HBA est
+activée.
 
 Les disques USB, les slots Unraid non assignés (`DISK_NP`) et la clé USB de
 démarrage `flash` ne sont pas publiés. Les SSD utilisant un autre transport que
@@ -230,12 +238,12 @@ Proxmox, même si Unraid met plusieurs minutes à démarrer.
 
 Sans cache, le premier relevé non vide de chaque famille configure ses canaux.
 Un relevé vide est ignoré afin de ne pas figer un démarrage incomplet d'Unraid
-ou de StorCLI. Seul le mode HBA explicitement `disabled` autorise un inventaire
+ou du backend HBA. Seul le mode HBA explicitement `disabled` autorise un inventaire
 HBA vide.
 
 L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
-pour un disque, puis numéro de série, adresse SAS, adresse PCI ou index StorCLI
-pour un HBA. Le label est une information d'affichage conservée tant que l'ID
+pour un disque, puis SAS WWID ou adresse PCI pour un HBA. Le label est une
+information d'affichage conservée tant que l'ID
 reste présent.
 
 Pendant l'exécution :
@@ -243,11 +251,11 @@ Pendant l'exécution :
 - une erreur globale de lecture ne modifie jamais le cache et laisse toute la
   famille disque atteindre le failsafe ; une température indisponible ou
   invalide n'affecte que son disque, tandis que le maximum ignore ce membre ;
-- une lecture StorCLI sans métadonnées HBA correspondantes est ignorée sans
+- une lecture HBA sans métadonnées correspondantes est ignorée sans
   interrompre l'actualisation des autres contrôleurs ;
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
   automatiquement la famille hwmon concernée et met à jour le cache ;
-- un changement de `/dev/sdX`, de nom affiché ou d'index StorCLI ne modifie pas
+- un changement de `/dev/sdX`, de nom affiché ou d'index IOC ne modifie pas
   l'identité si l'ID stable reste identique ;
 - les consommateurs configurés dans `UNRAID_VSOCK_RESTART_UNITS` sont relancés
   après la reconfiguration afin de découvrir les nouveaux canaux.
@@ -262,9 +270,13 @@ La température des disques vient de `/var/local/emhttp/disks.ini`. Sa fraîcheu
 dépend de **Tunable (poll_attributes)** dans Unraid : interroger toutes les
 secondes peut donc retourner plusieurs fois la même valeur mise en cache.
 
-La température HBA vient du champ `ROC temperature(Degree Celsius)` de StorCLI.
-Le serveur actualise ce cache en arrière-plan ; les requêtes VSOCK n'attendent
-jamais l'exécution de StorCLI.
+La température HBA vient de IO Unit Page 7, lue avec des commandes MPI CONFIG
+strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
+Fahrenheit sont converties puis validées dans la plage `0..150 °C`. La
+découverte lit séparément les pages de fabrication pour obtenir le modèle et
+l'adresse SAS stable. Le serveur actualise ce cache en arrière-plan ; les
+requêtes VSOCK n'attendent jamais une commande du contrôleur. StorCLI n'est
+utilisé qu'en repli lorsqu'aucun IOC `mpt3sas` n'est disponible.
 
 ## Utilisation en ligne de commande
 
