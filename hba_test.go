@@ -21,6 +21,51 @@ func TestMPT3CommandABI(t *testing.T) {
 	}
 }
 
+func TestMPT3ParsersRejectUndersizedBuffers(t *testing.T) {
+	if err := validateMPT3ConfigReply(make([]byte, 0x17), mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7); err == nil {
+		t.Fatal("undersized CONFIG reply accepted")
+	}
+	if _, err := parseMPT3Temperature(make([]byte, 0x12)); err == nil {
+		t.Fatal("undersized IO Unit Page 7 accepted")
+	}
+}
+
+func TestValidateMPT3ConfigReply(t *testing.T) {
+	validReply := func() []byte {
+		reply := make([]byte, 128)
+		reply[0x00] = mpi2ConfigPageHeader
+		reply[0x02] = mpi2ConfigReplyDWords
+		reply[0x03] = mpi2FunctionConfig
+		reply[0x16] = 7
+		reply[0x17] = mpi2PageTypeIOUnit
+		return reply
+	}
+	if err := validateMPT3ConfigReply(validReply(), mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7); err != nil {
+		t.Fatalf("valid CONFIG reply rejected: %v", err)
+	}
+
+	for name, mutate := range map[string]func([]byte){
+		"zero length":      func(reply []byte) { reply[0x02] = 0 },
+		"oversized length": func(reply []byte) { reply[0x02] = 33 },
+		"wrong function":   func(reply []byte) { reply[0x03] = 0xff },
+		"wrong action":     func(reply []byte) { reply[0x00] = mpi2ConfigPageReadCurrent },
+		"failed status": func(reply []byte) {
+			binary.LittleEndian.PutUint16(reply[0x0e:0x10], 0x0002)
+			binary.LittleEndian.PutUint32(reply[0x10:0x14], 0x12345678)
+		},
+		"wrong page type":   func(reply []byte) { reply[0x17] = mpi2PageTypeManufacturing },
+		"wrong page number": func(reply []byte) { reply[0x16] = 6 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			reply := validReply()
+			mutate(reply)
+			if err := validateMPT3ConfigReply(reply, mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7); err == nil {
+				t.Fatal("invalid CONFIG reply accepted")
+			}
+		})
+	}
+}
+
 func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	collector := newHBACollector(time.Minute, hbaModeEnabled)
@@ -115,6 +160,13 @@ func TestParseMPT3Inventory(t *testing.T) {
 	copy(page0[0x1c:0x2c], "INSPUR 3008IT  ")
 	if got := parseMPT3Model(page0); got != "INSPUR 3008IT" {
 		t.Fatalf("model = %q", got)
+	}
+	copy(page0[0x04:0x14], "LSISAS3008")
+	for i := 0x1c; i < 0x2c; i++ {
+		page0[i] = 0
+	}
+	if got := parseMPT3Model(page0); got != "LSISAS3008" {
+		t.Fatalf("chip fallback model = %q", got)
 	}
 	page5 := make([]byte, 0x20)
 	page5[4] = 1

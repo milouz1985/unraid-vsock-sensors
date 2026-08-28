@@ -60,6 +60,8 @@ const (
 	temperatureNotPresent     = 0x00
 	temperatureFahrenheit     = 0x01
 	temperatureCelsius        = 0x02
+	mpi2ConfigReplySize       = 0x18
+	mpi2ConfigReplyDWords     = mpi2ConfigReplySize / 4
 )
 
 type mpt3Command struct {
@@ -138,11 +140,34 @@ func (d *mpt3Device) command(ioc int, request [28]byte, dataSize int) ([]byte, [
 	return reply, data, nil
 }
 
-func mpt3ConfigStatus(reply []byte) (uint16, error) {
-	if len(reply) < 0x18 {
-		return 0, errors.New("short MPI CONFIG reply")
+func validateMPT3ConfigReply(reply []byte, action, pageType, pageNumber byte) error {
+	if len(reply) < mpi2ConfigReplySize {
+		return fmt.Errorf("short MPI CONFIG reply: got %d bytes, need %d", len(reply), mpi2ConfigReplySize)
 	}
-	return binary.LittleEndian.Uint16(reply[0x0e:0x10]) & mpi2IOCStatusMask, nil
+	// The ioctl does not return a byte count, but MPI replies carry their own
+	// length in 32-bit words. This also rejects a zero-filled reply buffer.
+	messageBytes := int(reply[0x02]) * 4
+	if messageBytes < mpi2ConfigReplySize || messageBytes > len(reply) {
+		return fmt.Errorf("invalid MPI CONFIG MsgLength: %d bytes", messageBytes)
+	}
+	if reply[0x03] != mpi2FunctionConfig {
+		return fmt.Errorf("unexpected MPI function 0x%02x", reply[0x03])
+	}
+	if reply[0x00] != action {
+		return fmt.Errorf("unexpected MPI CONFIG action 0x%02x, want 0x%02x", reply[0x00], action)
+	}
+	status := binary.LittleEndian.Uint16(reply[0x0e:0x10]) & mpi2IOCStatusMask
+	if status != 0 {
+		logInfo := binary.LittleEndian.Uint32(reply[0x10:0x14])
+		return fmt.Errorf("MPI CONFIG returned IOCStatus 0x%04x, IOCLogInfo 0x%08x", status, logInfo)
+	}
+	if reply[0x17]&0x0f != pageType&0x0f {
+		return fmt.Errorf("unexpected MPI CONFIG page type 0x%02x, want 0x%02x", reply[0x17]&0x0f, pageType&0x0f)
+	}
+	if reply[0x16] != pageNumber {
+		return fmt.Errorf("unexpected MPI CONFIG page number %d, want %d", reply[0x16], pageNumber)
+	}
+	return nil
 }
 
 func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber byte) ([]byte, error) {
@@ -153,12 +178,8 @@ func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, page
 	if err != nil {
 		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
-	status, err := mpt3ConfigStatus(reply)
-	if err != nil {
-		return nil, err
-	}
-	if status != 0 {
-		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d returned IOCStatus 0x%04x", pageType, pageNumber, status)
+	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageHeader, pageType, pageNumber); err != nil {
+		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
 	header := reply[0x14:0x18]
 	pageSize := int(header[1]) * 4
@@ -172,12 +193,8 @@ func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, page
 	if err != nil {
 		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
-	status, err = mpt3ConfigStatus(reply)
-	if err != nil {
-		return nil, err
-	}
-	if status != 0 {
-		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d returned IOCStatus 0x%04x", pageType, pageNumber, status)
+	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageReadCurrent, pageType, pageNumber); err != nil {
+		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
 	return page, nil
 }
@@ -263,7 +280,14 @@ func parseMPT3Model(page []byte) string {
 	if len(page) < 0x2c {
 		return ""
 	}
-	return cleanMPT3ASCII(page[0x1c:0x2c])
+	// Manufacturing Page 0 distinguishes the controller chip from the product
+	// board. Prefer BoardName (for example "INSPUR 3008IT") as the user-facing
+	// model; use ChipName (for example "LSISAS3008") only when OEM firmware
+	// leaves BoardName empty.
+	if boardName := cleanMPT3ASCII(page[0x1c:0x2c]); boardName != "" {
+		return boardName
+	}
+	return cleanMPT3ASCII(page[0x04:0x14])
 }
 
 func cleanMPT3ASCII(value []byte) string {
@@ -296,6 +320,9 @@ func parseMPT3SASAddress(page []byte) string {
 }
 
 func parseMPT3Temperature(page []byte) (float64, error) {
+	// Unlike the fixed reply buffer, this slice is allocated from the firmware's
+	// PageLength. Reject a validly transferred but undersized/garbage Page 7
+	// before accessing the IOC temperature fields.
 	if len(page) < 0x13 {
 		return 0, errors.New("IO Unit Page 7 is shorter than the IOC temperature fields")
 	}
