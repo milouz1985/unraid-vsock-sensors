@@ -60,18 +60,18 @@ func TestReadAndSelect(t *testing.T) {
 	if disks[0].ID != "WDC_disk1_serial" {
 		t.Fatalf("got disk ID %q", disks[0].ID)
 	}
-	if got := selectDisks(disks, "hdd"); len(got) != 2 || got[0].Temp != 35 || got[1].Temp != 0 {
+	if got := selectDisks(disks, "hdd", false); len(got) != 2 || got[0].Temp != 35 || got[1].Temp != 0 {
 		t.Fatalf("hdd: %#v", got)
 	}
-	if got := selectDisks(disks, "nvme"); len(got) != 1 || got[0].Temp != 48 {
+	if got := selectDisks(disks, "nvme", false); len(got) != 1 || got[0].Temp != 48 {
 		t.Fatalf("nvme: %#v", got)
 	}
-	if got := selectDisks(disks, "fast"); len(got) != 1 || got[0].Device != "nvme0n1" {
+	if got := selectDisks(disks, "fast", false); len(got) != 1 || got[0].Device != "nvme0n1" {
 		t.Fatalf("name: %#v", got)
 	}
 }
 
-func TestReadDisksRejectsInvalidTemperature(t *testing.T) {
+func TestReadDisksMarksInvalidTemperatureUnavailable(t *testing.T) {
 	for _, temperature := range []string{"broken", "NaN", "+Inf", "-Inf"} {
 		t.Run(temperature, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), "disks.ini")
@@ -79,8 +79,12 @@ func TestReadDisksRejectsInvalidTemperature(t *testing.T) {
 			if err := os.WriteFile(p, []byte(data), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := readDisks(p); err == nil {
-				t.Fatal("invalid temperature should remain an error")
+			disks, err := readDisks(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(disks) != 1 || !disks[0].Unavailable {
+				t.Fatalf("invalid temperature should affect only its disk: %#v", disks)
 			}
 		})
 	}
@@ -92,23 +96,40 @@ func TestSelectDisksExcludesExternalDisksFromKindSelectors(t *testing.T) {
 		{Name: "external", Device: "sdc", Transport: "usb", Rotational: true},
 	}
 
-	if got := selectDisks(disks, "hdd"); len(got) != 1 || got[0].Name != "internal" {
+	if got := selectDisks(disks, "hdd", false); len(got) != 1 || got[0].Name != "internal" {
 		t.Fatalf("hdd: %#v", got)
 	}
-	if got := selectDisks(disks, "external"); len(got) != 1 || got[0].Name != "external" {
+	if got := selectDisks(disks, "external", false); len(got) != 1 || got[0].Name != "external" {
 		t.Fatalf("explicit name: %#v", got)
 	}
-	if got := selectDisks(disks, "all"); len(got) != 2 {
+	if got := selectDisks(disks, "all", false); len(got) != 2 {
 		t.Fatalf("all should include external disks: %#v", got)
 	}
 }
 
-func TestReadDisksRejectsMissingTemperatureOnActiveDisk(t *testing.T) {
+func TestSelectDisksCanExcludeUnavailableDisks(t *testing.T) {
+	disks := []sensors.Disk{
+		{Name: "disk1", Rotational: true, Temp: 35},
+		{Name: "disk2", Rotational: true, Unavailable: true},
+	}
+	if got := selectDisks(disks, "hdd", true); len(got) != 1 || got[0].Name != "disk1" {
+		t.Fatalf("available HDDs: %#v", got)
+	}
+	if got := selectDisks(disks, "hdd", false); len(got) != 2 {
+		t.Fatalf("all HDDs: %#v", got)
+	}
+}
+
+func TestReadDisksMarksMissingTemperatureOnActiveDiskUnavailable(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "disks.ini")
 	if err := os.WriteFile(p, []byte("[disk1]\nid=serial\ndevice=sdb\ntemp=*\nrotational=1\nspundown=0\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readDisks(p); err == nil {
-		t.Fatal("missing temperature on an active disk should remain an error")
+	disks, err := readDisks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disks) != 1 || !disks[0].Unavailable {
+		t.Fatalf("missing temperature should affect only its disk: %#v", disks)
 	}
 }

@@ -207,9 +207,18 @@ démarrage `flash` ne sont pas publiés. Les SSD utilisant un autre transport qu
 SATA ou NVMe restent accessibles en ligne de commande, mais ne créent pas de
 canal maximum dédié.
 
-Un disque en veille est conservé dans l'inventaire avec une température de
-`0 °C`. Cette valeur signifie que la sonde est inactive et évite de déclencher
-le failsafe pendant un spindown normal.
+Un disque en veille (`temp="*"` et `spundown="1"`) est conservé dans
+l'inventaire avec une température de `0 °C`. Cette valeur signifie que la sonde
+est inactive et évite de déclencher le failsafe pendant un spindown normal.
+
+Unraid met à jour l'état de rotation et la température séparément. Juste après
+un spin-up, `disks.ini` peut donc contenir temporairement `temp="*"` avec
+`spundown="0"`, jusqu'au prochain relevé SMART réglé par `poll_attributes`.
+Cet état, comme une température invalide, rend indisponible uniquement le canal
+du disque. Le maximum de sa catégorie (HDD, SATA SSD ou NVMe) continue d'être
+calculé avec les températures disponibles ; il devient indisponible seulement
+si aucun membre du groupe n'est mesurable. Les canaux indisponibles atteignent
+`100 °C` après `stale_timeout`.
 
 ## Inventaire persistant et changement de topologie
 
@@ -231,8 +240,9 @@ reste présent.
 
 Pendant l'exécution :
 
-- une erreur de lecture ou une température indisponible ne modifie jamais le
-  cache et laisse les canaux concernés atteindre le failsafe ;
+- une erreur globale de lecture ne modifie jamais le cache et laisse toute la
+  famille disque atteindre le failsafe ; une température indisponible ou
+  invalide n'affecte que son disque, tandis que le maximum ignore ce membre ;
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
   automatiquement la famille hwmon concernée et met à jour le cache ;
 - un changement de `/dev/sdX`, de nom affiché ou d'index StorCLI ne modifie pas

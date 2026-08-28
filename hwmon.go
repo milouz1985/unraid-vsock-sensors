@@ -37,6 +37,7 @@ type hwmonReading struct {
 	label       string
 	temperature float64
 	members     []string
+	unavailable bool
 }
 
 type hwmonInventory struct {
@@ -101,13 +102,13 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 		if len(groupDisks) < minHWMonGroupSize {
 			continue
 		}
+		maximum, available := sensors.MaxAvailableDiskTemperature(groupDisks)
 		diskReadings = append(diskReadings, hwmonReading{
-			id:      "disk:group:" + string(group.kind),
-			label:   group.label,
-			members: members,
-			temperature: sensors.MaxTemperature(groupDisks, func(disk sensors.Disk) float64 {
-				return disk.Temp
-			}),
+			id:          "disk:group:" + string(group.kind),
+			label:       group.label,
+			members:     members,
+			unavailable: !available,
+			temperature: maximum,
 		})
 	}
 
@@ -116,6 +117,7 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 			id:          "disk:" + disk.ID,
 			label:       fmt.Sprintf("%s (%s)", disk.Name, disk.Device),
 			temperature: disk.Temp,
+			unavailable: disk.Unavailable,
 		})
 	}
 	for _, hba := range state.HBAs {
@@ -292,7 +294,7 @@ func publishHWMonFamily(
 	updates := make([]hwmonReading, 0, len(inventory.readings))
 	for _, expected := range inventory.readings {
 		reading, found := currentByID[expected.id]
-		if !found {
+		if !found || reading.unavailable {
 			continue
 		}
 		complete := true

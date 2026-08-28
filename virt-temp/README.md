@@ -50,10 +50,13 @@ mais jamais les températures. Au démarrage suivant, ce cache recrée les canau
 découvrir dès le boot de Proxmox.
 
 Une réponse valide dont les ID diffèrent remplace automatiquement la famille
-concernée et le cache. Une erreur de lecture ou une température indisponible ne
-constitue pas une nouvelle topologie : les anciens canaux restent alors en
-place et atteignent le failsafe. Un changement de label seul n'affecte pas
-l'identité.
+concernée et le cache. Une erreur globale de lecture ne constitue pas une
+nouvelle topologie : les anciens canaux restent alors en place et atteignent le
+failsafe. Une température de disque indisponible n'interrompt pas les autres
+mises à jour : seul ce disque cesse d'être actualisé, tandis que le maximum de
+sa catégorie est recalculé avec les membres encore disponibles. Le maximum
+atteint le failsafe uniquement si tout le groupe est indisponible. Un changement
+de label seul n'affecte pas l'identité.
 
 Les logiciels qui n'observent pas les ajouts hwmon à chaud peuvent être
 relancés après une restauration ou une reconfiguration. La liste est optionnelle

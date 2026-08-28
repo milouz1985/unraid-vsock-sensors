@@ -8,12 +8,13 @@ import (
 
 // Disk describes a disk and its latest cached temperature reported by Unraid.
 type Disk struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Device     string  `json:"device"`
-	Transport  string  `json:"transport,omitempty"`
-	Rotational bool    `json:"rotational"`
-	Temp       float64 `json:"temp_c"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Device      string  `json:"device"`
+	Transport   string  `json:"transport,omitempty"`
+	Rotational  bool    `json:"rotational"`
+	Temp        float64 `json:"temp_c"`
+	Unavailable bool    `json:"unavailable,omitempty"`
 }
 
 // DiskKind identifies the storage technology used to group disk temperatures.

@@ -94,6 +94,20 @@ func TestDiskNamedLikeHBAIsSelectedAsDisk(t *testing.T) {
 	}
 }
 
+func TestDiskMaximumIgnoresUnavailableDisk(t *testing.T) {
+	r := sensors.Response{Disks: []sensors.Disk{
+		{Name: "disk1", Rotational: true, Temp: 38},
+		{Name: "disk2", Rotational: true, Unavailable: true},
+	}}
+	var out bytes.Buffer
+	if err := writeResponse(&out, r, sensorTypeDisk, "hdd"); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "38\n" {
+		t.Fatalf("got %q, want available disk maximum", got)
+	}
+}
+
 func TestWriteResponseRejectsUnknownSensorType(t *testing.T) {
 	err := writeResponse(&bytes.Buffer{}, sensors.Response{}, sensorType("fan"), "all")
 	if err == nil || err.Error() != `unknown sensor type "fan" (expected disk or hba)` {

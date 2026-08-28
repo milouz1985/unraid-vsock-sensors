@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -36,9 +35,10 @@ func readDisks(path string) ([]sensors.Disk, error) {
 
 		rawTemp := strings.TrimSpace(section.Key("temp").String())
 		temp := 0.0
+		unavailable := false
 		if rawTemp == "*" {
 			if strings.TrimSpace(section.Key("spundown").String()) != "1" {
-				return nil, fmt.Errorf("disk %q temperature unavailable while not spun down", name)
+				unavailable = true
 			}
 			// Report a spun-down disk as 0°C instead of omitting its sensor.
 			// CoolerControl treats repeated missing readings as a sensor failure and
@@ -47,18 +47,20 @@ func readDisks(path string) ([]sensors.Disk, error) {
 		} else {
 			temp, err = strconv.ParseFloat(rawTemp, 64)
 			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) {
-				return nil, fmt.Errorf("disk %q has invalid temperature %q", name, rawTemp)
+				temp = 0
+				unavailable = true
 			}
 		}
 		// Unraid writes rotational as 0 or 1 in disks.ini, so trust its value.
 		rotational, _ := section.Key("rotational").Bool()
 		result = append(result, sensors.Disk{
-			ID:         id,
-			Name:       name,
-			Device:     device,
-			Transport:  strings.ToLower(section.Key("transport").String()),
-			Rotational: rotational,
-			Temp:       temp,
+			ID:          id,
+			Name:        name,
+			Device:      device,
+			Transport:   strings.ToLower(section.Key("transport").String()),
+			Rotational:  rotational,
+			Temp:        temp,
+			Unavailable: unavailable,
 		})
 	}
 
@@ -66,11 +68,14 @@ func readDisks(path string) ([]sensors.Disk, error) {
 	return result, nil
 }
 
-func selectDisks(disks []sensors.Disk, selector string) []sensors.Disk {
+func selectDisks(disks []sensors.Disk, selector string, availableOnly bool) []sensors.Disk {
 	selector = strings.ToLower(selector)
 	var result []sensors.Disk
 
 	for _, disk := range disks {
+		if availableOnly && disk.Unavailable {
+			continue
+		}
 		var match bool
 		switch selector {
 		case "all":

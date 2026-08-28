@@ -261,7 +261,7 @@ func writeResponse(out io.Writer, r sensors.Response, kind sensorType, selector 
 		if r.Error != "" {
 			return errors.New(r.Error)
 		}
-		return writeMaxTemperature(out, selectDisks(r.Disks, selector), selector, nil, func(disk sensors.Disk) float64 {
+		return writeMaxTemperature(out, selectDisks(r.Disks, selector, true), selector, nil, func(disk sensors.Disk) float64 {
 			return disk.Temp
 		})
 	default:
