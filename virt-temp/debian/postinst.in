@@ -60,7 +60,13 @@ dkms status -m "$module" 2>/dev/null \
             echo "Version DKMS invalide ignorée : $previous_version" >&2
             continue
         fi
-        dkms remove -m "$module" -v "$previous_version" --all
+        if ! dkms remove -m "$module" -v "$previous_version" --all; then
+            # DKMS refuses to remove an entry whose /usr/src link has already
+            # disappeared. The replacement is active, so discard only this
+            # validated stale registry entry instead of failing the upgrade.
+            echo "Nettoyage forcé de l'entrée DKMS cassée $module/$previous_version." >&2
+            rm -rf -- "/var/lib/dkms/$module/$previous_version"
+        fi
         rm -rf -- "/usr/src/$module-$previous_version"
     done
 
