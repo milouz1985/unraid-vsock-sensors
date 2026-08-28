@@ -120,7 +120,7 @@ Examples:
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	path := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
+	disksINIPath := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
 	port := fs.Uint("port", defaultPort, "vsock port")
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	storcliInterval := fs.Duration("storcli-interval", 30*time.Second, "delay between StorCLI refreshes")
@@ -179,12 +179,12 @@ func serve(args []string) error {
 		clients.Add(1)
 		go func() {
 			defer clients.Done()
-			handle(client, *path, hbas)
+			handle(client, *disksINIPath, hbas)
 		}()
 	}
 }
 
-func handle(conn net.Conn, path string, collector *hbaCollector) {
+func handle(conn net.Conn, disksINIPath string, collector *hbaCollector) {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(requestTimeout))
 	// The protocol accepts one fixed command and caps input so an idle or
@@ -196,20 +196,20 @@ func handle(conn net.Conn, path string, collector *hbaCollector) {
 	if strings.TrimSpace(line) != "GET" {
 		return
 	}
-	disks, err := readDisks(path)
-	r := sensors.Response{
+	disks, err := readDisks(disksINIPath)
+	response := sensors.Response{
 		Version: version, Timestamp: time.Now().UTC(), Disks: disks,
 		HBADisabled: collector.mode == hbaModeDisabled,
 	}
 	if err != nil {
-		r.Error = err.Error()
+		response.Error = err.Error()
 	}
-	r.HBAs, err = collector.read()
+	response.HBAs, err = collector.read()
 	if err != nil {
-		r.HBAError = err.Error()
+		response.HBAError = err.Error()
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(requestTimeout))
-	if err := json.NewEncoder(conn).Encode(r); err != nil {
+	if err := json.NewEncoder(conn).Encode(response); err != nil {
 		log.Printf("write response: %v", err)
 	}
 }
@@ -218,11 +218,11 @@ func get(args []string) error {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	cid := fs.Uint("cid", 3, "guest vsock CID")
 	port := fs.Uint("port", defaultPort, "vsock port")
-	all := fs.Bool("json", false, "print the complete JSON response")
+	printJSON := fs.Bool("json", false, "print the complete JSON response")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *all {
+	if *printJSON {
 		if fs.NArg() != 0 {
 			return errors.New("--json does not accept a sensor type or selector")
 		}
@@ -230,7 +230,7 @@ func get(args []string) error {
 		return errors.New("a sensor type and selector are required (for example: disk hdd or hba all)")
 	}
 	kind := sensorType(fs.Arg(0))
-	if !*all && kind != sensorTypeDisk && kind != sensorTypeHBA {
+	if !*printJSON && kind != sensorTypeDisk && kind != sensorTypeHBA {
 		return fmt.Errorf("unknown sensor type %q (expected disk or hba)", kind)
 	}
 	if err := vsockaddr.ValidateCID(uint64(*cid)); err != nil {
@@ -241,31 +241,31 @@ func get(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
-	r, err := sensors.Fetch(ctx, uint32(*cid), uint32(*port))
+	response, err := sensors.Fetch(ctx, uint32(*cid), uint32(*port))
 	if err != nil {
 		return err
 	}
-	if *all {
-		return json.NewEncoder(os.Stdout).Encode(r)
+	if *printJSON {
+		return json.NewEncoder(os.Stdout).Encode(response)
 	}
-	return writeResponse(os.Stdout, r, kind, fs.Arg(1))
+	return writeResponse(os.Stdout, response, kind, fs.Arg(1))
 }
 
-func writeResponse(out io.Writer, r sensors.Response, kind sensorType, selector string) error {
+func writeResponse(out io.Writer, response sensors.Response, kind sensorType, selector string) error {
 	switch kind {
 	case sensorTypeHBA:
 		var unavailable error
-		if r.HBAError != "" {
-			unavailable = fmt.Errorf("HBA temperature unavailable: %s", r.HBAError)
+		if response.HBAError != "" {
+			unavailable = fmt.Errorf("HBA temperature unavailable: %s", response.HBAError)
 		}
-		return writeMaxTemperature(out, selectHBAs(r.HBAs, selector), selector, unavailable, func(hba sensors.HBA) float64 {
+		return writeMaxTemperature(out, selectHBAs(response.HBAs, selector), selector, unavailable, func(hba sensors.HBA) float64 {
 			return hba.Temp
 		})
 	case sensorTypeDisk:
-		if r.Error != "" {
-			return errors.New(r.Error)
+		if response.Error != "" {
+			return errors.New(response.Error)
 		}
-		return writeMaxTemperature(out, selectDisks(r.Disks, selector, true), selector, nil, func(disk sensors.Disk) float64 {
+		return writeMaxTemperature(out, selectDisks(response.Disks, selector, true), selector, nil, func(disk sensors.Disk) float64 {
 			return disk.Temp
 		})
 	default:

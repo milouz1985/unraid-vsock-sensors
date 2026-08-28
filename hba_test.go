@@ -156,7 +156,7 @@ func TestHBAReaderCachesDiscovery(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{0: {id: "serial:1234", model: "SAS3008"}}, nil
 		},
-		read: func(context.Context) ([]sensors.HBA, error) {
+		readTemperatures: func(context.Context) ([]sensors.HBA, error) {
 			return []sensors.HBA{{Name: "hba0", Temp: 50}}, nil
 		},
 	}
@@ -181,7 +181,7 @@ func TestHBAReaderIgnoresUnknownControllerWithoutBlockingKnownControllers(t *tes
 			discoveries++
 			return map[int]hbaMetadata{0: {id: "serial:1234"}}, nil
 		},
-		read: func(context.Context) ([]sensors.HBA, error) {
+		readTemperatures: func(context.Context) ([]sensors.HBA, error) {
 			return []sensors.HBA{{Name: "hba0", Temp: 45}, {Name: "hba1", Temp: 50}}, nil
 		},
 	}

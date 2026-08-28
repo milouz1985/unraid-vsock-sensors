@@ -12,13 +12,13 @@ import (
 
 // readDisks reads the temperatures already cached by Unraid in disks.ini.
 // It does not call smartctl and therefore does not wake sleeping disks.
-func readDisks(path string) ([]sensors.Disk, error) {
-	config, err := ini.Load(path)
+func readDisks(disksINIPath string) ([]sensors.Disk, error) {
+	config, err := ini.Load(disksINIPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var result []sensors.Disk
+	var disks []sensors.Disk
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
@@ -53,7 +53,7 @@ func readDisks(path string) ([]sensors.Disk, error) {
 		}
 		// Unraid writes rotational as 0 or 1 in disks.ini, so trust its value.
 		rotational, _ := section.Key("rotational").Bool()
-		result = append(result, sensors.Disk{
+		disks = append(disks, sensors.Disk{
 			ID:          id,
 			Name:        name,
 			Device:      device,
@@ -64,13 +64,13 @@ func readDisks(path string) ([]sensors.Disk, error) {
 		})
 	}
 
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
-	return result, nil
+	sort.Slice(disks, func(i, j int) bool { return disks[i].Name < disks[j].Name })
+	return disks, nil
 }
 
 func selectDisks(disks []sensors.Disk, selector string, availableOnly bool) []sensors.Disk {
 	selector = strings.ToLower(selector)
-	var result []sensors.Disk
+	var matches []sensors.Disk
 
 	for _, disk := range disks {
 		if availableOnly && disk.Unavailable {
@@ -90,9 +90,9 @@ func selectDisks(disks []sensors.Disk, selector string, availableOnly bool) []se
 			match = strings.EqualFold(disk.Name, selector) || strings.EqualFold(disk.Device, selector)
 		}
 		if match {
-			result = append(result, disk)
+			matches = append(matches, disk)
 		}
 	}
 
-	return result
+	return matches
 }

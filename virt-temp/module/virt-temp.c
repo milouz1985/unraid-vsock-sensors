@@ -60,7 +60,7 @@ struct virt_temp_session {
 static unsigned int stale_timeout = 10;
 static DEFINE_MUTEX(storage_lock);
 static DEFINE_MUTEX(hba_lock);
-static struct virt_temp_family storage = {
+static struct virt_temp_family disk_family = {
 	.namespace = "disk", .hwmon_name = "unraid_storage",
 	.lock = &storage_lock,
 };
@@ -91,8 +91,8 @@ MODULE_PARM_DESC(stale_timeout,
 
 static struct virt_temp_family *find_family(const char *namespace)
 {
-	if (!strcmp(namespace, storage.namespace))
-		return &storage;
+	if (!strcmp(namespace, disk_family.namespace))
+		return &disk_family;
 	if (!strcmp(namespace, hba.namespace))
 		return &hba;
 	return NULL;
@@ -425,21 +425,21 @@ static int __init virt_temp_init(void)
 {
 	int err;
 
-	storage.platform = platform_device_register_simple(
+	disk_family.platform = platform_device_register_simple(
 		"virt_temp_storage", PLATFORM_DEVID_NONE, NULL, 0);
-	if (IS_ERR(storage.platform))
-		return PTR_ERR(storage.platform);
+	if (IS_ERR(disk_family.platform))
+		return PTR_ERR(disk_family.platform);
 	hba.platform = platform_device_register_simple(
 		"virt_temp_hba", PLATFORM_DEVID_NONE, NULL, 0);
 	if (IS_ERR(hba.platform)) {
 		err = PTR_ERR(hba.platform);
-		platform_device_unregister(storage.platform);
+		platform_device_unregister(disk_family.platform);
 		return err;
 	}
 	err = misc_register(&control_device);
 	if (err) {
 		platform_device_unregister(hba.platform);
-		platform_device_unregister(storage.platform);
+		platform_device_unregister(disk_family.platform);
 	}
 	return err;
 }
@@ -449,10 +449,10 @@ static void __exit virt_temp_exit(void)
 	misc_deregister(&control_device);
 	unregister_hwmon(&hba);
 	free_inventory(&hba);
-	unregister_hwmon(&storage);
-	free_inventory(&storage);
+	unregister_hwmon(&disk_family);
+	free_inventory(&disk_family);
 	platform_device_unregister(hba.platform);
-	platform_device_unregister(storage.platform);
+	platform_device_unregister(disk_family.platform);
 }
 
 module_init(virt_temp_init);

@@ -34,13 +34,13 @@ type hbaMetadata struct {
 }
 
 type hbaReader struct {
-	metadata map[int]hbaMetadata
-	discover func(context.Context) (map[int]hbaMetadata, error)
-	read     func(context.Context) ([]sensors.HBA, error)
+	metadata         map[int]hbaMetadata
+	discover         func(context.Context) (map[int]hbaMetadata, error)
+	readTemperatures func(context.Context) ([]sensors.HBA, error)
 }
 
 func newHBAReader() *hbaReader {
-	return &hbaReader{discover: discoverHBAs, read: readHBATemperatures}
+	return &hbaReader{discover: discoverHBAs, readTemperatures: readHBATemperatures}
 }
 
 func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
@@ -54,7 +54,7 @@ func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 		}
 		r.metadata = metadata
 	}
-	readings, err := r.read(ctx)
+	readings, err := r.readTemperatures(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 }
 
 func applyHBAMetadata(readings []sensors.HBA, metadata map[int]hbaMetadata) []sensors.HBA {
-	result := make([]sensors.HBA, 0, len(readings))
+	matchedReadings := make([]sensors.HBA, 0, len(readings))
 	for _, reading := range readings {
 		controller, err := hbaControllerNumber(reading.Name)
 		if err != nil {
@@ -75,9 +75,9 @@ func applyHBAMetadata(readings []sensors.HBA, metadata map[int]hbaMetadata) []se
 		reading.ID = identity.id
 		reading.Model = identity.model
 		reading.PCIAddress = identity.pciAddress
-		result = append(result, reading)
+		matchedReadings = append(matchedReadings, reading)
 	}
-	return result
+	return matchedReadings
 }
 
 func hbaControllerNumber(name string) (int, error) {
@@ -250,7 +250,7 @@ func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
 		return nil, errNoHBA
 	}
 
-	result := make(map[int]hbaMetadata, len(root.Controllers))
+	metadataByController := make(map[int]hbaMetadata, len(root.Controllers))
 	ids := make(map[string]int, len(root.Controllers))
 	for _, controller := range root.Controllers {
 		number := controller.CommandStatus.Controller
@@ -267,9 +267,9 @@ func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
 			return nil, fmt.Errorf("storcli controllers %d and %d have duplicate identity %q", previous, number, id)
 		}
 		ids[id] = number
-		result[number] = hbaMetadata{id: id, model: model, pciAddress: pciAddress}
+		metadataByController[number] = hbaMetadata{id: id, model: model, pciAddress: pciAddress}
 	}
-	return result, nil
+	return metadataByController, nil
 }
 
 func firstHBAValue(values ...string) string {
@@ -343,7 +343,7 @@ func parseStorCLI(data []byte) ([]sensors.HBA, error) {
 		return nil, errNoHBA
 	}
 
-	var result []sensors.HBA
+	var readings []sensors.HBA
 	for _, controller := range root.Controllers {
 		id := controller.CommandStatus.Controller
 		if controller.CommandStatus.Status != "Success" {
@@ -359,7 +359,7 @@ func parseStorCLI(data []byte) ([]sensors.HBA, error) {
 			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) {
 				return nil, fmt.Errorf("storcli controller %d invalid temperature %q", id, property.Value)
 			}
-			result = append(result, sensors.HBA{Name: fmt.Sprintf("hba%d", id), Temp: temp})
+			readings = append(readings, sensors.HBA{Name: fmt.Sprintf("hba%d", id), Temp: temp})
 			found = true
 			break
 		}
@@ -368,17 +368,17 @@ func parseStorCLI(data []byte) ([]sensors.HBA, error) {
 		}
 	}
 
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
-	return result, nil
+	sort.Slice(readings, func(i, j int) bool { return readings[i].Name < readings[j].Name })
+	return readings, nil
 }
 
 func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {
 	selector = strings.ToLower(selector)
-	var result []sensors.HBA
+	var matches []sensors.HBA
 	for _, sensor := range hbas {
 		if selector == "all" || sensor.Name == selector {
-			result = append(result, sensor)
+			matches = append(matches, sensor)
 		}
 	}
-	return result
+	return matches
 }
