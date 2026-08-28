@@ -30,6 +30,8 @@ struct virt_temp_sensor {
 struct virt_temp_family {
 	const char *namespace;
 	const char *hwmon_name;
+	/* Serializes inventory replacement and updates for this family only. */
+	struct mutex *lock;
 	struct platform_device *platform;
 	struct device *hwmon;
 	struct virt_temp_sensor *sensors;
@@ -56,12 +58,15 @@ struct virt_temp_session {
 };
 
 static unsigned int stale_timeout = 10;
-static DEFINE_MUTEX(virt_temp_lock);
+static DEFINE_MUTEX(storage_lock);
+static DEFINE_MUTEX(hba_lock);
 static struct virt_temp_family storage = {
 	.namespace = "disk", .hwmon_name = "unraid_storage",
+	.lock = &storage_lock,
 };
 static struct virt_temp_family hba = {
 	.namespace = "hba", .hwmon_name = "unraid_hba",
+	.lock = &hba_lock,
 };
 
 static int set_stale_timeout(const char *value,
@@ -229,18 +234,19 @@ static int configure(struct virt_temp_session *session,
 	struct virt_temp_family replacement = {
 		.namespace = family->namespace,
 		.hwmon_name = family->hwmon_name,
+		.lock = family->lock,
 		.platform = family->platform,
 	};
 	int err = build_inventory(&replacement, session);
 
 	if (err)
 		return err;
-	mutex_lock(&virt_temp_lock);
+	mutex_lock(family->lock);
 	/*
 	 * hwmon_device_unregister() removes the sysfs device and drains in-flight
 	 * hwmon callbacks before returning. It must therefore precede any change
 	 * or free of sensors/count. This lifetime guarantee is also why read_value
-	 * and read_label do not need virt_temp_lock.
+	 * and read_label do not need the family mutex.
 	 */
 	unregister_hwmon(family);
 	free_inventory(family);
@@ -260,7 +266,7 @@ static int configure(struct virt_temp_session *session,
 			free_inventory(family);
 		}
 	}
-	mutex_unlock(&virt_temp_lock);
+	mutex_unlock(family->lock);
 	return err;
 }
 
@@ -270,11 +276,11 @@ static int update(struct virt_temp_session *session,
 	struct virt_temp_record *record;
 	struct virt_temp_sensor *sensor;
 
-	mutex_lock(&virt_temp_lock);
+	mutex_lock(family->lock);
 	list_for_each_entry(record, &session->records, node) {
 		sensor = find_sensor(family, record->id);
 		if (!sensor || strcmp(sensor->label, record->label)) {
-			mutex_unlock(&virt_temp_lock);
+			mutex_unlock(family->lock);
 			return -ESTALE;
 		}
 	}
@@ -283,7 +289,7 @@ static int update(struct virt_temp_session *session,
 		atomic_long_set(&sensor->temperature, record->temperature);
 		smp_store_release(&sensor->last_update, jiffies);
 	}
-	mutex_unlock(&virt_temp_lock);
+	mutex_unlock(family->lock);
 	return 0;
 }
 

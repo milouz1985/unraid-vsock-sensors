@@ -33,6 +33,12 @@ Chaque session accepte au maximum 1 024 enregistrements. Cette limite borne les
 allocations contrôlées depuis l'espace utilisateur ; elle ne correspond pas à
 une limite matérielle.
 
+Les inventaires `disk` et `hba` possèdent chacun leur propre mutex. Deux
+producteurs peuvent ainsi actualiser des familles différentes sans se bloquer.
+Au sein d'une famille, le mutex sérialise les `commit` avec un éventuel
+`configure`. Les lectures sysfs n'en ont pas besoin : la désinscription hwmon
+attend la fin des lectures en cours avant que l'ancien inventaire soit libéré.
+
 Le pilote expose au maximum deux périphériques hwmon :
 
 - `unraid_storage`, avec les disques internes et leurs maximums de groupe ;
