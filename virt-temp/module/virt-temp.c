@@ -236,7 +236,12 @@ static int configure(struct virt_temp_session *session,
 	if (err)
 		return err;
 	mutex_lock(&virt_temp_lock);
-	/* A configure is explicit and may briefly remove the old sysfs device. */
+	/*
+	 * hwmon_device_unregister() removes the sysfs device and drains in-flight
+	 * hwmon callbacks before returning. It must therefore precede any change
+	 * or free of sensors/count. This lifetime guarantee is also why read_value
+	 * and read_label do not need virt_temp_lock.
+	 */
 	unregister_hwmon(family);
 	free_inventory(family);
 	*family = replacement;
