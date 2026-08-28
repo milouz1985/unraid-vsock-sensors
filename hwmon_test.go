@@ -257,6 +257,15 @@ func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 	if err := publisher.saveCache(); err != nil {
 		t.Fatal(err)
 	}
+	if info, err := os.Stat(cache); err != nil {
+		t.Fatal(err)
+	} else if mode := info.Mode().Perm(); mode != 0600 {
+		t.Fatalf("cache mode = %04o, want 0600", mode)
+	}
+	// Simulate a cache left by a previous release, which used mode 0644.
+	if err := os.Chmod(cache, 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Truncate(device, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -265,6 +274,11 @@ func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 		t.Fatal(err)
 	} else if !restoredCache {
 		t.Fatal("cache was not reported as restored")
+	}
+	if info, err := os.Stat(cache); err != nil {
+		t.Fatal(err)
+	} else if mode := info.Mode().Perm(); mode != 0600 {
+		t.Fatalf("restored cache mode = %04o, want 0600", mode)
 	}
 	data, err := os.ReadFile(device)
 	if err != nil {

@@ -26,8 +26,9 @@ import (
 )
 
 const (
-	defaultPort    = 990
-	requestTimeout = 3 * time.Second
+	defaultPort          = 990
+	requestTimeout       = 3 * time.Second
+	maxConcurrentClients = 32
 )
 
 var version = "dev"
@@ -155,6 +156,7 @@ func serve(args []string) error {
 	// controller command.
 	go hbas.run(ctx)
 	var clients sync.WaitGroup
+	clientSlots := make(chan struct{}, maxConcurrentClients)
 	defer clients.Wait()
 	for {
 		client, err := listener.Accept()
@@ -173,12 +175,19 @@ func serve(args []string) error {
 			_ = client.Close()
 			continue
 		}
+		select {
+		case clientSlots <- struct{}{}:
+		default:
+			_ = client.Close()
+			continue
+		}
 
 		// Isolate each client so one blocked connection cannot delay sensor data
 		// requested by another host-side consumer.
 		clients.Add(1)
 		go func() {
 			defer clients.Done()
+			defer func() { <-clientSlots }()
 			handle(client, *disksINIPath, hbas)
 		}()
 	}

@@ -336,10 +336,12 @@ func sameHWMonTopology(expected, current []hwmonReading) bool {
 }
 
 func (publisher *hwmonPublisher) restore(device string) (bool, error) {
-	data, err := os.ReadFile(publisher.cachePath)
-	if errors.Is(err, os.ErrNotExist) {
+	if err := os.Chmod(publisher.cachePath, 0600); errors.Is(err, os.ErrNotExist) {
 		return false, nil
+	} else if err != nil {
+		return false, err
 	}
+	data, err := os.ReadFile(publisher.cachePath)
 	if err != nil {
 		return false, err
 	}
@@ -397,7 +399,7 @@ func (publisher *hwmonPublisher) saveCache() error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0644); err != nil {
+	if err := temporary.Chmod(0600); err != nil {
 		temporary.Close()
 		return err
 	}
