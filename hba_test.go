@@ -174,7 +174,7 @@ func TestHBAReaderCachesDiscovery(t *testing.T) {
 	}
 }
 
-func TestHBAReaderRejectsUnknownControllerWithoutRediscovery(t *testing.T) {
+func TestHBAReaderIgnoresUnknownControllerWithoutBlockingKnownControllers(t *testing.T) {
 	discoveries := 0
 	reader := &hbaReader{
 		discover: func(context.Context) (map[int]hbaMetadata, error) {
@@ -182,15 +182,29 @@ func TestHBAReaderRejectsUnknownControllerWithoutRediscovery(t *testing.T) {
 			return map[int]hbaMetadata{0: {id: "serial:1234"}}, nil
 		},
 		read: func(context.Context) ([]sensors.HBA, error) {
-			return []sensors.HBA{{Name: "hba1", Temp: 50}}, nil
+			return []sensors.HBA{{Name: "hba0", Temp: 45}, {Name: "hba1", Temp: 50}}, nil
 		},
 	}
 
-	if _, err := reader.collect(context.Background()); err == nil {
-		t.Fatal("an unknown controller should be rejected")
+	readings, err := reader.collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readings) != 1 || readings[0].Name != "hba0" || readings[0].ID != "serial:1234" {
+		t.Fatalf("unknown controller should be isolated: %#v", readings)
 	}
 	if discoveries != 1 {
 		t.Fatalf("discovery count = %d, want 1", discoveries)
+	}
+}
+
+func TestApplyHBAMetadataIgnoresMalformedControllerName(t *testing.T) {
+	readings := applyHBAMetadata(
+		[]sensors.HBA{{Name: "controller0", Temp: 50}, {Name: "hba0", Temp: 45}},
+		map[int]hbaMetadata{0: {id: "serial:1234"}},
+	)
+	if len(readings) != 1 || readings[0].Name != "hba0" {
+		t.Fatalf("malformed controller should be isolated: %#v", readings)
 	}
 }
 

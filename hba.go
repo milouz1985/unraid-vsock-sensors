@@ -57,27 +57,26 @@ func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !applyHBAMetadata(readings, r.metadata) {
-		return nil, errors.New("storcli temperature references an unknown controller; restart the service to refresh HBA metadata")
-	}
-	return readings, nil
+	return applyHBAMetadata(readings, r.metadata), nil
 }
 
-func applyHBAMetadata(readings []sensors.HBA, metadata map[int]hbaMetadata) bool {
-	for index := range readings {
-		controller, err := hbaControllerNumber(readings[index].Name)
+func applyHBAMetadata(readings []sensors.HBA, metadata map[int]hbaMetadata) []sensors.HBA {
+	result := make([]sensors.HBA, 0, len(readings))
+	for _, reading := range readings {
+		controller, err := hbaControllerNumber(reading.Name)
 		if err != nil {
-			return false
+			continue
 		}
 		identity, ok := metadata[controller]
 		if !ok {
-			return false
+			continue
 		}
-		readings[index].ID = identity.id
-		readings[index].Model = identity.model
-		readings[index].PCIAddress = identity.pciAddress
+		reading.ID = identity.id
+		reading.Model = identity.model
+		reading.PCIAddress = identity.pciAddress
+		result = append(result, reading)
 	}
-	return true
+	return result
 }
 
 func hbaControllerNumber(name string) (int, error) {

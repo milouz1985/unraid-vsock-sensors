@@ -58,6 +58,11 @@ sa catégorie est recalculé avec les membres encore disponibles. Le maximum
 atteint le failsafe uniquement si tout le groupe est indisponible. Un changement
 de label seul n'affecte pas l'identité.
 
+De même, une lecture StorCLI qui ne correspond à aucune métadonnée HBA mise en
+cache est écartée seule. Les contrôleurs correctement identifiés continuent
+d'être actualisés ; si aucun ne l'est, l'inventaire précédent reste en place et
+atteint le failsafe.
+
 Les logiciels qui n'observent pas les ajouts hwmon à chaud peuvent être
 relancés après une restauration ou une reconfiguration. La liste est optionnelle
 et générique :

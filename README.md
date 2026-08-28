@@ -243,6 +243,8 @@ Pendant l'exécution :
 - une erreur globale de lecture ne modifie jamais le cache et laisse toute la
   famille disque atteindre le failsafe ; une température indisponible ou
   invalide n'affecte que son disque, tandis que le maximum ignore ce membre ;
+- une lecture StorCLI sans métadonnées HBA correspondantes est ignorée sans
+  interrompre l'actualisation des autres contrôleurs ;
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
   automatiquement la famille hwmon concernée et met à jour le cache ;
 - un changement de `/dev/sdX`, de nom affiché ou d'index StorCLI ne modifie pas
