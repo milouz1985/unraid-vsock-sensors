@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +27,7 @@ type hbaMetadata struct{ id, model, pciAddress string }
 type hbaBackend struct {
 	name             string
 	discover         func(context.Context) (map[int]hbaMetadata, error)
-	readTemperatures func(context.Context, []int) ([]sensors.HBA, error)
+	readTemperatures func(context.Context, []int) (map[int]float64, error)
 }
 
 type hbaBackendMode string
@@ -69,35 +68,26 @@ func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 		controllers = append(controllers, controller)
 	}
 	sort.Ints(controllers)
-	readings, err := r.backend.readTemperatures(ctx, controllers)
+	temperatures, err := r.backend.readTemperatures(ctx, controllers)
 	if err != nil {
 		return nil, err
 	}
-	return applyHBAMetadata(readings, r.metadata), nil
+	return buildHBAReadings(temperatures, r.metadata), nil
 }
 
-func applyHBAMetadata(readings []sensors.HBA, metadata map[int]hbaMetadata) []sensors.HBA {
-	matched := make([]sensors.HBA, 0, len(readings))
-	for _, reading := range readings {
-		controller, err := hbaControllerNumber(reading.Name)
-		if err != nil {
-			continue
-		}
+func buildHBAReadings(temperatures map[int]float64, metadata map[int]hbaMetadata) []sensors.HBA {
+	readings := make([]sensors.HBA, 0, len(temperatures))
+	for controller, temperature := range temperatures {
 		identity, ok := metadata[controller]
 		if !ok {
 			continue
 		}
-		reading.ID, reading.Model, reading.PCIAddress = identity.id, identity.model, identity.pciAddress
-		matched = append(matched, reading)
+		readings = append(readings, sensors.HBA{
+			ID: identity.id, Model: identity.model, PCIAddress: identity.pciAddress, Temp: temperature,
+		})
 	}
-	return matched
-}
-
-func hbaControllerNumber(name string) (int, error) {
-	if !strings.HasPrefix(name, "hba") {
-		return 0, fmt.Errorf("invalid HBA name %q", name)
-	}
-	return strconv.Atoi(strings.TrimPrefix(name, "hba"))
+	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
+	return readings
 }
 
 type hbaMode string
@@ -168,7 +158,7 @@ func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {
 	selector = strings.ToLower(selector)
 	var matches []sensors.HBA
 	for _, sensor := range hbas {
-		if selector == "all" || sensor.Name == selector {
+		if selector == "all" || strings.EqualFold(sensor.ID, selector) {
 			matches = append(matches, sensor)
 		}
 	}

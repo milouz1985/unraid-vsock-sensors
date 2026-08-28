@@ -41,8 +41,6 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
-
-	"unraid-vsock-sensors/internal/sensors"
 )
 
 const (
@@ -243,13 +241,13 @@ func discoverMPT3HBAs(ctx context.Context) (map[int]hbaMetadata, error) {
 	return metadata, nil
 }
 
-func readMPT3Temperatures(ctx context.Context, controllers []int) ([]sensors.HBA, error) {
+func readMPT3Temperatures(ctx context.Context, controllers []int) (map[int]float64, error) {
 	device, err := openMPT3()
 	if err != nil {
 		return nil, err
 	}
 	defer device.close()
-	readings := make([]sensors.HBA, 0, len(controllers))
+	temperatures := make(map[int]float64, len(controllers))
 	for _, ioc := range controllers {
 		page, err := device.readConfigPage(ctx, ioc, mpi2PageTypeIOUnit, 7)
 		if err != nil {
@@ -259,9 +257,9 @@ func readMPT3Temperatures(ctx context.Context, controllers []int) ([]sensors.HBA
 		if err != nil {
 			return nil, fmt.Errorf("mpt3ctl IOC %d temperature: %w", ioc, err)
 		}
-		readings = append(readings, sensors.HBA{Name: fmt.Sprintf("hba%d", ioc), Temp: temperature})
+		temperatures[ioc] = temperature
 	}
-	return readings, nil
+	return temperatures, nil
 }
 
 func parseMPT3PCIAddress(info []byte) string {

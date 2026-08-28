@@ -7,11 +7,8 @@ import (
 	"fmt"
 	"math"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
-
-	"unraid-vsock-sensors/internal/sensors"
 )
 
 func runStorCLI(ctx context.Context, operation string, args ...string) ([]byte, error) {
@@ -30,7 +27,7 @@ func runStorCLI(ctx context.Context, operation string, args ...string) ([]byte, 
 	return out, nil
 }
 
-func readStorCLITemperatures(ctx context.Context, _ []int) ([]sensors.HBA, error) {
+func readStorCLITemperatures(ctx context.Context, _ []int) (map[int]float64, error) {
 	out, err := runStorCLI(ctx, "temperature", "/cALL", "show", "temperature", "J", "nolog")
 	if err != nil {
 		return nil, err
@@ -105,7 +102,10 @@ func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
 		sas := firstHBAValue(d.Basics.SASAddress, d.SASAddress)
 		pci := normalizePCIAddress(firstHBAValue(d.Basics.PCIAddress, d.PCIAddress))
 		model := firstHBAValue(d.Basics.Model, d.Basics.ProductName, d.Model, d.Product)
-		id := hbaStableID(number, serial, sas, pci)
+		id := hbaStableID(serial, sas, pci)
+		if id == "" {
+			return nil, fmt.Errorf("storcli controller %d has no stable identity", number)
+		}
 		if previous, duplicate := ids[id]; duplicate {
 			return nil, fmt.Errorf("storcli controllers %d and %d have duplicate identity %q", previous, number, id)
 		}
@@ -126,7 +126,7 @@ func firstHBAValue(values ...string) string {
 	return ""
 }
 
-func hbaStableID(controller int, serial, sasAddress, pciAddress string) string {
+func hbaStableID(serial, sasAddress, pciAddress string) string {
 	if serial = firstHBAValue(serial); serial != "" {
 		return "serial:" + strings.ToLower(serial)
 	}
@@ -136,7 +136,7 @@ func hbaStableID(controller int, serial, sasAddress, pciAddress string) string {
 	if pciAddress != "" {
 		return "pci:" + pciAddress
 	}
-	return fmt.Sprintf("controller:%d", controller)
+	return ""
 }
 
 func normalizePCIAddress(address string) string {
@@ -158,7 +158,7 @@ func normalizePCIAddress(address string) string {
 	return fmt.Sprintf("%04x:%02x:%02x.%x", values[0], values[1], values[2], values[3])
 }
 
-func parseStorCLI(data []byte) ([]sensors.HBA, error) {
+func parseStorCLI(data []byte) (map[int]float64, error) {
 	var root struct {
 		Controllers []struct {
 			CommandStatus struct {
@@ -179,7 +179,7 @@ func parseStorCLI(data []byte) ([]sensors.HBA, error) {
 	if len(root.Controllers) == 0 {
 		return nil, errNoHBA
 	}
-	var readings []sensors.HBA
+	temperatures := make(map[int]float64, len(root.Controllers))
 	for _, controller := range root.Controllers {
 		id := controller.CommandStatus.Controller
 		if controller.CommandStatus.Status != "Success" {
@@ -194,13 +194,12 @@ func parseStorCLI(data []byte) ([]sensors.HBA, error) {
 			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) || temp < 0 || temp > 150 {
 				return nil, fmt.Errorf("storcli controller %d invalid temperature %q", id, property.Value)
 			}
-			readings, found = append(readings, sensors.HBA{Name: fmt.Sprintf("hba%d", id), Temp: temp}), true
+			temperatures[id], found = temp, true
 			break
 		}
 		if !found {
 			return nil, fmt.Errorf("storcli controller %d has no ROC temperature", id)
 		}
 	}
-	sort.Slice(readings, func(i, j int) bool { return readings[i].Name < readings[j].Name })
-	return readings, nil
+	return temperatures, nil
 }

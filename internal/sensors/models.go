@@ -50,10 +50,9 @@ func (d Disk) IsExternal() bool {
 	return strings.EqualFold(d.Transport, "usb")
 }
 
-// HBA describes a host bus adapter and its latest temperature.
+// HBA describes a host bus adapter by its backend-independent stable identity.
 type HBA struct {
 	ID         string  `json:"id"`
-	Name       string  `json:"name"`
 	Model      string  `json:"model,omitempty"`
 	PCIAddress string  `json:"pci_address,omitempty"`
 	Temp       float64 `json:"temp_c"`

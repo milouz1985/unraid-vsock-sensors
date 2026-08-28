@@ -22,7 +22,7 @@ func TestMakeHWMonReadings(t *testing.T) {
 			{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 45},
 			{ID: "4", Name: "external", Device: "sdc", Transport: "usb", Rotational: true, Temp: 60},
 		},
-		HBAs: []sensors.HBA{{Name: "hba0", Temp: 51}},
+		HBAs: []sensors.HBA{{ID: "sas:1234", Model: "SAS3008", PCIAddress: "0000:06:10.0", Temp: 51}},
 	}
 
 	disks, hbas := makeHWMonReadings(state)
@@ -32,7 +32,7 @@ func TestMakeHWMonReadings(t *testing.T) {
 		{id: "disk:2", label: "disk2 (sdb)", temperature: 38},
 		{id: "disk:3", label: "cache (nvme0n1)", temperature: 45},
 	}
-	wantHBAs := []hwmonReading{{id: "hba:hba0", label: "hba0", temperature: 51}}
+	wantHBAs := []hwmonReading{{id: "hba:sas:1234", label: "SAS3008 (0000:06:10.0)", temperature: 51}}
 	if !reflect.DeepEqual(disks, wantDisks) {
 		t.Fatalf("disk readings = %#v, want %#v", disks, wantDisks)
 	}
@@ -190,7 +190,7 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
 		return sensors.Response{
 			Error: "disks.ini failed",
-			HBAs:  []sensors.HBA{{Name: "hba0", Temp: 51}},
+			HBAs:  []sensors.HBA{{ID: "sas:1234", Temp: 51}},
 		}, nil
 	}
 	_, err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, path, fetch)
@@ -204,7 +204,7 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if got, want := string(data), "hba:hba0\t51000\thba0\nconfigure\thba\n"; got != want {
+	if got, want := string(data), "hba:sas:1234\t51000\tsas:1234\nconfigure\thba\n"; got != want {
 		t.Fatalf("HBA snapshot = %q, want %q", got, want)
 	}
 }

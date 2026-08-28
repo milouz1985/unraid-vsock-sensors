@@ -249,9 +249,12 @@ ou du backend HBA. Seul le mode HBA explicitement `disabled` autorise un inventa
 HBA vide.
 
 L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
-pour un disque, puis SAS WWID ou adresse PCI pour un HBA. Le label est une
-information d'affichage conservée tant que l'ID
-reste présent.
+pour un disque, puis numéro de série, SAS WWID ou adresse PCI pour un HBA. Les
+indices locaux tels que l'IOC mpt3ctl ou le contrôleur StorCLI `/c0` servent
+uniquement à associer une lecture à sa découverte dans un même relevé : ils ne
+sont exposés ni dans le JSON, ni dans les sélecteurs, ni dans le cache hwmon.
+Le label HBA est construit à partir du modèle et de l'adresse PCI, avec l'ID
+stable comme repli, puis conservé tant que cet ID reste présent.
 
 Pendant l'exécution :
 
@@ -302,7 +305,7 @@ Un disque ou un HBA peut être interrogé explicitement :
 ```sh
 unraid-vsock-sensors get --cid 3 --port 990 disk disk1
 unraid-vsock-sensors get --cid 3 --port 990 disk sdb
-unraid-vsock-sensors get --cid 3 --port 990 hba hba0
+unraid-vsock-sensors get --cid 3 --port 990 hba sas:500605b00abc1234
 ```
 
 Ces commandes écrivent uniquement un nombre en degrés Celsius et conviennent à

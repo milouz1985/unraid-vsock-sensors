@@ -121,16 +121,16 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 		})
 	}
 	for _, hba := range state.HBAs {
-		id := hba.ID
-		if id == "" {
-			id = hba.Name
-		}
-		label := hba.Name
-		if hba.Model != "" {
-			label += " (" + hba.Model + ")"
+		label := hba.ID
+		if hba.Model != "" && hba.PCIAddress != "" {
+			label = fmt.Sprintf("%s (%s)", hba.Model, hba.PCIAddress)
+		} else if hba.Model != "" {
+			label = hba.Model
+		} else if hba.PCIAddress != "" {
+			label = hba.PCIAddress
 		}
 		hbaReadings = append(hbaReadings, hwmonReading{
-			id:          "hba:" + id,
+			id:          "hba:" + hba.ID,
 			label:       label,
 			temperature: hba.Temp,
 		})

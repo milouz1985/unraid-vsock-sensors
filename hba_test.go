@@ -72,7 +72,7 @@ func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
 		close(started)
 		<-release
-		return []sensors.HBA{{Name: "hba0", Temp: 42}}, nil
+		return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
 	}
 	done := make(chan struct{})
 	go func() { collector.refresh(context.Background()); close(done) }()
@@ -90,7 +90,7 @@ func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 
 func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 	collector := newHBACollector(time.Minute, hbaModeEnabled)
-	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) { return []sensors.HBA{{Name: "hba0", Temp: 42}}, nil }
+	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) { return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil }
 	collector.refresh(context.Background())
 	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) { return nil, errors.New("failed") }
 	collector.refresh(context.Background())
@@ -121,11 +121,11 @@ func TestHBAReaderCachesDiscovery(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{2: {id: "sas:1234", model: "SAS3008"}}, nil
 		},
-		readTemperatures: func(_ context.Context, controllers []int) ([]sensors.HBA, error) {
+		readTemperatures: func(_ context.Context, controllers []int) (map[int]float64, error) {
 			if len(controllers) != 1 || controllers[0] != 2 {
 				t.Fatalf("controllers = %v", controllers)
 			}
-			return []sensors.HBA{{Name: "hba2", Temp: 51}}, nil
+			return map[int]float64{2: 51}, nil
 		},
 	}}
 	for range 2 {
@@ -208,7 +208,7 @@ func TestParseMPT3Temperature(t *testing.T) {
 func TestParseStorCLI(t *testing.T) {
 	data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"}]}}]}`)
 	readings, err := parseStorCLI(data)
-	if err != nil || len(readings) != 1 || readings[0].Temp != 49 {
+	if err != nil || len(readings) != 1 || readings[0] != 49 {
 		t.Fatalf("got %#v, %v", readings, err)
 	}
 	bad := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"255"}]}}]}`)
@@ -217,12 +217,19 @@ func TestParseStorCLI(t *testing.T) {
 	}
 }
 
+func TestStorCLIDiscoveryRequiresStableIdentity(t *testing.T) {
+	data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Model":"SAS3008"}}]}`)
+	if _, err := parseStorCLIMetadata(data); err == nil {
+		t.Fatal("StorCLI controller without stable identity accepted")
+	}
+}
+
 func TestSelectHBAs(t *testing.T) {
-	hbas := []sensors.HBA{{Name: "hba0", Temp: 40}, {Name: "hba1", Temp: 50}}
+	hbas := []sensors.HBA{{ID: "sas:1234", Temp: 40}, {ID: "pci:0000:06:10.0", Temp: 50}}
 	if got := selectHBAs(hbas, "all"); len(got) != 2 {
 		t.Fatalf("all = %#v", got)
 	}
-	if got := selectHBAs(hbas, "hba1"); len(got) != 1 || got[0].Temp != 50 {
-		t.Fatalf("hba1 = %#v", got)
+	if got := selectHBAs(hbas, "PCI:0000:06:10.0"); len(got) != 1 || got[0].Temp != 50 {
+		t.Fatalf("PCI selector = %#v", got)
 	}
 }

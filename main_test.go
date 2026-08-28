@@ -66,9 +66,9 @@ func TestServerResponseReportsDisabledHBACollection(t *testing.T) {
 }
 
 func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {
-	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{Name: "hba0", Temp: 46}}}
+	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{ID: "sas:1234", Temp: 46}}}
 	var out bytes.Buffer
-	if err := writeResponse(&out, r, sensorTypeHBA, "hba0"); err != nil {
+	if err := writeResponse(&out, r, sensorTypeHBA, "sas:1234"); err != nil {
 		t.Fatal(err)
 	}
 	if got := out.String(); got != "46\n" {
@@ -77,7 +77,7 @@ func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {
 }
 
 func TestDiskSelectorStillReturnsDiskError(t *testing.T) {
-	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{Name: "hba0", Temp: 46}}}
+	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{ID: "sas:1234", Temp: 46}}}
 	if err := writeResponse(&bytes.Buffer{}, r, sensorTypeDisk, "hdd"); err == nil || err.Error() != r.Error {
 		t.Fatalf("got %v, want disk error", err)
 	}

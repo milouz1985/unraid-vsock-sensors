@@ -108,7 +108,7 @@ Sensor types:
 
 Selectors:
   disk: hdd, ssd, nvme, all, disk name, or device name
-  hba:  all or sensor name (for example hba0)
+  hba:  all or stable controller ID (for example sas:500605b00abc1234)
 
 Examples:
   %[1]s serve --port 990

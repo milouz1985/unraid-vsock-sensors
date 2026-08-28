@@ -46,7 +46,9 @@ Le pilote expose au maximum deux périphériques hwmon :
 
 Chaque sonde correspond à un canal `tempN_input` accompagné de
 `tempN_label`. Les ID stables restent internes au protocole ; sysfs expose le
-label configuré au démarrage.
+label configuré au démarrage. Pour un HBA, ce label utilise le modèle et
+l'adresse PCI lorsqu'ils sont disponibles. Les indices locaux IOC et StorCLI
+ne font pas partie de l'identité publiée.
 
 ## Inventaire persistant et failsafe
 
