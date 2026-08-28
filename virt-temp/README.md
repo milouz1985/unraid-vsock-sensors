@@ -124,9 +124,10 @@ apt install "proxmox-headers-$(uname -r)" \
   ./unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
 ```
 
-Le `postinst` compile le module par DKMS, le signe lorsque DKMS est configuré
-pour le faire, charge `virt_temp`, démarre le service et retire les anciennes
-versions DKMS seulement après la réussite de la nouvelle installation.
+Lors d'une mise à jour, le `prerm` retire l'enregistrement DKMS de la version
+installée avant que `dpkg` supprime ses sources versionnées. Le `postinst`
+enregistre ensuite les nouvelles sources, compile le module, le signe lorsque
+DKMS est configuré pour le faire, charge `virt_temp` et démarre le service.
 L'unité exécute également `modprobe virt_temp` avant chaque démarrage : elle ne
 peut donc plus rester active sans `/dev/virt-temp` après un reboot.
 

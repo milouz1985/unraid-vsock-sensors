@@ -49,27 +49,6 @@ modprobe virt_temp
 systemctl daemon-reload
 systemctl enable --now "$service"
 
-# Keep only the DKMS release owned by the installed Debian package. This runs
-# after the new module is active so a failed upgrade leaves the old one usable.
-dkms status -m "$module" 2>/dev/null \
-    | sed -n "s|^$module/\([^,:]*\).*|\1|p" \
-    | sort -u \
-    | while IFS= read -r previous_version; do
-        [ "$previous_version" = "$version" ] && continue
-        if ! printf '%s\n' "$previous_version" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z.+~-]*$'; then
-            echo "Version DKMS invalide ignorée : $previous_version" >&2
-            continue
-        fi
-        if ! dkms remove -m "$module" -v "$previous_version" --all; then
-            # DKMS refuses to remove an entry whose /usr/src link has already
-            # disappeared. The replacement is active, so discard only this
-            # validated stale registry entry instead of failing the upgrade.
-            echo "Nettoyage forcé de l'entrée DKMS cassée $module/$previous_version." >&2
-            rm -rf -- "/var/lib/dkms/$module/$previous_version"
-        fi
-        rm -rf -- "/usr/src/$module-$previous_version"
-    done
-
 if [ ! -c /dev/virt-temp ]; then
     echo "Le module est chargé, mais /dev/virt-temp reste introuvable." >&2
     exit 1

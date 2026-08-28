@@ -6,6 +6,13 @@ version="@VERSION@"
 service="unraid-vsock-hwmon.service"
 
 case "$1" in
+    upgrade)
+        # Remove the DKMS registration while its versioned sources still
+        # exist. dpkg removes the old /usr/src directory during unpacking.
+        if dkms status -m "$module" -v "$version" 2>/dev/null | grep -Fq "$module/$version"; then
+            dkms remove -m "$module" -v "$version" --all
+        fi
+        ;;
     remove|deconfigure)
         systemctl disable --now "$service" 2>/dev/null || true
         if grep -q '^virt_temp ' /proc/modules; then
