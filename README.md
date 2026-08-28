@@ -314,7 +314,7 @@ apt purge unraid-vsock-sensors-hwmon
 
 ## Compiler et tester
 
-Go 1.25 ou plus récent est nécessaire sur la machine de développement.
+Go 1.27.0 ou plus récent est nécessaire sur la machine de développement.
 
 ```sh
 make check          # exécute go vet et go test

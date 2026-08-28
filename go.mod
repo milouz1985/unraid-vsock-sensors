@@ -1,6 +1,6 @@
 module unraid-vsock-sensors
 
-go 1.25.0
+go 1.27.0
 
 require (
 	github.com/mdlayher/socket v0.6.0
