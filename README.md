@@ -74,19 +74,26 @@ Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 - **VSOCK port** : `990` ;
 - **HBA monitoring** : `enabled` si un HBA compatible est disponible, sinon
   `disabled` ;
-- **HBA backend** : `Automatic` préfère l'accès natif puis essaie StorCLI ;
-- **mpt3ctl refresh interval** : `15 seconds` ;
-- **StorCLI refresh interval** : `30 seconds`.
+- **HBA backend** : `Native /dev/mpt3ctl` pour un contrôleur `mpt3sas`, ou
+  `StorCLI` lorsque cet utilitaire est installé ;
+- **HBA refresh interval** : `15 seconds` avec `mpt3ctl` ou `30 seconds` avec
+  StorCLI.
 
 Le serveur lit directement `/dev/mpt3ctl` pour les contrôleurs gérés par
-`mpt3sas` : aucun utilitaire supplémentaire n'est nécessaire. Si aucun IOC
-`mpt3sas` n'est trouvé, une installation existante de StorCLI peut servir de
-repli pour les contrôleurs qu'il prend en charge. Le mode `disabled` ne consulte
-aucun contrôleur. La sélection explicite de `mpt3ctl` ou `storcli` désactive le
-repli. Le mode automatique utilise l'intervalle StorCLI, plus conservateur. Une
-ancienne valeur `auto` de `HBA_MODE` est interprétée comme `enabled` et l'ancienne
-clé générique `HBA_INTERVAL` est conservée comme intervalle StorCLI lors d'une
-mise à niveau.
+`mpt3sas` : aucun utilitaire supplémentaire n'est nécessaire. Le backend
+StorCLI exige que la commande `storcli` soit installée, directement avec son
+paquet ou avec le plugin Unraid
+[`storcli64`](https://forums.unraid.net/topic/192112-plugin-storcli64/). Aucun
+repli automatique n'est effectué : une erreur du backend sélectionné est
+signalée telle quelle. Le mode `disabled` ne consulte aucun contrôleur. Une
+ancienne valeur `auto` de `HBA_MODE` est interprétée comme `enabled`.
+
+Le backend `/dev/mpt3ctl` doit être considéré comme **expérimental**. Son
+implémentation suit l'ABI et les structures du pilote `mpt3sas` du noyau Linux
+upstream. Elle est utilisée en production par l'auteur sur un LSI SAS3008 avec
+le pilote `mpt3sas` 54.100.00.00, mais n'a pas encore été validée sur un large
+éventail de contrôleurs, de firmwares et de versions du pilote. StorCLI reste
+donc disponible comme alternative explicite.
 
 Vérification depuis le terminal Unraid :
 
@@ -275,8 +282,9 @@ strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
 Fahrenheit sont converties puis validées dans la plage `0..150 °C`. La
 découverte lit séparément les pages de fabrication pour obtenir le modèle et
 l'adresse SAS stable. Le serveur actualise ce cache en arrière-plan ; les
-requêtes VSOCK n'attendent jamais une commande du contrôleur. StorCLI n'est
-utilisé qu'en repli lorsqu'aucun IOC `mpt3sas` n'est disponible.
+requêtes VSOCK n'attendent jamais une commande du contrôleur. Lorsque le backend
+StorCLI est sélectionné, la température ROC fournie par sa sortie JSON est
+utilisée à la place.
 
 ## Utilisation en ligne de commande
 

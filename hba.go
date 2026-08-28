@@ -34,52 +34,35 @@ type hbaBackend struct {
 type hbaBackendMode string
 
 const (
-	hbaBackendAuto    hbaBackendMode = "auto"
 	hbaBackendMPT3CTL hbaBackendMode = "mpt3ctl"
 	hbaBackendStorCLI hbaBackendMode = "storcli"
 )
 
 type hbaReader struct {
 	metadata map[int]hbaMetadata
-	backend  *hbaBackend
-	backends []hbaBackend
+	backend  hbaBackend
 }
 
 func newHBAReader() *hbaReader {
-	return newHBAReaderForBackend(hbaBackendAuto)
+	return newHBAReaderForBackend(hbaBackendMPT3CTL)
 }
 
 func newHBAReaderForBackend(mode hbaBackendMode) *hbaReader {
-	backends := []hbaBackend{
-		{name: "mpt3ctl", discover: discoverMPT3HBAs, readTemperatures: readMPT3Temperatures},
-		{name: "storcli", discover: discoverStorCLIHBAs, readTemperatures: readStorCLITemperatures},
-	}
+	backend := hbaBackend{name: "mpt3ctl", discover: discoverMPT3HBAs, readTemperatures: readMPT3Temperatures}
 	switch mode {
-	case hbaBackendMPT3CTL:
-		backends = backends[:1]
 	case hbaBackendStorCLI:
-		backends = backends[1:]
+		backend = hbaBackend{name: "storcli", discover: discoverStorCLIHBAs, readTemperatures: readStorCLITemperatures}
 	}
-	return &hbaReader{backends: backends}
+	return &hbaReader{backend: backend}
 }
 
 func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
-	if r.backend == nil {
-		var unavailable []error
-		for i := range r.backends {
-			metadata, err := r.backends[i].discover(ctx)
-			if err == nil {
-				r.backend, r.metadata = &r.backends[i], metadata
-				break
-			}
-			if !errors.Is(err, errHBABackendUnavailable) && !errors.Is(err, errNoHBA) {
-				return nil, err
-			}
-			unavailable = append(unavailable, fmt.Errorf("%s: %w", r.backends[i].name, err))
+	if r.metadata == nil {
+		metadata, err := r.backend.discover(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%s discovery: %w", r.backend.name, err)
 		}
-		if r.backend == nil {
-			return nil, fmt.Errorf("no HBA backend found: %w", errors.Join(unavailable...))
-		}
+		r.metadata = metadata
 	}
 	controllers := make([]int, 0, len(r.metadata))
 	for controller := range r.metadata {
@@ -131,7 +114,7 @@ var (
 )
 
 func newHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
-	return newConfiguredHBACollector(interval, mode, hbaBackendAuto)
+	return newConfiguredHBACollector(interval, mode, hbaBackendMPT3CTL)
 }
 
 func newConfiguredHBACollector(interval time.Duration, mode hbaMode, backend hbaBackendMode) *hbaCollector {

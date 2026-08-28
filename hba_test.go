@@ -68,22 +68,20 @@ func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {
 	}
 }
 
-func TestHBAReaderSelectsAndCachesBackend(t *testing.T) {
-	nativeDiscoveries, fallbackDiscoveries := 0, 0
-	reader := &hbaReader{backends: []hbaBackend{
-		{name: "native", discover: func(context.Context) (map[int]hbaMetadata, error) {
-			nativeDiscoveries++
-			return nil, errHBABackendUnavailable
-		}},
-		{name: "fallback", discover: func(context.Context) (map[int]hbaMetadata, error) {
-			fallbackDiscoveries++
+func TestHBAReaderCachesDiscovery(t *testing.T) {
+	discoveries := 0
+	reader := &hbaReader{backend: hbaBackend{
+		name: "test",
+		discover: func(context.Context) (map[int]hbaMetadata, error) {
+			discoveries++
 			return map[int]hbaMetadata{2: {id: "sas:1234", model: "SAS3008"}}, nil
-		}, readTemperatures: func(_ context.Context, controllers []int) ([]sensors.HBA, error) {
+		},
+		readTemperatures: func(_ context.Context, controllers []int) ([]sensors.HBA, error) {
 			if len(controllers) != 1 || controllers[0] != 2 {
 				t.Fatalf("controllers = %v", controllers)
 			}
 			return []sensors.HBA{{Name: "hba2", Temp: 51}}, nil
-		}},
+		},
 	}}
 	for range 2 {
 		readings, err := reader.collect(context.Background())
@@ -91,33 +89,19 @@ func TestHBAReaderSelectsAndCachesBackend(t *testing.T) {
 			t.Fatalf("readings %#v, error %v", readings, err)
 		}
 	}
-	if nativeDiscoveries != 1 || fallbackDiscoveries != 1 {
-		t.Fatalf("discovery counts = %d, %d", nativeDiscoveries, fallbackDiscoveries)
+	if discoveries != 1 {
+		t.Fatalf("discovery count = %d", discoveries)
 	}
 }
 
-func TestHBAReaderDoesNotMaskNativeFailure(t *testing.T) {
-	fallbackCalled := false
-	reader := &hbaReader{backends: []hbaBackend{
-		{name: "native", discover: func(context.Context) (map[int]hbaMetadata, error) { return nil, errors.New("permission denied") }},
-		{name: "fallback", discover: func(context.Context) (map[int]hbaMetadata, error) { fallbackCalled = true; return nil, nil }},
-	}}
-	if _, err := reader.collect(context.Background()); err == nil {
-		t.Fatal("expected native failure")
-	}
-	if fallbackCalled {
-		t.Fatal("a real native error was masked by fallback")
-	}
-}
-
-func TestExplicitHBABackendDisablesFallback(t *testing.T) {
+func TestExplicitHBABackendSelection(t *testing.T) {
 	reader := newHBAReaderForBackend(hbaBackendMPT3CTL)
-	if len(reader.backends) != 1 || reader.backends[0].name != "mpt3ctl" {
-		t.Fatalf("mpt3ctl backends = %#v", reader.backends)
+	if reader.backend.name != "mpt3ctl" {
+		t.Fatalf("mpt3ctl backend = %#v", reader.backend)
 	}
 	reader = newHBAReaderForBackend(hbaBackendStorCLI)
-	if len(reader.backends) != 1 || reader.backends[0].name != "storcli" {
-		t.Fatalf("storcli backends = %#v", reader.backends)
+	if reader.backend.name != "storcli" {
+		t.Fatalf("storcli backend = %#v", reader.backend)
 	}
 }
 
@@ -169,7 +153,7 @@ func TestParseMPT3Temperature(t *testing.T) {
 	}
 }
 
-func TestParseStorCLIStillAvailableAsFallback(t *testing.T) {
+func TestParseStorCLI(t *testing.T) {
 	data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"}]}}]}`)
 	readings, err := parseStorCLI(data)
 	if err != nil || len(readings) != 1 || readings[0].Temp != 49 {
