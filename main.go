@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	defaultPort    = 19090
+	defaultPort    = 990
 	requestTimeout = 3 * time.Second
 )
 
@@ -81,19 +81,19 @@ Commands:
 
 Serve options:
   --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
-  --port PORT               AF_VSOCK port (default: 19090)
+  --port PORT               AF_VSOCK port (default: 990)
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --storcli-interval DURATION
                             Delay between StorCLI refreshes (default: 30s)
 
 Get options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
-  --port PORT               AF_VSOCK port (default: 19090)
+  --port PORT               AF_VSOCK port (default: 990)
   --json                    Print the complete JSON response
 
 Hwmon options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
-  --port PORT               AF_VSOCK port (default: 19090)
+  --port PORT               AF_VSOCK port (default: 990)
   --interval DURATION       Delay between updates (default: 1s)
   --device PATH             virt-temp control device (default: /dev/virt-temp)
   --cache PATH              Persistent hwmon inventory cache

@@ -7,7 +7,7 @@ pid_file="/var/run/$name.pid"
 log_file="/var/log/$name.log"
 
 load_config() {
-    PORT="19090"
+    PORT="990"
     HBA_MODE="enabled"
     STORCLI_INTERVAL="30s"
 

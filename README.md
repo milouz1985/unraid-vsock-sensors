@@ -35,7 +35,7 @@ Deux composants utilisent le même binaire :
   module noyau DKMS `virt-temp`.
 
 Le CID VSOCK et le port doivent être identiques des deux côtés. Les exemples
-ci-dessous utilisent le CID `3` et le port `19090`, qui sont aussi les valeurs
+ci-dessous utilisent le CID `3` et le port `990`, qui sont aussi les valeurs
 par défaut.
 
 ## Installation
@@ -71,7 +71,7 @@ https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin
 
 Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 
-- **VSOCK port** : `19090` ;
+- **VSOCK port** : `990` ;
 - **HBA monitoring** : `enabled` si StorCLI et un HBA compatible sont
   disponibles, sinon `disabled` ;
 - **StorCLI refresh interval** : `30 seconds` convient généralement.
@@ -128,7 +128,7 @@ Le fichier `/etc/default/unraid-vsock-hwmon` contient :
 
 ```sh
 UNRAID_VSOCK_CID=3
-UNRAID_VSOCK_PORT=19090
+UNRAID_VSOCK_PORT=990
 UNRAID_VSOCK_INTERVAL=1s
 UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 # UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
@@ -188,7 +188,7 @@ Résultats attendus :
 Pour afficher directement l'inventaire reçu sans passer par le module :
 
 ```sh
-unraid-vsock-sensors get --cid 3 --port 19090 --json
+unraid-vsock-sensors get --cid 3 --port 990 --json
 ```
 
 ## Sondes publiées
@@ -271,18 +271,18 @@ jamais l'exécution de StorCLI.
 Les sélecteurs de groupe retournent la température maximale :
 
 ```sh
-unraid-vsock-sensors get --cid 3 --port 19090 disk hdd
-unraid-vsock-sensors get --cid 3 --port 19090 disk ssd
-unraid-vsock-sensors get --cid 3 --port 19090 disk nvme
-unraid-vsock-sensors get --cid 3 --port 19090 hba all
+unraid-vsock-sensors get --cid 3 --port 990 disk hdd
+unraid-vsock-sensors get --cid 3 --port 990 disk ssd
+unraid-vsock-sensors get --cid 3 --port 990 disk nvme
+unraid-vsock-sensors get --cid 3 --port 990 hba all
 ```
 
 Un disque ou un HBA peut être interrogé explicitement :
 
 ```sh
-unraid-vsock-sensors get --cid 3 --port 19090 disk disk1
-unraid-vsock-sensors get --cid 3 --port 19090 disk sdb
-unraid-vsock-sensors get --cid 3 --port 19090 hba hba0
+unraid-vsock-sensors get --cid 3 --port 990 disk disk1
+unraid-vsock-sensors get --cid 3 --port 990 disk sdb
+unraid-vsock-sensors get --cid 3 --port 990 hba hba0
 ```
 
 Ces commandes écrivent uniquement un nombre en degrés Celsius et conviennent à

@@ -5,7 +5,7 @@ After=systemd-modules-load.service
 [Service]
 Type=simple
 Environment=UNRAID_VSOCK_CID=3
-Environment=UNRAID_VSOCK_PORT=19090
+Environment=UNRAID_VSOCK_PORT=990
 Environment=UNRAID_VSOCK_INTERVAL=1s
 Environment=UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 Environment=UNRAID_VSOCK_RESTART_UNITS=
