@@ -347,6 +347,49 @@ make all            # exécute tous les contrôles et construit tous les artefac
 Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
 commit courant n'est pas exactement tagué.
 
+### Tester manuellement un paquet Unraid de développement
+
+Pour tester rapidement une modification sur une machine où le plugin a déjà
+été installé, construire le paquet :
+
+```sh
+make unraid-package
+```
+
+La version et le nom du paquet sont dérivés automatiquement de l'état de Git.
+La commande affiche le chemin exact du `.txz` produit. Copier ce fichier sur
+Unraid en conservant son nom, utilisé par `upgradepkg` pour identifier sa
+version :
+
+```sh
+scp dist/<nom-du-paquet-affiché>.txz root@NAS:/tmp/
+```
+
+Puis arrêter le service, réinstaller le paquet et le redémarrer depuis Unraid :
+
+```sh
+/etc/rc.d/rc.unraid-vsock-sensors stop
+upgradepkg --install-new --reinstall \
+  /tmp/<nom-du-paquet-affiché>.txz
+/etc/rc.d/rc.unraid-vsock-sensors start
+```
+
+Cette opération remplace le binaire, la page Web et les scripts du plugin sans
+effacer la configuration persistante située dans
+`/boot/config/plugins/unraid-vsock-sensors/`.
+
+Cette méthode suppose que le plugin complet a déjà été installé au moyen de son
+fichier `.plg`. Installer uniquement le `.txz` ne l'enregistre pas dans le
+gestionnaire de plugins et ne garantit pas sa réinstallation après un
+redémarrage, puisque le système Unraid est chargé en mémoire. Pour valider une
+première installation ou le cycle de démarrage, utiliser un `.plg` dont l'URL
+de paquet pointe vers le `.txz` de développement.
+
+La construction régénère également le fichier suivi
+`unraid-plugin/unraid-vsock-sensors.plg`. Ne pas commiter ce descripteur pour
+une version `-dev` ; seul celui d'une version finale destinée à être publiée
+doit être conservé dans Git.
+
 ## Publier une release
 
 Partir d'un arbre propre, construire avec la version finale, commiter le `.plg`
