@@ -349,6 +349,13 @@ func (publisher *hwmonPublisher) restore(device string) (bool, error) {
 	if err := decoder.Decode(&cached); err != nil {
 		return false, fmt.Errorf("decode %s: %w", publisher.cachePath, err)
 	}
+	// Decoder keeps its position after the first JSON value. A second decode must
+	// therefore reach EOF; otherwise the cache contains another value or trailing
+	// non-whitespace data that the first decode would silently leave unread.
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return false, fmt.Errorf("decode %s: unexpected data after inventory", publisher.cachePath)
+	}
 	if cached.Version != 1 {
 		return false, fmt.Errorf("unsupported cache version %d", cached.Version)
 	}
