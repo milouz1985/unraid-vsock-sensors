@@ -51,6 +51,8 @@ install -m 0644 "$script_dir/unraid-vsock-hwmon.service" \
     "$package_root/usr/lib/systemd/system/"
 install -m 0644 "$script_dir/README.md" \
     "$package_root/usr/share/doc/$package/README.md"
+install -m 0644 "$repo_dir/LICENSE" \
+    "$package_root/usr/share/doc/$package/copyright"
 install -m 0644 "$script_dir/default" \
     "$package_root/usr/share/$package/unraid-vsock-hwmon.default"
 printf 'virt-temp\n' > "$package_root/usr/lib/modules-load.d/virt-temp.conf"

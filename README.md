@@ -370,6 +370,32 @@ AF_VSOCK n'est pas un mécanisme d'authentification général. Le serveur accept
 uniquement le CID hôte standard `2`, une commande fixe `GET`, une requête limitée
 à 1 Kio et ne reçoit aucun chemin fourni par le client.
 
+## Références techniques et remerciements
+
+Le backend HBA natif s'appuie sur l'ABI publique du pilote Linux `mpt3sas` et
+sur les définitions MPI disponibles dans les sources du noyau, notamment
+[`mpt3sas_ctl.h`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpt3sas_ctl.h),
+[`mpt3sas_ctl.c`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpt3sas_ctl.c),
+[`mpi2_cnfg.h`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpi/mpi2_cnfg.h)
+et
+[`mpt3sas_hwmon.c`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpt3sas_hwmon.c).
+Ces références ont servi à implémenter les ioctl de `/dev/mpt3ctl`, les requêtes
+MPI CONFIG en lecture seule et le décodage de la température HBA.
+
+L'architecture consistant à publier sur l'hôte Proxmox une sonde `hwmon`
+virtuelle alimentée par les températures d'une VM a été inspirée par le projet
+GPL-2.0
+[`wxxsfxyzm/hdd-temp-monitor`](https://github.com/wxxsfxyzm/hdd-temp-monitor).
+Le présent projet étend cette idée avec AF_VSOCK, des inventaires dynamiques et
+persistants, plusieurs familles de sondes et une gestion explicite du failsafe.
+
+## Licence
+
+Ce projet est distribué selon les termes de la
+[GNU General Public License version 2 uniquement](LICENSE) (`GPL-2.0-only`).
+Cette licence est compatible avec celle du pilote Linux `mpt3sas`, du module
+`hwmon` du noyau et du projet `hdd-temp-monitor` cités ci-dessus.
+
 ## Développement assisté par IA
 
 Ce projet est vibecodé : une part importante du code et de la documentation a

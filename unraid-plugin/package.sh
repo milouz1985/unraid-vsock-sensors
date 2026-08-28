@@ -39,6 +39,8 @@ install -m 0644 "$plugin_dir/UnraidVsockSensors.page" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/UnraidVsockSensors.page"
 install -m 0644 "$plugin_dir/default.cfg" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/default.cfg"
+install -m 0644 "$repo_dir/LICENSE" \
+    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/LICENSE"
 install -m 0755 "$plugin_dir/service.sh" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/service.sh"
 install -m 0644 "$plugin_dir/slack-desc" "$stage_dir/install/slack-desc"

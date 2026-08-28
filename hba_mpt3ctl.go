@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
 // hba_mpt3ctl.go implements the read-only userspace side of the Linux mpt3sas
 // management ABI. It does not contain code extracted from LSIUtil or StorCLI.
 //
