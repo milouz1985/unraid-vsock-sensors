@@ -26,8 +26,10 @@ type hbaMetadata struct{ id, model, pciAddress string }
 
 type hbaBackend struct {
 	name             string
+	collect          func(context.Context) ([]sensors.HBA, error)
 	discover         func(context.Context) (map[int]hbaMetadata, error)
 	readTemperatures func(context.Context, []int) (map[int]float64, error)
+	metadataTTL      time.Duration
 }
 
 type hbaBackendMode string
@@ -38,8 +40,10 @@ const (
 )
 
 type hbaReader struct {
-	metadata map[int]hbaMetadata
-	backend  hbaBackend
+	metadata      map[int]hbaMetadata
+	lastDiscovery time.Time
+	backend       hbaBackend
+	now           func() time.Time
 }
 
 func newHBAReader() *hbaReader {
@@ -47,22 +51,53 @@ func newHBAReader() *hbaReader {
 }
 
 func newHBAReaderForBackend(mode hbaBackendMode) *hbaReader {
-	backend := hbaBackend{name: "mpt3ctl", discover: discoverMPT3HBAs, readTemperatures: readMPT3Temperatures}
+	backend := hbaBackend{name: "mpt3ctl", collect: readMPT3Snapshot}
 	switch mode {
 	case hbaBackendStorCLI:
-		backend = hbaBackend{name: "storcli", discover: discoverStorCLIHBAs, readTemperatures: readStorCLITemperatures}
+		backend = hbaBackend{
+			name: "storcli", discover: discoverStorCLIHBAs, readTemperatures: readStorCLITemperatures,
+			metadataTTL: 5 * time.Minute,
+		}
 	}
-	return &hbaReader{backend: backend}
+	return &hbaReader{backend: backend, now: time.Now}
 }
 
 func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
-	if r.metadata == nil {
-		metadata, err := r.backend.discover(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("%s discovery: %w", r.backend.name, err)
-		}
-		r.metadata = metadata
+	if r.backend.collect != nil {
+		return r.backend.collect(ctx)
 	}
+	freshDiscovery := false
+	if r.metadata == nil || r.now().Sub(r.lastDiscovery) >= r.backend.metadataTTL {
+		if err := r.discover(ctx); err != nil {
+			return nil, err
+		}
+		freshDiscovery = true
+	}
+	readings, err := r.read(ctx)
+	if err == nil {
+		return readings, nil
+	}
+	r.metadata = nil
+	if freshDiscovery {
+		return nil, err
+	}
+	if discoveryErr := r.discover(ctx); discoveryErr != nil {
+		return nil, errors.Join(err, discoveryErr)
+	}
+	return r.read(ctx)
+}
+
+func (r *hbaReader) discover(ctx context.Context) error {
+	metadata, err := r.backend.discover(ctx)
+	if err != nil {
+		return fmt.Errorf("%s discovery: %w", r.backend.name, err)
+	}
+	r.metadata = metadata
+	r.lastDiscovery = r.now()
+	return nil
+}
+
+func (r *hbaReader) read(ctx context.Context) ([]sensors.HBA, error) {
 	controllers := make([]int, 0, len(r.metadata))
 	for controller := range r.metadata {
 		controllers = append(controllers, controller)

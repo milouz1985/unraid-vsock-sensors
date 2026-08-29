@@ -256,9 +256,12 @@ HBA vide.
 
 L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
 pour un disque, puis numéro de série, SAS WWID ou adresse PCI pour un HBA. Les
-indices locaux tels que l'IOC mpt3ctl ou le contrôleur StorCLI `/c0` servent
-uniquement à associer une lecture à sa découverte dans un même relevé : ils ne
-sont exposés ni dans le JSON, ni dans les sélecteurs, ni dans le cache hwmon.
+indices locaux tels que l'IOC mpt3ctl ou le contrôleur StorCLI `/c0` ne sont
+exposés ni dans le JSON, ni dans les sélecteurs, ni dans le cache hwmon.
+`mpt3ctl` relit l'identité et la température dans chaque relevé. StorCLI met en
+cache la correspondance `/cN` pendant cinq minutes, puis la redécouvre ; une
+erreur de lecture invalide immédiatement ce cache et déclenche une unique
+redécouverte suivie d'une nouvelle tentative.
 Le label HBA est construit à partir du modèle et de l'adresse PCI, avec l'ID
 stable comme repli, puis conservé tant que cet ID reste présent.
 
@@ -295,12 +298,12 @@ est supérieur à cinq minutes, nul ou absent.
 
 La température HBA vient de IO Unit Page 7, lue avec des commandes MPI CONFIG
 strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
-Fahrenheit sont converties puis validées dans la plage `0..150 °C`. La
-découverte lit séparément les pages de fabrication pour obtenir le modèle et
-l'adresse SAS stable. Le serveur actualise ce cache en arrière-plan ; les
-requêtes VSOCK n'attendent jamais une commande du contrôleur. Lorsque le backend
-StorCLI est sélectionné, la température ROC fournie par sa sortie JSON est
-utilisée à la place.
+Fahrenheit sont converties puis validées dans la plage `0..150 °C`. Chaque
+collecte native lit aussi les pages de fabrication pour associer la température
+à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC. Le
+serveur actualise ce relevé en arrière-plan ; les requêtes VSOCK n'attendent
+jamais une commande du contrôleur. Lorsque le backend StorCLI est sélectionné,
+la température ROC fournie par sa sortie JSON est utilisée à la place.
 
 ## Utilisation en ligne de commande
 

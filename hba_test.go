@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 	"unsafe"
@@ -115,8 +116,10 @@ func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {
 
 func TestHBAReaderCachesDiscovery(t *testing.T) {
 	discoveries := 0
+	now := time.Unix(1000, 0)
 	reader := &hbaReader{backend: hbaBackend{
-		name: "test",
+		name:        "test",
+		metadataTTL: time.Minute,
 		discover: func(context.Context) (map[int]hbaMetadata, error) {
 			discoveries++
 			return map[int]hbaMetadata{2: {id: "sas:1234", model: "SAS3008"}}, nil
@@ -127,7 +130,7 @@ func TestHBAReaderCachesDiscovery(t *testing.T) {
 			}
 			return map[int]float64{2: 51}, nil
 		},
-	}}
+	}, now: func() time.Time { return now }}
 	for range 2 {
 		readings, err := reader.collect(context.Background())
 		if err != nil || len(readings) != 1 || readings[0].ID != "sas:1234" {
@@ -139,13 +142,62 @@ func TestHBAReaderCachesDiscovery(t *testing.T) {
 	}
 }
 
+func TestHBAReaderRefreshesExpiredMetadata(t *testing.T) {
+	discoveries := 0
+	now := time.Unix(1000, 0)
+	reader := &hbaReader{backend: hbaBackend{
+		name: "test", metadataTTL: time.Minute,
+		discover: func(context.Context) (map[int]hbaMetadata, error) {
+			discoveries++
+			return map[int]hbaMetadata{0: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
+		},
+		readTemperatures: func(context.Context, []int) (map[int]float64, error) {
+			return map[int]float64{0: 50}, nil
+		},
+	}, now: func() time.Time { return now }}
+	first, err := reader.collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	second, err := reader.collect(context.Background())
+	if err != nil || discoveries != 2 || first[0].ID == second[0].ID {
+		t.Fatalf("discoveries=%d first=%#v second=%#v err=%v", discoveries, first, second, err)
+	}
+}
+
+func TestHBAReaderRediscoversAndRetriesAfterReadError(t *testing.T) {
+	discoveries, reads := 0, 0
+	reader := &hbaReader{backend: hbaBackend{
+		name: "test", metadataTTL: time.Hour,
+		discover: func(context.Context) (map[int]hbaMetadata, error) {
+			discoveries++
+			return map[int]hbaMetadata{discoveries: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
+		},
+		readTemperatures: func(_ context.Context, controllers []int) (map[int]float64, error) {
+			reads++
+			if reads == 2 {
+				return nil, errors.New("controller changed")
+			}
+			return map[int]float64{controllers[0]: 51}, nil
+		},
+	}, now: time.Now}
+	if _, err := reader.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	readings, err := reader.collect(context.Background())
+	if err != nil || discoveries != 2 || reads != 3 || readings[0].ID != "sas:2" {
+		t.Fatalf("discoveries=%d reads=%d readings=%#v err=%v", discoveries, reads, readings, err)
+	}
+}
+
 func TestExplicitHBABackendSelection(t *testing.T) {
 	reader := newHBAReaderForBackend(hbaBackendMPT3CTL)
-	if reader.backend.name != "mpt3ctl" {
+	if reader.backend.name != "mpt3ctl" || reader.backend.collect == nil {
 		t.Fatalf("mpt3ctl backend = %#v", reader.backend)
 	}
 	reader = newHBAReaderForBackend(hbaBackendStorCLI)
-	if reader.backend.name != "storcli" {
+	if reader.backend.name != "storcli" || reader.backend.collect != nil || reader.backend.metadataTTL != 5*time.Minute {
 		t.Fatalf("storcli backend = %#v", reader.backend)
 	}
 }

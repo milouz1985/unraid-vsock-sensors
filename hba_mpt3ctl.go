@@ -38,9 +38,12 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"unraid-vsock-sensors/internal/sensors"
 )
 
 const (
@@ -197,13 +200,13 @@ func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, page
 	return page, nil
 }
 
-func discoverMPT3HBAs(ctx context.Context) (map[int]hbaMetadata, error) {
+func readMPT3Snapshot(ctx context.Context) ([]sensors.HBA, error) {
 	device, err := openMPT3()
 	if err != nil {
 		return nil, err
 	}
 	defer device.close()
-	metadata, identities := make(map[int]hbaMetadata), make(map[string]int)
+	readings, identities := make([]sensors.HBA, 0), make(map[string]int)
 	for ioc := 0; ioc <= mpt3MaxIOC; ioc++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -233,22 +236,7 @@ func discoverMPT3HBAs(ctx context.Context) (map[int]hbaMetadata, error) {
 		if previous, duplicate := identities[id]; duplicate {
 			return nil, fmt.Errorf("mpt3ctl IOCs %d and %d have duplicate identity %q", previous, ioc, id)
 		}
-		identities[id], metadata[ioc] = ioc, hbaMetadata{id: id, model: model, pciAddress: pci}
-	}
-	if len(metadata) == 0 {
-		return nil, errNoHBA
-	}
-	return metadata, nil
-}
-
-func readMPT3Temperatures(ctx context.Context, controllers []int) (map[int]float64, error) {
-	device, err := openMPT3()
-	if err != nil {
-		return nil, err
-	}
-	defer device.close()
-	temperatures := make(map[int]float64, len(controllers))
-	for _, ioc := range controllers {
+		identities[id] = ioc
 		page, err := device.readConfigPage(ctx, ioc, mpi2PageTypeIOUnit, 7)
 		if err != nil {
 			return nil, fmt.Errorf("mpt3ctl IOC %d temperature: %w", ioc, err)
@@ -257,9 +245,13 @@ func readMPT3Temperatures(ctx context.Context, controllers []int) (map[int]float
 		if err != nil {
 			return nil, fmt.Errorf("mpt3ctl IOC %d temperature: %w", ioc, err)
 		}
-		temperatures[ioc] = temperature
+		readings = append(readings, sensors.HBA{ID: id, Model: model, PCIAddress: pci, Temp: temperature})
 	}
-	return temperatures, nil
+	if len(readings) == 0 {
+		return nil, errNoHBA
+	}
+	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
+	return readings, nil
 }
 
 func parseMPT3PCIAddress(info []byte) string {
