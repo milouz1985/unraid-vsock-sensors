@@ -41,7 +41,7 @@ func TestMakeHWMonReadings(t *testing.T) {
 	}
 }
 
-func TestGroupMaximumIgnoresUnavailableDisk(t *testing.T) {
+func TestUnavailableDiskFailsSafeItsGroup(t *testing.T) {
 	state := sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
 		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
@@ -53,20 +53,20 @@ func TestGroupMaximumIgnoresUnavailableDisk(t *testing.T) {
 	for _, reading := range readings {
 		byID[reading.id] = reading
 	}
-	if !byID["disk:2"].unavailable {
-		t.Error("disk:2 should be unavailable")
+	if got := byID["disk:2"].temperature; got != hwmonFailsafeTemp {
+		t.Errorf("disk:2 = %v, want failsafe", got)
 	}
 	for _, id := range []string{"disk:1", "disk:3", "disk:4", "disk:group:hdd", "disk:group:nvme"} {
 		if byID[id].unavailable {
 			t.Errorf("%s should remain available", id)
 		}
 	}
-	if got := byID["disk:group:hdd"].temperature; got != 34 {
-		t.Errorf("HDD maximum = %v, want available disk temperature 34", got)
+	if got := byID["disk:group:hdd"].temperature; got != hwmonFailsafeTemp {
+		t.Errorf("HDD maximum = %v, want failsafe", got)
 	}
 }
 
-func TestPublisherSkipsUnavailableDiskButUpdatesItsGroup(t *testing.T) {
+func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "virt-temp")
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
@@ -95,23 +95,24 @@ func TestPublisherSkipsUnavailableDiskButUpdatesItsGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "disk:group:hdd\t35000\tHDD maximum\n" +
+	want := "disk:group:hdd\t100000\tHDD maximum\n" +
 		"disk:1\t35000\tdisk1 (sda)\n" +
+		"disk:2\t100000\tdisk2 (sdb)\n" +
 		"disk:3\t46000\tcache (nvme0n1)\n" +
 		"commit\tdisk\n"
 	if got := string(data); got != want {
-		t.Fatalf("update = %q, want healthy channels and partial maximum %q", got, want)
+		t.Fatalf("update = %q, want explicit disk and group failsafe %q", got, want)
 	}
 }
 
-func TestGroupMaximumUnavailableWhenEveryMemberIsUnavailable(t *testing.T) {
+func TestGroupMaximumFailsSafeWhenEveryMemberIsUnavailable(t *testing.T) {
 	readings := makeDiskReadings(sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Unavailable: true},
 		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
 	}})
 	for _, reading := range readings {
-		if reading.id == "disk:group:hdd" && !reading.unavailable {
-			t.Fatal("group maximum should be unavailable without any usable member")
+		if reading.id == "disk:group:hdd" && reading.temperature != hwmonFailsafeTemp {
+			t.Fatal("group maximum should use the failsafe without any usable member")
 		}
 	}
 }

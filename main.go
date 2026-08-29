@@ -82,6 +82,7 @@ Commands:
 
 Serve options:
   --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
+  --disk-config PATH        Unraid disk settings (default: /boot/config/disk.cfg)
   --port PORT               AF_VSOCK port (default: 990)
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
@@ -122,6 +123,7 @@ Examples:
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	disksINIPath := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
+	diskConfigPath := fs.String("disk-config", "/boot/config/disk.cfg", "Unraid disk settings")
 	port := fs.Uint("port", defaultPort, "vsock port")
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
@@ -146,12 +148,18 @@ func serve(args []string) error {
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
+	spinupGrace, err := diskSpinupGrace(*diskConfigPath)
+	if err != nil {
+		return fmt.Errorf("read Unraid disk settings: %w", err)
+	}
+	disks := newDiskReader(*disksINIPath, spinupGrace)
 	listener, err := vsock.Listen(uint32(*port), nil)
 	if err != nil {
 		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
 	}
 	defer listener.Close()
 	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
+	log.Printf("disk spin-up grace is %s", spinupGrace)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	// Closing the listener is what releases a blocked Accept during shutdown.
@@ -196,12 +204,12 @@ func serve(args []string) error {
 		go func() {
 			defer clients.Done()
 			defer func() { <-clientSlots }()
-			handle(client, *disksINIPath, hbas)
+			handle(client, disks, hbas)
 		}()
 	}
 }
 
-func handle(conn net.Conn, disksINIPath string, collector *hbaCollector) {
+func handle(conn net.Conn, disks *diskReader, collector *hbaCollector) {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(requestTimeout))
 	// The protocol accepts one fixed command and caps input so an idle or
@@ -213,9 +221,9 @@ func handle(conn net.Conn, disksINIPath string, collector *hbaCollector) {
 	if strings.TrimSpace(line) != "GET" {
 		return
 	}
-	disks, err := readDisks(disksINIPath)
+	diskReadings, err := disks.read()
 	response := sensors.Response{
-		Version: version, Timestamp: time.Now().UTC(), Disks: disks,
+		Version: version, Timestamp: time.Now().UTC(), Disks: diskReadings,
 		HBADisabled: collector.mode == hbaModeDisabled,
 	}
 	if err != nil {
@@ -282,7 +290,10 @@ func writeResponse(out io.Writer, response sensors.Response, kind sensorType, se
 		if response.Error != "" {
 			return errors.New(response.Error)
 		}
-		return writeMaxTemperature(out, selectDisks(response.Disks, selector, true), selector, nil, func(disk sensors.Disk) float64 {
+		return writeMaxTemperature(out, selectDisks(response.Disks, selector, false), selector, nil, func(disk sensors.Disk) float64 {
+			if disk.Unavailable {
+				return hwmonFailsafeTemp
+			}
 			return disk.Temp
 		})
 	default:

@@ -22,7 +22,7 @@ func TestServerResponseIncludesVersion(t *testing.T) {
 	server, client := net.Pipe()
 	done := make(chan struct{})
 	go func() {
-		handle(server, path, newHBACollector(time.Minute, hbaModeEnabled))
+		handle(server, newDiskReader(path, time.Minute), newHBACollector(time.Minute, hbaModeEnabled))
 		close(done)
 	}()
 	if _, err := io.WriteString(client, "GET\n"); err != nil {
@@ -48,7 +48,7 @@ func TestServerResponseReportsDisabledHBACollection(t *testing.T) {
 	server, client := net.Pipe()
 	done := make(chan struct{})
 	go func() {
-		handle(server, path, newHBACollector(time.Minute, hbaModeDisabled))
+		handle(server, newDiskReader(path, time.Minute), newHBACollector(time.Minute, hbaModeDisabled))
 		close(done)
 	}()
 	if _, err := io.WriteString(client, "GET\n"); err != nil {
@@ -94,7 +94,7 @@ func TestDiskNamedLikeHBAIsSelectedAsDisk(t *testing.T) {
 	}
 }
 
-func TestDiskMaximumIgnoresUnavailableDisk(t *testing.T) {
+func TestDiskMaximumFailsSafeForUnavailableDisk(t *testing.T) {
 	r := sensors.Response{Disks: []sensors.Disk{
 		{Name: "disk1", Rotational: true, Temp: 38},
 		{Name: "disk2", Rotational: true, Unavailable: true},
@@ -103,8 +103,8 @@ func TestDiskMaximumIgnoresUnavailableDisk(t *testing.T) {
 	if err := writeResponse(&out, r, sensorTypeDisk, "hdd"); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); got != "38\n" {
-		t.Fatalf("got %q, want available disk maximum", got)
+	if got := out.String(); got != "100\n" {
+		t.Fatalf("got %q, want group failsafe", got)
 	}
 }
 

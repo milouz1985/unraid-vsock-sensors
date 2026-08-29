@@ -61,10 +61,10 @@ Une réponse valide dont les ID diffèrent remplace automatiquement la famille
 concernée et le cache. Une erreur globale de lecture ne constitue pas une
 nouvelle topologie : les anciens canaux restent alors en place et atteignent le
 failsafe. Une température de disque indisponible n'interrompt pas les autres
-mises à jour : seul ce disque cesse d'être actualisé, tandis que le maximum de
-sa catégorie est recalculé avec les membres encore disponibles. Le maximum
-atteint le failsafe uniquement si tout le groupe est indisponible. Un changement
-de label seul n'affecte pas l'identité.
+mises à jour : ce disque et le maximum de sa catégorie reçoivent explicitement
+la température failsafe, tandis que les autres canaux restent actualisés. Le
+serveur Unraid masque auparavant l'état transitoire qui suit un spin-up pendant
+au plus deux minutes. Un changement de label seul n'affecte pas l'identité.
 
 De même, une lecture HBA qui ne correspond à aucune métadonnée mise en
 cache est écartée seule. Les contrôleurs correctement identifiés continuent

@@ -1,14 +1,100 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"gopkg.in/ini.v1"
 	"unraid-vsock-sensors/internal/sensors"
 )
+
+const (
+	diskPollMargin         = 5 * time.Second
+	maximumDiskSpinupGrace = 2 * time.Minute
+)
+
+type diskReader struct {
+	path         string
+	grace        time.Duration
+	mu           sync.Mutex
+	lastValid    map[string]float64
+	pendingSince map[string]time.Time
+	now          func() time.Time
+}
+
+func newDiskReader(path string, grace time.Duration) *diskReader {
+	return &diskReader{path: path, grace: grace, lastValid: make(map[string]float64), pendingSince: make(map[string]time.Time), now: time.Now}
+}
+
+func (r *diskReader) read() ([]sensors.Disk, error) {
+	disks, err := readDisks(r.path)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	for i := range disks {
+		disk := &disks[i]
+		switch {
+		case disk.Pending:
+			started, ok := r.pendingSince[disk.ID]
+			if !ok {
+				started = now
+				r.pendingSince[disk.ID] = started
+			}
+			if now.Sub(started) < r.grace {
+				disk.Temp = r.lastValid[disk.ID]
+				disk.Unavailable = false
+			}
+		case disk.Standby:
+			delete(r.pendingSince, disk.ID)
+		case !disk.Unavailable:
+			r.lastValid[disk.ID] = disk.Temp
+			delete(r.pendingSince, disk.ID)
+		default:
+			delete(r.pendingSince, disk.ID)
+		}
+	}
+	return disks, nil
+}
+
+func diskSpinupGrace(configPath string) (time.Duration, error) {
+	file, err := os.Open(configPath)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	poll := time.Duration(0)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "poll_attributes=") {
+			continue
+		}
+		value := strings.Trim(strings.TrimPrefix(line, "poll_attributes="), `"`)
+		seconds, parseErr := strconv.ParseUint(value, 10, 32)
+		if parseErr != nil {
+			return 0, fmt.Errorf("invalid poll_attributes %q: %w", value, parseErr)
+		}
+		poll = time.Duration(seconds) * time.Second
+		break
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	if poll == 0 || poll+diskPollMargin > maximumDiskSpinupGrace {
+		return maximumDiskSpinupGrace, nil
+	}
+	return poll + diskPollMargin, nil
+}
 
 // readDisks reads the temperatures already cached by Unraid in disks.ini.
 // It does not call smartctl and therefore does not wake sleeping disks.
@@ -61,6 +147,8 @@ func readDisks(disksINIPath string) ([]sensors.Disk, error) {
 			Rotational:  rotational,
 			Temp:        temp,
 			Unavailable: unavailable,
+			Standby:     rawTemp == "*" && strings.TrimSpace(section.Key("spundown").String()) == "1",
+			Pending:     rawTemp == "*" && strings.TrimSpace(section.Key("spundown").String()) != "1",
 		})
 	}
 

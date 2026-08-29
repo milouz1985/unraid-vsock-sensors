@@ -15,6 +15,8 @@ type Disk struct {
 	Rotational  bool    `json:"rotational"`
 	Temp        float64 `json:"temp_c"`
 	Unavailable bool    `json:"unavailable,omitempty"`
+	Standby     bool    `json:"-"`
+	Pending     bool    `json:"-"`
 }
 
 // DiskKind identifies the storage technology used to group disk temperatures.

@@ -103,6 +103,12 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 			continue
 		}
 		maximum, available := sensors.MaxAvailableDiskTemperature(groupDisks)
+		for _, disk := range groupDisks {
+			if disk.Unavailable {
+				maximum, available = hwmonFailsafeTemp, true
+				break
+			}
+		}
 		diskReadings = append(diskReadings, hwmonReading{
 			id:          "disk:group:" + string(group.kind),
 			label:       group.label,
@@ -113,11 +119,14 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 	}
 
 	for _, disk := range internalDisks {
+		temperature := disk.Temp
+		if disk.Unavailable {
+			temperature = hwmonFailsafeTemp
+		}
 		diskReadings = append(diskReadings, hwmonReading{
 			id:          "disk:" + disk.ID,
 			label:       fmt.Sprintf("%s (%s)", disk.Name, disk.Device),
-			temperature: disk.Temp,
-			unavailable: disk.Unavailable,
+			temperature: temperature,
 		})
 	}
 	for _, hba := range state.HBAs {

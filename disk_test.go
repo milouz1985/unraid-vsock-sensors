@@ -5,9 +5,79 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
+
+func TestDiskReaderAllowsSpinupGrace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	write := func(temp, spundown string) {
+		data := "[disk1]\nid=serial1\ndevice=sdb\ntemp=" + temp + "\nspundown=" + spundown + "\nrotational=1\n"
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Unix(1000, 0)
+	reader := newDiskReader(path, 35*time.Second)
+	reader.now = func() time.Time { return now }
+
+	write("35", "0")
+	disks, err := reader.read()
+	if err != nil || disks[0].Temp != 35 {
+		t.Fatalf("initial reading = %#v, %v", disks, err)
+	}
+	write("*", "1")
+	if disks, err = reader.read(); err != nil || disks[0].Temp != 0 || disks[0].Unavailable {
+		t.Fatalf("standby reading = %#v, %v", disks, err)
+	}
+	write("*", "0")
+	if disks, err = reader.read(); err != nil || disks[0].Temp != 35 || disks[0].Unavailable {
+		t.Fatalf("spinup grace reading = %#v, %v", disks, err)
+	}
+	now = now.Add(35 * time.Second)
+	if disks, err = reader.read(); err != nil || !disks[0].Unavailable {
+		t.Fatalf("expired spinup reading = %#v, %v", disks, err)
+	}
+	write("40", "0")
+	if disks, err = reader.read(); err != nil || disks[0].Temp != 40 || disks[0].Unavailable {
+		t.Fatalf("recovered reading = %#v, %v", disks, err)
+	}
+}
+
+func TestDiskReaderUsesZeroWithoutPreviousTemperature(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	if err := os.WriteFile(path, []byte("[disk1]\nid=serial1\ndevice=sdb\ntemp=*\nspundown=0\nrotational=1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reader := newDiskReader(path, time.Minute)
+	disks, err := reader.read()
+	if err != nil || len(disks) != 1 || disks[0].Temp != 0 || disks[0].Unavailable {
+		t.Fatalf("initial grace reading = %#v, %v", disks, err)
+	}
+}
+
+func TestDiskSpinupGraceUsesPollAttributesAndCap(t *testing.T) {
+	for name, value := range map[string]struct {
+		config string
+		want   time.Duration
+	}{
+		"poll plus margin": {config: "poll_attributes=\"30\"\n", want: 35 * time.Second},
+		"two minute cap":   {config: "poll_attributes=\"1800\"\n", want: 2 * time.Minute},
+		"missing setting":  {config: "spindownDelay=\"0\"\n", want: 2 * time.Minute},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "disk.cfg")
+			if err := os.WriteFile(path, []byte(value.config), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := diskSpinupGrace(path)
+			if err != nil || got != value.want {
+				t.Fatalf("grace = %v, %v; want %v", got, err, value.want)
+			}
+		})
+	}
+}
 
 func TestReadAndSelect(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "disks.ini")

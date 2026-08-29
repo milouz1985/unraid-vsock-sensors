@@ -229,11 +229,17 @@ est inactive et évite de déclencher le failsafe pendant un spindown normal.
 Unraid met à jour l'état de rotation et la température séparément. Juste après
 un spin-up, `disks.ini` peut donc contenir temporairement `temp="*"` avec
 `spundown="0"`, jusqu'au prochain relevé SMART réglé par `poll_attributes`.
-Cet état, comme une température invalide, rend indisponible uniquement le canal
-du disque. Le maximum de sa catégorie (HDD, SATA SSD ou NVMe) continue d'être
-calculé avec les températures disponibles ; il devient indisponible seulement
-si aucun membre du groupe n'est mesurable. Les canaux indisponibles atteignent
-`100 °C` après `stale_timeout`.
+Le serveur accorde alors une grâce de
+`min(poll_attributes + 5 secondes, 2 minutes)`. Pendant cette grâce, il conserve
+la dernière température valide du disque, ou publie la sentinelle `0 °C` si
+aucune mesure précédente n'existe. Une nouvelle température interrompt
+immédiatement la grâce.
+
+Si la température reste absente à l'expiration, le disque et le maximum de sa
+catégorie (HDD, SATA SSD ou NVMe) passent explicitement au failsafe de `100 °C`.
+Une autre température invalide déclenche ce failsafe sans grâce. La valeur
+`poll_attributes` est lue comme donnée dans `/boot/config/disk.cfg` ; une valeur
+nulle ou absente utilise la limite prudente de deux minutes.
 
 ## Inventaire persistant et changement de topologie
 
@@ -259,8 +265,9 @@ stable comme repli, puis conservé tant que cet ID reste présent.
 Pendant l'exécution :
 
 - une erreur globale de lecture ne modifie jamais le cache et laisse toute la
-  famille disque atteindre le failsafe ; une température indisponible ou
-  invalide n'affecte que son disque, tandis que le maximum ignore ce membre ;
+  famille disque atteindre le failsafe ; après une éventuelle grâce de spin-up,
+  une température indisponible ou invalide place son disque et le maximum de sa
+  catégorie au failsafe ;
 - une lecture HBA sans métadonnées correspondantes est ignorée sans
   interrompre l'actualisation des autres contrôleurs ;
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
