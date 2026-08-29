@@ -4,7 +4,17 @@ name="unraid-vsock-sensors"
 binary="/usr/local/sbin/$name"
 config="/boot/config/plugins/$name/$name.cfg"
 pid_file="/var/run/$name.pid"
-log_file="/var/log/$name.log"
+
+log_stream() {
+    local line priority
+    while IFS= read -r line; do
+        case "$line" in
+            warning:*) priority="daemon.warning" ;;
+            *) priority="daemon.info" ;;
+        esac
+        logger -t "$name" -p "$priority" "$line"
+    done
+}
 
 load_config() {
     PORT="990"
@@ -87,13 +97,13 @@ start() {
 
     nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" --hba-backend "$HBA_BACKEND" \
         --hba-interval "$HBA_INTERVAL" \
-        </dev/null >>"$log_file" 2>&1 &
+        </dev/null > >(log_stream) 2>&1 &
     pid=$!
     printf '%s\n' "$pid" > "$pid_file"
     sleep 1
     if ! kill -0 "$pid" 2>/dev/null; then
         rm -f "$pid_file"
-        echo "$name failed to start; see $log_file" >&2
+        echo "$name failed to start; see /var/log/syslog" >&2
         return 1
     fi
     echo "$name started (PID $pid)"

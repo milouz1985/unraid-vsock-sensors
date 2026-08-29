@@ -148,7 +148,7 @@ func serve(args []string) error {
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
-	spinupGrace, err := diskSpinupGrace(*diskConfigPath)
+	diskPollInterval, spinupGrace, err := diskPollingIntervals(*diskConfigPath)
 	if err != nil {
 		return fmt.Errorf("read Unraid disk settings: %w", err)
 	}
@@ -160,6 +160,11 @@ func serve(args []string) error {
 	defer listener.Close()
 	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
 	log.Printf("disk spin-up grace is %s", spinupGrace)
+	if diskPollInterval == 0 {
+		log.Printf("warning: poll_attributes is disabled or missing; disk temperatures may not be refreshed automatically")
+	} else if diskPollInterval > maximumRecommendedDiskPoll {
+		log.Printf("warning: poll_attributes is %s; disk temperatures may be this old (%s maximum recommended)", diskPollInterval, maximumRecommendedDiskPoll)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	// Closing the listener is what releases a blocked Accept during shutdown.

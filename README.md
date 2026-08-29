@@ -100,7 +100,7 @@ Vérification depuis le terminal Unraid :
 ```sh
 /etc/rc.d/rc.unraid-vsock-sensors status
 /usr/local/sbin/unraid-vsock-sensors version
-tail -n 50 /var/log/unraid-vsock-sensors.log
+grep 'unraid-vsock-sensors' /var/log/syslog | tail -n 50
 ```
 
 ### 3. Installer l'intégration hwmon sur Proxmox
@@ -286,6 +286,12 @@ disparition d'une sonde attendue.
 La température des disques vient de `/var/local/emhttp/disks.ini`. Sa fraîcheur
 dépend de **Tunable (poll_attributes)** dans Unraid : interroger toutes les
 secondes peut donc retourner plusieurs fois la même valeur mise en cache.
+Pour une régulation thermique réactive, une valeur de 30 à 60 secondes est
+recommandée. Cinq minutes constitue une limite haute raisonnable ; au-delà, une
+température peut rester ancienne trop longtemps pour piloter efficacement les
+ventilateurs. Le serveur continue de démarrer afin de préserver les autres
+sondes, mais écrit un avertissement dans son journal lorsque `poll_attributes`
+est supérieur à cinq minutes, nul ou absent.
 
 La température HBA vient de IO Unit Page 7, lue avec des commandes MPI CONFIG
 strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et

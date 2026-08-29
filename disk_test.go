@@ -59,11 +59,12 @@ func TestDiskReaderUsesZeroWithoutPreviousTemperature(t *testing.T) {
 
 func TestDiskSpinupGraceUsesPollAttributesAndCap(t *testing.T) {
 	for name, value := range map[string]struct {
-		config string
-		want   time.Duration
+		config   string
+		wantPoll time.Duration
+		want     time.Duration
 	}{
-		"poll plus margin": {config: "poll_attributes=\"30\"\n", want: 35 * time.Second},
-		"two minute cap":   {config: "poll_attributes=\"1800\"\n", want: 2 * time.Minute},
+		"poll plus margin": {config: "poll_attributes=\"30\"\n", wantPoll: 30 * time.Second, want: 35 * time.Second},
+		"two minute cap":   {config: "poll_attributes=\"1800\"\n", wantPoll: 30 * time.Minute, want: 2 * time.Minute},
 		"missing setting":  {config: "spindownDelay=\"0\"\n", want: 2 * time.Minute},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -71,9 +72,9 @@ func TestDiskSpinupGraceUsesPollAttributesAndCap(t *testing.T) {
 			if err := os.WriteFile(path, []byte(value.config), 0600); err != nil {
 				t.Fatal(err)
 			}
-			got, err := diskSpinupGrace(path)
-			if err != nil || got != value.want {
-				t.Fatalf("grace = %v, %v; want %v", got, err, value.want)
+			poll, got, err := diskPollingIntervals(path)
+			if err != nil || poll != value.wantPoll || got != value.want {
+				t.Fatalf("poll/grace = %v/%v, %v; want %v/%v", poll, got, err, value.wantPoll, value.want)
 			}
 		})
 	}

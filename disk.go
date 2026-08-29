@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	diskPollMargin         = 5 * time.Second
-	maximumDiskSpinupGrace = 2 * time.Minute
+	diskPollMargin             = 5 * time.Second
+	maximumDiskSpinupGrace     = 2 * time.Minute
+	maximumRecommendedDiskPoll = 5 * time.Minute
 )
 
 type diskReader struct {
@@ -66,13 +67,12 @@ func (r *diskReader) read() ([]sensors.Disk, error) {
 	return disks, nil
 }
 
-func diskSpinupGrace(configPath string) (time.Duration, error) {
+func diskPollingIntervals(configPath string) (poll, grace time.Duration, err error) {
 	file, err := os.Open(configPath)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer file.Close()
-	poll := time.Duration(0)
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -82,18 +82,18 @@ func diskSpinupGrace(configPath string) (time.Duration, error) {
 		value := strings.Trim(strings.TrimPrefix(line, "poll_attributes="), `"`)
 		seconds, parseErr := strconv.ParseUint(value, 10, 32)
 		if parseErr != nil {
-			return 0, fmt.Errorf("invalid poll_attributes %q: %w", value, parseErr)
+			return 0, 0, fmt.Errorf("invalid poll_attributes %q: %w", value, parseErr)
 		}
 		poll = time.Duration(seconds) * time.Second
 		break
 	}
 	if err := scanner.Err(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if poll == 0 || poll+diskPollMargin > maximumDiskSpinupGrace {
-		return maximumDiskSpinupGrace, nil
+		return poll, maximumDiskSpinupGrace, nil
 	}
-	return poll + diskPollMargin, nil
+	return poll, poll + diskPollMargin, nil
 }
 
 // readDisks reads the temperatures already cached by Unraid in disks.ini.
