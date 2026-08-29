@@ -66,6 +66,11 @@ la température failsafe, tandis que les autres canaux restent actualisés. Le
 serveur Unraid masque auparavant l'état transitoire qui suit un spin-up pendant
 au plus deux minutes. Un changement de label seul n'affecte pas l'identité.
 
+Si le module `virt_temp` est déchargé puis rechargé sans redémarrer l'agent, le
+premier `commit` retourne `ESTALE` parce que le noyau a perdu son inventaire.
+L'agent répond par une unique opération `configure`, restaure les canaux et
+notifie les consommateurs comme lors de tout changement de topologie.
+
 De même, une lecture HBA qui ne correspond à aucune métadonnée mise en
 cache est écartée seule. Les contrôleurs correctement identifiés continuent
 d'être actualisés ; si aucun ne l'est, l'inventaire précédent reste en place et

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"unraid-vsock-sensors/internal/sensors"
@@ -343,6 +344,53 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 	}
 	if got, want := string(data), "disk:serial\t35000\tdisk1 (sda)\ncommit\tdisk\n"; got != want {
 		t.Fatalf("update = %q, want configured label %q", got, want)
+	}
+}
+
+func TestPublisherReconfiguresAfterStaleCommit(t *testing.T) {
+	inventory := hwmonInventory{
+		initialized: true,
+		readings:    []hwmonReading{{id: "disk:serial", label: "disk1 (sda)", temperature: 34}},
+	}
+	current := []hwmonReading{{id: "disk:serial", label: "disk1 (sdb)", temperature: 35}}
+	var operations []string
+	write := func(_, _, operation string, readings []hwmonReading) error {
+		operations = append(operations, operation)
+		if operation == "commit" {
+			return syscall.ESTALE
+		}
+		if !reflect.DeepEqual(readings, current) {
+			t.Fatalf("configured readings = %#v, want %#v", readings, current)
+		}
+		return nil
+	}
+	changed, err := publishHWMonFamilyWithWriter("unused", "disk", &inventory, current, false, write)
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if want := []string{"commit", "configure"}; !reflect.DeepEqual(operations, want) {
+		t.Fatalf("operations = %v, want %v", operations, want)
+	}
+	if !reflect.DeepEqual(inventory.readings, current) {
+		t.Fatalf("inventory = %#v, want %#v", inventory.readings, current)
+	}
+}
+
+func TestPublisherDoesNotReconfigureAfterOtherCommitError(t *testing.T) {
+	inventory := hwmonInventory{
+		initialized: true,
+		readings:    []hwmonReading{{id: "disk:serial", label: "disk1", temperature: 34}},
+	}
+	current := []hwmonReading{{id: "disk:serial", label: "disk1", temperature: 35}}
+	calls := 0
+	wantErr := errors.New("write failed")
+	write := func(_, _, _ string, _ []hwmonReading) error {
+		calls++
+		return wantErr
+	}
+	changed, err := publishHWMonFamilyWithWriter("unused", "disk", &inventory, current, false, write)
+	if changed || !errors.Is(err, wantErr) || calls != 1 {
+		t.Fatalf("changed=%v err=%v calls=%d", changed, err, calls)
 	}
 }
 

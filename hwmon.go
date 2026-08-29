@@ -277,11 +277,21 @@ func publishHWMonFamily(
 	current []hwmonReading,
 	allowEmpty bool,
 ) (bool, error) {
+	return publishHWMonFamilyWithWriter(path, namespace, inventory, current, allowEmpty, writeHWMonReadings)
+}
+
+func publishHWMonFamilyWithWriter(
+	path, namespace string,
+	inventory *hwmonInventory,
+	current []hwmonReading,
+	allowEmpty bool,
+	write func(string, string, string, []hwmonReading) error,
+) (bool, error) {
 	if len(current) == 0 && !allowEmpty {
 		return false, errors.New("inventory is empty; waiting for sensors")
 	}
 	if !inventory.initialized {
-		if err := writeHWMonReadings(path, namespace, "configure", current); err != nil {
+		if err := write(path, namespace, "configure", current); err != nil {
 			return false, err
 		}
 		inventory.initialized = true
@@ -289,7 +299,7 @@ func publishHWMonFamily(
 		return true, nil
 	}
 	if !sameHWMonTopology(inventory.readings, current) {
-		if err := writeHWMonReadings(path, namespace, "configure", current); err != nil {
+		if err := write(path, namespace, "configure", current); err != nil {
 			return false, err
 		}
 		inventory.readings = append([]hwmonReading(nil), current...)
@@ -315,14 +325,21 @@ func publishHWMonFamily(
 		}
 		if complete {
 			// Labels describe the fixed inventory and may contain volatile names
-			// such as /dev/sdX or an HBA controller index. Keep the configured label and
-			// use only the stable ID to associate a new temperature.
+			// such as /dev/sdX. Keep the configured label and use only the stable
+			// ID to associate a new temperature.
 			reading.label = expected.label
 			updates = append(updates, reading)
 		}
 	}
-	if err := writeHWMonReadings(path, namespace, "commit", updates); err != nil {
-		return false, err
+	if err := write(path, namespace, "commit", updates); err != nil {
+		if !errors.Is(err, syscall.ESTALE) {
+			return false, err
+		}
+		if configureErr := write(path, namespace, "configure", current); configureErr != nil {
+			return false, fmt.Errorf("reconfigure stale %s inventory: %w", namespace, configureErr)
+		}
+		inventory.readings = append([]hwmonReading(nil), current...)
+		return true, nil
 	}
 	return false, nil
 }
