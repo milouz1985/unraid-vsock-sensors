@@ -24,11 +24,17 @@ if ($version === '') {
 ?>
 
 <style>
+.uvss-actions {
+    display: inline-flex !important;
+    gap: 8px;
+    width: auto !important;
+}
 .uvss-action {
     display: inline-block !important;
-    width: auto !important;
-    min-width: 90px;
-    margin-right: 8px;
+    width: 90px !important;
+    min-width: 90px !important;
+    max-width: 90px !important;
+    margin: 0 !important;
 }
 </style>
 
@@ -44,7 +50,7 @@ _(Version)_:
 <input type="hidden" name="#command" value="/plugins/unraid-vsock-sensors/service.sh">
 
 _(Actions)_:
-: <?php if ($running): ?><button class="uvss-action" type="submit" name="#arg[1]" value="stop">_(Stop)_</button><button class="uvss-action" type="submit" name="#arg[1]" value="restart">_(Restart)_</button><?php else: ?><button class="uvss-action" type="submit" name="#arg[1]" value="start">_(Start)_</button><?php endif; ?>
+: <span class="uvss-actions"><?php if ($running): ?><button class="uvss-action" type="submit" name="#arg[1]" value="stop">_(Stop)_</button><button class="uvss-action" type="submit" name="#arg[1]" value="restart">_(Restart)_</button><?php else: ?><button class="uvss-action" type="submit" name="#arg[1]" value="start">_(Start)_</button><?php endif; ?></span>
 </form>
 
 ### Configuration
