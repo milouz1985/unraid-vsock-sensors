@@ -13,6 +13,29 @@ if ($hbaMode === 'auto') {
 $hbaBackend = $cfg['HBA_BACKEND'] ?? 'mpt3ctl';
 $hbaInterval = $cfg['HBA_INTERVAL'] ?? ($hbaBackend === 'storcli' ? '30s' : '15s');
 
+$pollAttributes = null;
+$diskConfig = '/boot/config/disk.cfg';
+if (is_readable($diskConfig)) {
+    foreach (file($diskConfig, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+        if (preg_match('/^\s*poll_attributes\s*=\s*"?([0-9]+)"?\s*$/', $line, $matches)) {
+            $pollAttributes = (int)$matches[1];
+            break;
+        }
+    }
+}
+$pollWarning = '';
+if ($pollAttributes === null || $pollAttributes === 0) {
+    $pollWarning = 'Disk temperature polling is disabled or unavailable. Disk temperatures may not refresh automatically.';
+} elseif ($pollAttributes > 300) {
+    $pollDisplay = $pollAttributes % 60 === 0
+        ? sprintf('%d minutes', intdiv($pollAttributes, 60))
+        : sprintf('%d seconds', $pollAttributes);
+    $pollWarning = sprintf(
+        'Disk temperature polling is set to %s. Values older than 5 minutes are not recommended for reliable fan control.',
+        $pollDisplay
+    );
+}
+
 $statusOutput = [];
 exec('/etc/rc.d/rc.unraid-vsock-sensors status 2>/dev/null', $statusOutput, $statusCode);
 $running = $statusCode === 0;
@@ -36,7 +59,21 @@ if ($version === '') {
     max-width: 90px !important;
     margin: 0 !important;
 }
+.uvss-warning {
+    margin: 16px 0;
+    padding: 12px 16px;
+    border: 1px solid #d32f2f;
+    border-left-width: 5px;
+    border-radius: 3px;
+    background: rgba(211, 47, 47, 0.12);
+    color: #d32f2f;
+    font-weight: 600;
+}
 </style>
+
+<?php if ($pollWarning !== ''): ?>
+<div class="uvss-warning"><strong>_(Warning)_:</strong> <?=htmlspecialchars($pollWarning, ENT_QUOTES)?></div>
+<?php endif; ?>
 
 ### Service
 
