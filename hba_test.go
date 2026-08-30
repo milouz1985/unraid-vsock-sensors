@@ -406,6 +406,36 @@ func TestStorCLIDiscoveryRequiresStableIdentity(t *testing.T) {
 	}
 }
 
+func TestParseStorCLIMetadataVariants(t *testing.T) {
+	data := []byte(`{"Controllers":[
+		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Basics":{"Model":"SAS3008","Serial Number":"ignored","SAS Address":"0x56C92BF0002E6705","PCI Address":"0000:06:10:0"}}},
+		{"Command Status":{"Controller":4,"Status":"Success"},"Response Data":{"Product Name":"OEM HBA","Serial Number":"SERIAL-4"}}
+	]}`)
+	metadata, err := parseStorCLIMetadata(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := metadata[0], (hbaMetadata{id: "sas:56c92bf0002e6705", model: "SAS3008", pciAddress: "0000:06:10.0"}); got != want {
+		t.Fatalf("Basics metadata = %#v, want %#v", got, want)
+	}
+	if got, want := metadata[4], (hbaMetadata{id: "serial:serial-4", model: "OEM HBA"}); got != want {
+		t.Fatalf("flat metadata = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizePCIAddress(t *testing.T) {
+	for input, want := range map[string]string{
+		"0000:06:10:0": "0000:06:10.0",
+		"0:6:10:0":     "0000:06:10.0",
+		"0000:06:20:0": "",
+		"invalid":      "",
+	} {
+		if got := normalizePCIAddress(input); got != want {
+			t.Errorf("normalizePCIAddress(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestStorCLIParsersRejectDuplicateControllerNumbers(t *testing.T) {
 	discovery := []byte(`{"Controllers":[
 		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"SAS Address":"1"}},
