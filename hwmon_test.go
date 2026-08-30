@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -64,6 +65,20 @@ func TestUnavailableDiskFailsSafeItsGroup(t *testing.T) {
 	}
 	if got := byID["disk:group:hdd"].temperature; got != hwmonFailsafeTemp {
 		t.Errorf("HDD maximum = %v, want failsafe", got)
+	}
+}
+
+func TestHWMonGroupMembersUseStableOrder(t *testing.T) {
+	first, _ := makeHWMonReadings(sensors.Response{Disks: []sensors.Disk{
+		{ID: "2", Name: "alpha", Device: "sdb", Rotational: true, Temp: 35},
+		{ID: "1", Name: "beta", Device: "sdc", Rotational: true, Temp: 36},
+	}})
+	second, _ := makeHWMonReadings(sensors.Response{Disks: []sensors.Disk{
+		{ID: "1", Name: "alpha", Device: "sdc", Rotational: true, Temp: 36},
+		{ID: "2", Name: "beta", Device: "sdb", Rotational: true, Temp: 35},
+	}})
+	if len(first) == 0 || len(second) == 0 || !slices.Equal(first[0].members, second[0].members) {
+		t.Fatalf("group member order changed: first=%v second=%v", first[0].members, second[0].members)
 	}
 }
 

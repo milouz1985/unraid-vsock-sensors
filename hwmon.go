@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -102,6 +103,7 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 		if len(groupDisks) < minHWMonGroupSize {
 			continue
 		}
+		sort.Strings(members)
 		maximum := sensors.MaxTemperature(groupDisks, func(disk sensors.Disk) float64 {
 			return disk.Temp
 		})
