@@ -58,11 +58,6 @@ func TestUnavailableDiskFailsSafeItsGroup(t *testing.T) {
 	if got := byID["disk:2"].temperature; got != hwmonFailsafeTemp {
 		t.Errorf("disk:2 = %v, want failsafe", got)
 	}
-	for _, id := range []string{"disk:1", "disk:3", "disk:4", "disk:group:hdd", "disk:group:nvme"} {
-		if byID[id].unavailable {
-			t.Errorf("%s should remain available", id)
-		}
-	}
 	if got := byID["disk:group:hdd"].temperature; got != hwmonFailsafeTemp {
 		t.Errorf("HDD maximum = %v, want failsafe", got)
 	}

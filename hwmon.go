@@ -39,7 +39,6 @@ type hwmonReading struct {
 	label       string
 	temperature float64
 	members     []string
-	unavailable bool
 }
 
 type hwmonInventory struct {
@@ -318,7 +317,7 @@ func publishHWMonFamilyWithWriter(
 	updates := make([]hwmonReading, 0, len(inventory.readings))
 	for _, expected := range inventory.readings {
 		reading, found := currentByID[expected.id]
-		if !found || reading.unavailable {
+		if !found {
 			continue
 		}
 		complete := true
