@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
@@ -402,6 +403,24 @@ func TestStorCLIDiscoveryRequiresStableIdentity(t *testing.T) {
 	data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Model":"SAS3008"}}]}`)
 	if _, err := parseStorCLIMetadata(data); err == nil {
 		t.Fatal("StorCLI controller without stable identity accepted")
+	}
+}
+
+func TestStorCLIParsersRejectDuplicateControllerNumbers(t *testing.T) {
+	discovery := []byte(`{"Controllers":[
+		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"SAS Address":"1"}},
+		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"SAS Address":"2"}}
+	]}`)
+	if _, err := parseStorCLIMetadata(discovery); err == nil || !strings.Contains(err.Error(), "appears more than once") {
+		t.Fatalf("duplicate discovery controllers returned %v", err)
+	}
+
+	temperatures := []byte(`{"Controllers":[
+		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"}]}},
+		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"50"}]}}
+	]}`)
+	if _, err := parseStorCLI(temperatures); err == nil || !strings.Contains(err.Error(), "appears more than once") {
+		t.Fatalf("duplicate temperature controllers returned %v", err)
 	}
 }
 

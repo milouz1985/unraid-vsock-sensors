@@ -98,6 +98,9 @@ func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
 	metadata, ids := make(map[int]hbaMetadata), make(map[string]int)
 	for _, controller := range root.Controllers {
 		number := controller.CommandStatus.Controller
+		if _, duplicate := metadata[number]; duplicate {
+			return nil, fmt.Errorf("storcli controller %d appears more than once", number)
+		}
 		if controller.CommandStatus.Status != "Success" {
 			return nil, fmt.Errorf("storcli controller %d status is %q", number, controller.CommandStatus.Status)
 		}
@@ -208,6 +211,9 @@ func parseStorCLI(data []byte) (map[int]float64, error) {
 	temperatures := make(map[int]float64, len(root.Controllers))
 	for _, controller := range root.Controllers {
 		id := controller.CommandStatus.Controller
+		if _, duplicate := temperatures[id]; duplicate {
+			return nil, fmt.Errorf("storcli controller %d appears more than once", id)
+		}
 		if controller.CommandStatus.Status != "Success" {
 			return nil, fmt.Errorf("storcli controller %d status is %q", id, controller.CommandStatus.Status)
 		}
