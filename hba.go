@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -136,11 +137,7 @@ func (r *storCLIReader) discover(ctx context.Context) error {
 }
 
 func (r *storCLIReader) read(ctx context.Context) ([]sensors.HBA, error) {
-	controllers := make([]int, 0, len(r.metadata))
-	for controller := range r.metadata {
-		controllers = append(controllers, controller)
-	}
-	sort.Ints(controllers)
+	controllers := sortedIntKeys(r.metadata)
 	temperatures, err := r.readTemperatures(ctx)
 	if err != nil {
 		return nil, err
@@ -153,23 +150,18 @@ func (r *storCLIReader) read(ctx context.Context) ([]sensors.HBA, error) {
 
 func validateHBAControllerSet(controllers []int, temperatures map[int]float64) error {
 	if len(controllers) != len(temperatures) {
-		return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, sortedHBAControllers(temperatures))
+		return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, sortedIntKeys(temperatures))
 	}
 	for _, controller := range controllers {
 		if _, ok := temperatures[controller]; !ok {
-			return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, sortedHBAControllers(temperatures))
+			return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, sortedIntKeys(temperatures))
 		}
 	}
 	return nil
 }
 
-func sortedHBAControllers(temperatures map[int]float64) []int {
-	controllers := make([]int, 0, len(temperatures))
-	for controller := range temperatures {
-		controllers = append(controllers, controller)
-	}
-	sort.Ints(controllers)
-	return controllers
+func sortedIntKeys[V any](values map[int]V) []int {
+	return slices.Sorted(maps.Keys(values))
 }
 
 func buildHBAReadings(temperatures map[int]float64, metadata map[int]hbaMetadata) []sensors.HBA {
