@@ -64,7 +64,9 @@ failsafe. Une température de disque indisponible n'interrompt pas les autres
 mises à jour : ce disque et le maximum de sa catégorie reçoivent explicitement
 la température failsafe, tandis que les autres canaux restent actualisés. Le
 serveur Unraid masque auparavant l'état transitoire qui suit un spin-up pendant
-au plus deux minutes. Un changement de label seul n'affecte pas l'identité.
+la durée de `poll_attributes` augmentée de cinq secondes, sans déclarer la sonde
+en panne avant le prochain relevé configuré. Un changement de label seul
+n'affecte pas l'identité.
 
 Si le module `virt_temp` est déchargé puis rechargé sans redémarrer l'agent, le
 premier `commit` retourne `ESTALE` parce que le noyau a perdu son inventaire.

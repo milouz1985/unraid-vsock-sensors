@@ -163,7 +163,7 @@ func serve(args []string) error {
 	if diskPollInterval == 0 {
 		log.Printf("warning: poll_attributes is disabled or missing; disk temperatures may not be refreshed automatically")
 	} else if diskPollInterval > maximumRecommendedDiskPoll {
-		log.Printf("warning: poll_attributes is %s; disk temperatures may be this old (%s maximum recommended)", diskPollInterval, maximumRecommendedDiskPoll)
+		log.Printf("warning: unsafe poll_attributes=%s exceeds the recommended maximum of %s; disk temperatures may be too stale for reliable fan control", diskPollInterval, maximumRecommendedDiskPoll)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -17,7 +17,7 @@ import (
 
 const (
 	diskPollMargin             = 5 * time.Second
-	maximumDiskSpinupGrace     = 2 * time.Minute
+	defaultDiskSpinupGrace     = 2 * time.Minute
 	maximumRecommendedDiskPoll = 5 * time.Minute
 )
 
@@ -90,8 +90,8 @@ func diskPollingIntervals(configPath string) (poll, grace time.Duration, err err
 	if err := scanner.Err(); err != nil {
 		return 0, 0, err
 	}
-	if poll == 0 || poll+diskPollMargin > maximumDiskSpinupGrace {
-		return poll, maximumDiskSpinupGrace, nil
+	if poll == 0 {
+		return poll, defaultDiskSpinupGrace, nil
 	}
 	return poll, poll + diskPollMargin, nil
 }

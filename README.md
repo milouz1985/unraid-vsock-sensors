@@ -230,7 +230,8 @@ Unraid met à jour l'état de rotation et la température séparément. Juste ap
 un spin-up, `disks.ini` peut donc contenir temporairement `temp="*"` avec
 `spundown="0"`, jusqu'au prochain relevé SMART réglé par `poll_attributes`.
 Le serveur accorde alors une grâce de
-`min(poll_attributes + 5 secondes, 2 minutes)`. Pendant cette grâce, il conserve
+`poll_attributes + 5 secondes`, sans la plafonner avant le prochain relevé
+configuré. Pendant cette grâce, il conserve
 la dernière température valide du disque, ou publie la sentinelle `0 °C` si
 aucune mesure précédente n'existe. Une nouvelle température interrompt
 immédiatement la grâce.
@@ -239,7 +240,7 @@ Si la température reste absente à l'expiration, le disque et le maximum de sa
 catégorie (HDD, SATA SSD ou NVMe) passent explicitement au failsafe de `100 °C`.
 Une autre température invalide déclenche ce failsafe sans grâce. La valeur
 `poll_attributes` est lue comme donnée dans `/boot/config/disk.cfg` ; une valeur
-nulle ou absente utilise la limite prudente de deux minutes.
+nulle ou absente utilise un repli prudent de deux minutes.
 
 ## Inventaire persistant et changement de topologie
 

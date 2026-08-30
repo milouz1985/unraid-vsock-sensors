@@ -57,14 +57,14 @@ func TestDiskReaderUsesZeroWithoutPreviousTemperature(t *testing.T) {
 	}
 }
 
-func TestDiskSpinupGraceUsesPollAttributesAndCap(t *testing.T) {
+func TestDiskSpinupGraceUsesPollAttributesWithoutCap(t *testing.T) {
 	for name, value := range map[string]struct {
 		config   string
 		wantPoll time.Duration
 		want     time.Duration
 	}{
 		"poll plus margin": {config: "poll_attributes=\"30\"\n", wantPoll: 30 * time.Second, want: 35 * time.Second},
-		"two minute cap":   {config: "poll_attributes=\"1800\"\n", wantPoll: 30 * time.Minute, want: 2 * time.Minute},
+		"long poll":        {config: "poll_attributes=\"1800\"\n", wantPoll: 30 * time.Minute, want: 30*time.Minute + 5*time.Second},
 		"missing setting":  {config: "spindownDelay=\"0\"\n", want: 2 * time.Minute},
 	} {
 		t.Run(name, func(t *testing.T) {
