@@ -8,6 +8,11 @@ DEBIAN_REVISION ?= 1
 # Freeze the inferred version before packaging modifies generated tracked files.
 VERSION := $(VERSION)
 LDFLAGS = -s -w -X main.version=$(VERSION)
+BASH_SCRIPTS := version.sh unraid-plugin/package.sh \
+	unraid-plugin/rc.unraid-vsock-sensors unraid-plugin/service.sh \
+	virt-temp/package.sh virt-temp/prepare-dkms.sh
+POSIX_SCRIPTS := virt-temp/debian/postinst.in virt-temp/debian/prerm.in \
+	virt-temp/debian/postrm.in
 
 .PHONY: help
 
@@ -16,7 +21,7 @@ help: ## Affiche les commandes disponibles
 		/^[a-zA-Z0-9_-]+:.*## / { printf "  make %-16s %s\n", $$1, $$2 }' \
 		$(MAKEFILE_LIST)
 
-.PHONY: fmt tidy vet test check all
+.PHONY: fmt tidy vet test check-scripts check all
 
 fmt: ## Formate tous les fichiers Go
 	$(GO) fmt ./...
@@ -30,7 +35,12 @@ vet: ## Recherche les erreurs Go courantes
 test: ## Exécute tous les tests Go
 	$(GO) test ./...
 
-check: vet test ## Vérifie le projet sans créer d'artefacts
+check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
+	bash -n $(BASH_SCRIPTS)
+	sh -n $(POSIX_SCRIPTS)
+	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
+
+check: vet test check-scripts ## Vérifie le projet sans créer d'artefacts
 
 all: check build unraid-package hwmon-package ## Vérifie, compile et crée tous les paquets
 
