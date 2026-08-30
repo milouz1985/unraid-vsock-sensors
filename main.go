@@ -295,7 +295,7 @@ func writeResponse(out io.Writer, response sensors.Response, kind sensorType, se
 		if response.Error != "" {
 			return errors.New(response.Error)
 		}
-		return writeMaxTemperature(out, selectDisks(response.Disks, selector, false), selector, nil, func(disk sensors.Disk) float64 {
+		return writeMaxTemperature(out, selectDisks(response.Disks, selector), selector, nil, func(disk sensors.Disk) float64 {
 			if disk.Unavailable {
 				return hwmonFailsafeTemp
 			}

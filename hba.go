@@ -46,10 +46,6 @@ type hbaReader struct {
 	now           func() time.Time
 }
 
-func newHBAReader() *hbaReader {
-	return newHBAReaderForBackend(hbaBackendMPT3CTL)
-}
-
 func newHBAReaderForBackend(mode hbaBackendMode) *hbaReader {
 	backend := hbaBackend{name: "mpt3ctl", collect: readMPT3Snapshot}
 	switch mode {

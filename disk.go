@@ -156,14 +156,11 @@ func readDisks(disksINIPath string) ([]sensors.Disk, error) {
 	return disks, nil
 }
 
-func selectDisks(disks []sensors.Disk, selector string, availableOnly bool) []sensors.Disk {
+func selectDisks(disks []sensors.Disk, selector string) []sensors.Disk {
 	selector = strings.ToLower(selector)
 	var matches []sensors.Disk
 
 	for _, disk := range disks {
-		if availableOnly && disk.Unavailable {
-			continue
-		}
 		var match bool
 		switch selector {
 		case "all":
