@@ -24,13 +24,14 @@ import (
 )
 
 const (
-	defaultHWMonInterval = time.Second
-	virtTempDevicePath   = "/dev/virt-temp"
-	defaultHWMonCache    = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"
-	hwmonFailsafeTemp    = 100.0
-	minHWMonGroupSize    = 2
-	maxHWMonIDSize       = 63
-	maxHWMonLabelSize    = 95
+	defaultHWMonInterval  = time.Second
+	virtTempDevicePath    = "/dev/virt-temp"
+	defaultHWMonCache     = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"
+	hwmonFailsafeTemp     = 100.0
+	minHWMonGroupSize     = 2
+	maxHWMonIDSize        = 63
+	maxHWMonLabelSize     = 95
+	systemdRestartTimeout = 10 * time.Second
 )
 
 type hwmonReading struct {
@@ -500,6 +501,8 @@ func restartSystemdUnits(ctx context.Context, units []string) error {
 	if len(units) == 0 {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, systemdRestartTimeout)
+	defer cancel()
 	args := append([]string{"try-restart", "--no-block", "--"}, units...)
 	output, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput()
 	if err != nil {
