@@ -149,13 +149,9 @@ func (r *storCLIReader) read(ctx context.Context) ([]sensors.HBA, error) {
 }
 
 func validateHBAControllerSet(controllers []int, temperatures map[int]float64) error {
-	if len(controllers) != len(temperatures) {
-		return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, sortedIntKeys(temperatures))
-	}
-	for _, controller := range controllers {
-		if _, ok := temperatures[controller]; !ok {
-			return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, sortedIntKeys(temperatures))
-		}
+	actual := sortedIntKeys(temperatures)
+	if !slices.Equal(controllers, actual) {
+		return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, actual)
 	}
 	return nil
 }
