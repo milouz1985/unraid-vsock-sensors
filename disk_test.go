@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +94,49 @@ func TestDiskReaderPurgesStateForDisappearedDisks(t *testing.T) {
 	disks, err := reader.read()
 	if err != nil || len(disks) != 1 || disks[0].Temp != 0 || disks[0].Unavailable {
 		t.Fatalf("reappeared disk reused stale state: disks=%#v err=%v", disks, err)
+	}
+}
+
+func TestDiskReaderDeduplicatesRotationalWarnings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	write := func(rotational string) {
+		data := "[disk1]\nid=serial1\ndevice=sdb\ntemp=35\nrotational=" + rotational + "\n"
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var output bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previousOutput) })
+	reader := newDiskReader(path, time.Minute)
+
+	write("broken")
+	if _, err := reader.read(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.read(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(output.String(), "warning:"); got != 1 {
+		t.Fatalf("repeated invalid value logged %d warnings: %q", got, output.String())
+	}
+
+	write("different")
+	if _, err := reader.read(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(output.String(), "warning:"); got != 2 {
+		t.Fatalf("changed invalid value logged %d warnings: %q", got, output.String())
+	}
+
+	write("1")
+	if _, err := reader.read(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(output.String(), "rotational value recovered"); got != 1 {
+		t.Fatalf("recovery logged %d times: %q", got, output.String())
 	}
 }
 
