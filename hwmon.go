@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -376,7 +377,7 @@ func (publisher *hwmonPublisher) restore(device string) (bool, error) {
 		return false, err
 	}
 	var cached cachedHWMonInventory
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cached); err != nil {
 		return false, fmt.Errorf("decode %s: %w", publisher.cachePath, err)
