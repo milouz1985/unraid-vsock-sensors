@@ -124,10 +124,7 @@ func TestHBAReaderCachesDiscovery(t *testing.T) {
 			return map[int]hbaMetadata{2: {id: "sas:1234", model: "SAS3008"}}, nil
 		},
 		readTopology: func() (string, error) { return "stable", nil },
-		readTemperatures: func(_ context.Context, controllers []int) (map[int]float64, error) {
-			if len(controllers) != 1 || controllers[0] != 2 {
-				t.Fatalf("controllers = %v", controllers)
-			}
+		readTemperatures: func(context.Context) (map[int]float64, error) {
 			return map[int]float64{2: 51}, nil
 		},
 	}
@@ -163,7 +160,7 @@ func TestHBAReaderRefreshesChangedTopology(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{0: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
 		},
-		readTemperatures: func(context.Context, []int) (map[int]float64, error) {
+		readTemperatures: func(context.Context) (map[int]float64, error) {
 			return map[int]float64{0: 50}, nil
 		},
 	}
@@ -192,7 +189,7 @@ func TestHBAReaderRediscoversWhenTopologyBaselineRecovers(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{0: {id: "sas:1234"}}, nil
 		},
-		readTemperatures: func(context.Context, []int) (map[int]float64, error) {
+		readTemperatures: func(context.Context) (map[int]float64, error) {
 			return map[int]float64{0: 50}, nil
 		},
 	}
@@ -218,12 +215,12 @@ func TestHBAReaderRediscoversAndRetriesAfterReadError(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{discoveries: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
 		},
-		readTemperatures: func(_ context.Context, controllers []int) (map[int]float64, error) {
+		readTemperatures: func(context.Context) (map[int]float64, error) {
 			reads++
 			if reads == 2 {
 				return nil, errors.New("controller changed")
 			}
-			return map[int]float64{controllers[0]: 51}, nil
+			return map[int]float64{discoveries: 51}, nil
 		},
 	}
 	if _, err := reader.collect(context.Background()); err != nil {
@@ -254,12 +251,12 @@ func TestHBAReaderRediscoversOnControllerSetMismatch(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{discoveries - 1: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
 		},
-		readTemperatures: func(_ context.Context, controllers []int) (map[int]float64, error) {
+		readTemperatures: func(context.Context) (map[int]float64, error) {
 			reads++
 			if reads == 2 {
 				return map[int]float64{1: 52}, nil
 			}
-			return map[int]float64{controllers[0]: 51}, nil
+			return map[int]float64{discoveries - 1: 51}, nil
 		},
 	}
 	if _, err := reader.collect(context.Background()); err != nil {

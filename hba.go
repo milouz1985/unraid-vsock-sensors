@@ -78,7 +78,7 @@ type storCLIReader struct {
 	topology         string
 	topologyKnown    bool
 	discoverMetadata func(context.Context) (map[int]hbaMetadata, error)
-	readTemperatures func(context.Context, []int) (map[int]float64, error)
+	readTemperatures func(context.Context) (map[int]float64, error)
 	readTopology     func() (string, error)
 }
 
@@ -141,7 +141,7 @@ func (r *storCLIReader) read(ctx context.Context) ([]sensors.HBA, error) {
 		controllers = append(controllers, controller)
 	}
 	sort.Ints(controllers)
-	temperatures, err := r.readTemperatures(ctx, controllers)
+	temperatures, err := r.readTemperatures(ctx)
 	if err != nil {
 		return nil, err
 	}

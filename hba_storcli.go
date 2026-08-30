@@ -31,7 +31,7 @@ func runStorCLI(ctx context.Context, operation string, args ...string) ([]byte, 
 	return out, nil
 }
 
-func readStorCLITemperatures(ctx context.Context, _ []int) (map[int]float64, error) {
+func readStorCLITemperatures(ctx context.Context) (map[int]float64, error) {
 	out, err := runStorCLI(ctx, "temperature", "/cALL", "show", "temperature", "J", "nolog")
 	if err != nil {
 		return nil, err
