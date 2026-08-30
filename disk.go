@@ -43,8 +43,10 @@ func (r *diskReader) read() ([]sensors.Disk, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
+	present := make(map[string]struct{}, len(disks))
 	for i := range disks {
 		disk := &disks[i]
+		present[disk.ID] = struct{}{}
 		switch {
 		case disk.Pending:
 			started, ok := r.pendingSince[disk.ID]
@@ -63,6 +65,16 @@ func (r *diskReader) read() ([]sensors.Disk, error) {
 			delete(r.pendingSince, disk.ID)
 		default:
 			delete(r.pendingSince, disk.ID)
+		}
+	}
+	for id := range r.lastValid {
+		if _, ok := present[id]; !ok {
+			delete(r.lastValid, id)
+		}
+	}
+	for id := range r.pendingSince {
+		if _, ok := present[id]; !ok {
+			delete(r.pendingSince, id)
 		}
 	}
 	return disks, nil

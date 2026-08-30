@@ -57,6 +57,44 @@ func TestDiskReaderUsesZeroWithoutPreviousTemperature(t *testing.T) {
 	}
 }
 
+func TestDiskReaderPurgesStateForDisappearedDisks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	write := func(data string) {
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const active = "[disk1]\nid=serial1\ndevice=sdb\ntemp=35\nspundown=0\nrotational=1\n"
+	const pending = "[disk1]\nid=serial1\ndevice=sdb\ntemp=*\nspundown=0\nrotational=1\n"
+
+	now := time.Unix(1000, 0)
+	reader := newDiskReader(path, time.Minute)
+	reader.now = func() time.Time { return now }
+	write(active)
+	if _, err := reader.read(); err != nil {
+		t.Fatal(err)
+	}
+	write(pending)
+	if _, err := reader.read(); err != nil {
+		t.Fatal(err)
+	}
+
+	write("[disk1]\nstatus=DISK_NP\n")
+	if _, err := reader.read(); err != nil {
+		t.Fatal(err)
+	}
+	if len(reader.lastValid) != 0 || len(reader.pendingSince) != 0 {
+		t.Fatalf("state was not purged: lastValid=%v pendingSince=%v", reader.lastValid, reader.pendingSince)
+	}
+
+	now = now.Add(2 * time.Minute)
+	write(pending)
+	disks, err := reader.read()
+	if err != nil || len(disks) != 1 || disks[0].Temp != 0 || disks[0].Unavailable {
+		t.Fatalf("reappeared disk reused stale state: disks=%#v err=%v", disks, err)
+	}
+}
+
 func TestDiskSpinupGraceUsesPollAttributesWithoutCap(t *testing.T) {
 	for name, value := range map[string]struct {
 		config   string
