@@ -36,12 +36,12 @@ func newDiskReader(path string, grace time.Duration) *diskReader {
 }
 
 func (r *diskReader) read() ([]sensors.Disk, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	disks, err := readDisks(r.path)
 	if err != nil {
 		return nil, err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	now := r.now()
 	present := make(map[string]struct{}, len(disks))
 	for i := range disks {
