@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"sort"
@@ -138,7 +139,11 @@ func readDisks(disksINIPath string) ([]sensors.Disk, error) {
 			}
 		}
 		// Unraid writes rotational as 0 or 1 in disks.ini, so trust its value.
-		rotational, _ := section.Key("rotational").Bool()
+		rotationalKey := section.Key("rotational")
+		rotational, rotationalErr := rotationalKey.Bool()
+		if rotationalErr != nil {
+			log.Printf("warning: disk %q (%s) has invalid rotational value %q: %s", name, device, rotationalKey.String(), rotationalErr)
+		}
 		disks = append(disks, sensors.Disk{
 			ID:          id,
 			Name:        name,
