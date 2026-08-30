@@ -259,7 +259,9 @@ L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
 pour un disque, puis adresse SAS, adresse PCI ou numéro de série pour un HBA. Les
 indices locaux tels que l'IOC mpt3ctl ou le contrôleur StorCLI `/c0` ne sont
 exposés ni dans le JSON, ni dans les sélecteurs, ni dans le cache hwmon.
-`mpt3ctl` relit l'identité et la température dans chaque relevé. StorCLI conserve
+`mpt3ctl` relit l'identité et la température dans chaque relevé, mais conserve
+par adresse PCI la dernière identité SAS valide afin qu'une erreur transitoire
+de la page Manufacturing 5 ne renomme pas la sonde. StorCLI conserve
 la correspondance `/cN` sans expiration et surveille l'empreinte des HBA dans
 `/sys/class/scsi_host`. Un changement de cette empreinte, une erreur de lecture
 ou un ensemble de contrôleurs différent invalide immédiatement le cache et

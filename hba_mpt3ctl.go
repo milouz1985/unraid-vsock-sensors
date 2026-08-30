@@ -74,6 +74,32 @@ type mpt3Command struct {
 
 type mpt3Device struct{ file *os.File }
 
+type mpt3Reader struct {
+	// Manufacturing Page 5 is optional for a temperature collection. Remember a
+	// SAS identity once observed so a transient page failure cannot rename the
+	// same PCI controller to its weaker pci: fallback.
+	sasAddressByPCI map[string]string
+}
+
+func newMPT3Reader() *mpt3Reader {
+	return &mpt3Reader{sasAddressByPCI: make(map[string]string)}
+}
+
+func (r *mpt3Reader) stableID(pci, sasAddress string, page5Failed bool) string {
+	if sasAddress = normalizeSASAddress(sasAddress); sasAddress != "" {
+		if pci != "" {
+			r.sasAddressByPCI[pci] = sasAddress
+		}
+		return hbaStableID(sasAddress, pci, "")
+	}
+	if page5Failed {
+		if cached := r.sasAddressByPCI[pci]; cached != "" {
+			return hbaStableID(cached, pci, "")
+		}
+	}
+	return hbaStableID("", pci, "")
+}
+
 func openMPT3() (*mpt3Device, error) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return nil, fmt.Errorf("%w: mpt3ctl requires linux/amd64", errHBABackendUnavailable)
@@ -200,7 +226,7 @@ func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, page
 	return page, nil
 }
 
-func readMPT3Snapshot(ctx context.Context) ([]sensors.HBA, error) {
+func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	device, err := openMPT3()
 	if err != nil {
 		return nil, err
@@ -222,10 +248,13 @@ func readMPT3Snapshot(ctx context.Context) ([]sensors.HBA, error) {
 		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 0); pageErr == nil {
 			model = parseMPT3Model(page)
 		}
+		page5Failed := false
 		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 5); pageErr == nil {
 			sasAddress = parseMPT3SASAddress(page)
+		} else {
+			page5Failed = true
 		}
-		id := hbaStableID(sasAddress, pci, "")
+		id := r.stableID(pci, sasAddress, page5Failed)
 		if id == "" {
 			return nil, fmt.Errorf("mpt3ctl IOC %d has no stable identity", ioc)
 		}

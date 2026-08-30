@@ -85,7 +85,8 @@ type hbaReader struct {
 }
 
 func newHBAReaderForBackend(mode hbaBackendMode) *hbaReader {
-	backend := hbaBackend{name: "mpt3ctl", collect: readMPT3Snapshot}
+	mpt3 := newMPT3Reader()
+	backend := hbaBackend{name: "mpt3ctl", collect: mpt3.collect}
 	switch mode {
 	case hbaBackendStorCLI:
 		backend = hbaBackend{

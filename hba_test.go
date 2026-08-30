@@ -294,6 +294,33 @@ func TestParseMPT3Inventory(t *testing.T) {
 	}
 }
 
+func TestMPT3ReaderKeepsSASIdentityAfterTransientPageFailure(t *testing.T) {
+	reader := newMPT3Reader()
+	const pci = "0000:06:10.0"
+	if got, want := reader.stableID(pci, "56c92bf0002e6705", false), "sas:56c92bf0002e6705"; got != want {
+		t.Fatalf("initial ID = %q, want %q", got, want)
+	}
+	if got, want := reader.stableID(pci, "", true), "sas:56c92bf0002e6705"; got != want {
+		t.Fatalf("ID after Page 5 failure = %q, want %q", got, want)
+	}
+}
+
+func TestMPT3ReaderUsesPCIUntilSASIdentityIsKnown(t *testing.T) {
+	reader := newMPT3Reader()
+	if got, want := reader.stableID("0000:06:10.0", "", true), "pci:0000:06:10.0"; got != want {
+		t.Fatalf("ID = %q, want %q", got, want)
+	}
+}
+
+func TestMPT3ReaderDoesNotReuseCacheForValidPageWithoutSASAddress(t *testing.T) {
+	reader := newMPT3Reader()
+	const pci = "0000:06:10.0"
+	reader.stableID(pci, "56c92bf0002e6705", false)
+	if got, want := reader.stableID(pci, "", false), "pci:0000:06:10.0"; got != want {
+		t.Fatalf("ID = %q, want %q", got, want)
+	}
+}
+
 func TestParseMPT3Temperature(t *testing.T) {
 	for name, test := range map[string]struct {
 		raw     int16
