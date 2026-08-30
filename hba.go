@@ -209,10 +209,6 @@ var (
 	errHBABackendUnavailable = errors.New("HBA backend unavailable")
 )
 
-func newHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
-	return newConfiguredHBACollector(interval, mode, hbaBackendMPT3CTL)
-}
-
 func newConfiguredHBACollector(interval time.Duration, mode hbaMode, backend hbaBackendMode) *hbaCollector {
 	reader := newHBAReaderForBackend(backend)
 	c := &hbaCollector{interval: interval, mode: mode, err: errors.New("HBA temperatures have not been collected yet"), collectSnapshot: reader.collect}
