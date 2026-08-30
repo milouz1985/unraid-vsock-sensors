@@ -225,12 +225,8 @@ func readMPT3Snapshot(ctx context.Context) ([]sensors.HBA, error) {
 		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 5); pageErr == nil {
 			sasAddress = parseMPT3SASAddress(page)
 		}
-		id := ""
-		if sasAddress != "" {
-			id = "sas:" + sasAddress
-		} else if pci != "" {
-			id = "pci:" + pci
-		} else {
+		id := hbaStableID(sasAddress, pci, "")
+		if id == "" {
 			return nil, fmt.Errorf("mpt3ctl IOC %d has no stable identity", ioc)
 		}
 		if previous, duplicate := identities[id]; duplicate {

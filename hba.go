@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,12 +25,49 @@ type hbaCollector struct {
 
 type hbaMetadata struct{ id, model, pciAddress string }
 
+// hbaStableID gives every backend the same controller identity. Prefer the SAS
+// address shared by mpt3ctl and StorCLI, then progressively weaker fallbacks.
+func hbaStableID(sasAddress, pciAddress, serial string) string {
+	if sasAddress = hbaIdentityValue(sasAddress); sasAddress != "" {
+		if sasAddress = normalizeSASAddress(sasAddress); sasAddress != "" {
+			return "sas:" + sasAddress
+		}
+	}
+	if pciAddress != "" {
+		return "pci:" + pciAddress
+	}
+	if serial = hbaIdentityValue(serial); serial != "" {
+		return "serial:" + strings.ToLower(serial)
+	}
+	return ""
+}
+
+func normalizeSASAddress(address string) string {
+	address = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(address)), "0x")
+	address = strings.NewReplacer(":", "", "-", "", " ", "").Replace(address)
+	value, err := strconv.ParseUint(address, 16, 64)
+	if err != nil || value == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%016x", value)
+}
+
+func hbaIdentityValue(value string) string {
+	value = strings.TrimSpace(value)
+	switch strings.ToLower(value) {
+	case "", "n/a", "na", "none", "unknown":
+		return ""
+	default:
+		return value
+	}
+}
+
 type hbaBackend struct {
 	name             string
 	collect          func(context.Context) ([]sensors.HBA, error)
 	discover         func(context.Context) (map[int]hbaMetadata, error)
 	readTemperatures func(context.Context, []int) (map[int]float64, error)
-	metadataTTL      time.Duration
+	topology         func() (string, error)
 }
 
 type hbaBackendMode string
@@ -41,9 +79,9 @@ const (
 
 type hbaReader struct {
 	metadata      map[int]hbaMetadata
-	lastDiscovery time.Time
+	topology      string
+	topologyKnown bool
 	backend       hbaBackend
-	now           func() time.Time
 }
 
 func newHBAReaderForBackend(mode hbaBackendMode) *hbaReader {
@@ -52,10 +90,10 @@ func newHBAReaderForBackend(mode hbaBackendMode) *hbaReader {
 	case hbaBackendStorCLI:
 		backend = hbaBackend{
 			name: "storcli", discover: discoverStorCLIHBAs, readTemperatures: readStorCLITemperatures,
-			metadataTTL: 5 * time.Minute,
+			topology: readHBATopology,
 		}
 	}
-	return &hbaReader{backend: backend, now: time.Now}
+	return &hbaReader{backend: backend}
 }
 
 func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
@@ -63,7 +101,13 @@ func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 		return r.backend.collect(ctx)
 	}
 	freshDiscovery := false
-	if r.metadata == nil || r.now().Sub(r.lastDiscovery) >= r.backend.metadataTTL {
+	topologyChanged := false
+	if r.metadata != nil && r.backend.topology != nil {
+		if topology, err := r.backend.topology(); err == nil {
+			topologyChanged = r.topologyKnown && topology != r.topology
+		}
+	}
+	if r.metadata == nil || topologyChanged {
 		if err := r.discover(ctx); err != nil {
 			return nil, err
 		}
@@ -89,7 +133,11 @@ func (r *hbaReader) discover(ctx context.Context) error {
 		return fmt.Errorf("%s discovery: %w", r.backend.name, err)
 	}
 	r.metadata = metadata
-	r.lastDiscovery = r.now()
+	if r.backend.topology != nil {
+		if topology, topologyErr := r.backend.topology(); topologyErr == nil {
+			r.topology, r.topologyKnown = topology, true
+		}
+	}
 	return nil
 }
 
@@ -103,7 +151,31 @@ func (r *hbaReader) read(ctx context.Context) ([]sensors.HBA, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateHBAControllerSet(controllers, temperatures); err != nil {
+		return nil, err
+	}
 	return buildHBAReadings(temperatures, r.metadata), nil
+}
+
+func validateHBAControllerSet(controllers []int, temperatures map[int]float64) error {
+	if len(controllers) != len(temperatures) {
+		return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, sortedHBAControllers(temperatures))
+	}
+	for _, controller := range controllers {
+		if _, ok := temperatures[controller]; !ok {
+			return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, sortedHBAControllers(temperatures))
+		}
+	}
+	return nil
+}
+
+func sortedHBAControllers(temperatures map[int]float64) []int {
+	controllers := make([]int, 0, len(temperatures))
+	for controller := range temperatures {
+		controllers = append(controllers, controller)
+	}
+	sort.Ints(controllers)
+	return controllers
 }
 
 func buildHBAReadings(temperatures map[int]float64, metadata map[int]hbaMetadata) []sensors.HBA {

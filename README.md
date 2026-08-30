@@ -255,13 +255,16 @@ ou du backend HBA. Seul le mode HBA explicitement `disabled` autorise un inventa
 HBA vide.
 
 L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
-pour un disque, puis numéro de série, SAS WWID ou adresse PCI pour un HBA. Les
+pour un disque, puis adresse SAS, adresse PCI ou numéro de série pour un HBA. Les
 indices locaux tels que l'IOC mpt3ctl ou le contrôleur StorCLI `/c0` ne sont
 exposés ni dans le JSON, ni dans les sélecteurs, ni dans le cache hwmon.
-`mpt3ctl` relit l'identité et la température dans chaque relevé. StorCLI met en
-cache la correspondance `/cN` pendant cinq minutes, puis la redécouvre ; une
-erreur de lecture invalide immédiatement ce cache et déclenche une unique
-redécouverte suivie d'une nouvelle tentative.
+`mpt3ctl` relit l'identité et la température dans chaque relevé. StorCLI conserve
+la correspondance `/cN` sans expiration et surveille l'empreinte des HBA dans
+`/sys/class/scsi_host`. Un changement de cette empreinte, une erreur de lecture
+ou un ensemble de contrôleurs différent invalide immédiatement le cache et
+déclenche une unique redécouverte suivie, si nécessaire, d'une nouvelle tentative.
+Les deux backends produisent en priorité le même ID `sas:<adresse>` ; l'adresse
+PCI puis le numéro de série servent de replis lorsqu'elle est indisponible.
 Le label HBA est construit à partir du modèle et de l'adresse PCI, avec l'ID
 stable comme repli, puis conservé tant que cet ID reste présent.
 

@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -102,7 +106,7 @@ func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
 		sas := firstHBAValue(d.Basics.SASAddress, d.SASAddress)
 		pci := normalizePCIAddress(firstHBAValue(d.Basics.PCIAddress, d.PCIAddress))
 		model := firstHBAValue(d.Basics.Model, d.Basics.ProductName, d.Model, d.Product)
-		id := hbaStableID(serial, sas, pci)
+		id := hbaStableID(sas, pci, serial)
 		if id == "" {
 			return nil, fmt.Errorf("storcli controller %d has no stable identity", number)
 		}
@@ -116,27 +120,44 @@ func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
 
 func firstHBAValue(values ...string) string {
 	for _, value := range values {
-		value = strings.TrimSpace(value)
-		switch strings.ToLower(value) {
-		case "", "n/a", "na", "none", "unknown":
-			continue
+		if value = hbaIdentityValue(value); value != "" {
+			return value
 		}
-		return value
 	}
 	return ""
 }
 
-func hbaStableID(serial, sasAddress, pciAddress string) string {
-	if serial = firstHBAValue(serial); serial != "" {
-		return "serial:" + strings.ToLower(serial)
+// readHBATopology returns a stable fingerprint of the Linux SCSI hosts managed
+// by HBA drivers. Sysfs attributes are polled because change notifications for
+// virtual sysfs files are not reliable across kernels.
+func readHBATopology() (string, error) {
+	return readHBATopologyAt("/sys/class/scsi_host")
+}
+
+func readHBATopologyAt(root string) (string, error) {
+	hosts, err := filepath.Glob(filepath.Join(root, "host*"))
+	if err != nil {
+		return "", err
 	}
-	if sasAddress = firstHBAValue(sasAddress); sasAddress != "" {
-		return "sas:" + strings.TrimPrefix(strings.ToLower(sasAddress), "0x")
+	var records []string
+	for _, host := range hosts {
+		procName, err := os.ReadFile(filepath.Join(host, "proc_name"))
+		if err != nil {
+			continue
+		}
+		driver := strings.TrimSpace(string(procName))
+		if driver != "mpt3sas" && driver != "megaraid_sas" {
+			continue
+		}
+		sas, _ := os.ReadFile(filepath.Join(host, "device", "sas_address"))
+		device, _ := filepath.EvalSymlinks(filepath.Join(host, "device"))
+		records = append(records, strings.Join([]string{
+			filepath.Base(host), driver, device, strings.TrimSpace(string(sas)),
+		}, "\x00"))
 	}
-	if pciAddress != "" {
-		return "pci:" + pciAddress
-	}
-	return ""
+	sort.Strings(records)
+	sum := sha256.Sum256([]byte(strings.Join(records, "\n")))
+	return fmt.Sprintf("%x", sum), nil
 }
 
 func normalizePCIAddress(address string) string {
