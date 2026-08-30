@@ -178,6 +178,39 @@ func TestHBAReaderRefreshesChangedTopology(t *testing.T) {
 	}
 }
 
+func TestHBAReaderRediscoversWhenTopologyBaselineRecovers(t *testing.T) {
+	discoveries, topologyReads := 0, 0
+	reader := &hbaReader{backend: hbaBackend{
+		name: "test",
+		topology: func() (string, error) {
+			topologyReads++
+			if topologyReads == 1 {
+				return "", errors.New("sysfs unavailable")
+			}
+			return "stable", nil
+		},
+		discover: func(context.Context) (map[int]hbaMetadata, error) {
+			discoveries++
+			return map[int]hbaMetadata{0: {id: "sas:1234"}}, nil
+		},
+		readTemperatures: func(context.Context, []int) (map[int]float64, error) {
+			return map[int]float64{0: 50}, nil
+		},
+	}}
+	if _, err := reader.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.topologyKnown {
+		t.Fatal("failed initial topology read unexpectedly established a baseline")
+	}
+	if _, err := reader.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if discoveries != 2 || !reader.topologyKnown || reader.topology != "stable" {
+		t.Fatalf("discoveries=%d topologyKnown=%v topology=%q", discoveries, reader.topologyKnown, reader.topology)
+	}
+}
+
 func TestHBAReaderRediscoversAndRetriesAfterReadError(t *testing.T) {
 	discoveries, reads := 0, 0
 	reader := &hbaReader{backend: hbaBackend{

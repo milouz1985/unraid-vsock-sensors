@@ -107,7 +107,9 @@ func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	topologyChanged := false
 	if r.metadata != nil && r.backend.topology != nil {
 		if topology, err := r.backend.topology(); err == nil {
-			topologyChanged = r.topologyKnown && topology != r.topology
+			// If discovery could not establish a baseline, rediscover as soon as
+			// sysfs becomes readable: the hardware may have changed meanwhile.
+			topologyChanged = !r.topologyKnown || topology != r.topology
 		}
 	}
 	if r.metadata == nil || topologyChanged {
