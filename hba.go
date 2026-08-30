@@ -163,10 +163,7 @@ func sortedIntKeys[V any](values map[int]V) []int {
 func buildHBAReadings(temperatures map[int]float64, metadata map[int]hbaMetadata) []sensors.HBA {
 	readings := make([]sensors.HBA, 0, len(temperatures))
 	for controller, temperature := range temperatures {
-		identity, ok := metadata[controller]
-		if !ok {
-			continue
-		}
+		identity := metadata[controller]
 		readings = append(readings, sensors.HBA{
 			ID: identity.id, Model: identity.model, PCIAddress: identity.pciAddress, Temp: temperature,
 		})
