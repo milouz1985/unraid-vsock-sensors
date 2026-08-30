@@ -187,7 +187,8 @@ func hwmon(args []string) error {
 	restored, err := publisher.restore(*device)
 	if err != nil {
 		log.Printf("hwmon inventory cache warning: %s", err)
-	} else if restored {
+	}
+	if restored {
 		if err := restartSystemdUnits(ctx, publisher.restartUnits); err != nil {
 			log.Printf("topology consumer restart warning: %s", err)
 		} else if len(publisher.restartUnits) != 0 {
@@ -388,20 +389,25 @@ func (publisher *hwmonPublisher) restore(device string) (bool, error) {
 	if cached.Version != 1 {
 		return false, fmt.Errorf("unsupported cache version %d", cached.Version)
 	}
+	reconfigured := false
 	if cached.Disks != nil {
 		readings := readingsFromCache(cached.Disks.Readings)
-		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, false); err != nil {
-			return false, fmt.Errorf("restore disks: %w", err)
+		changed, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, false)
+		if err != nil {
+			return reconfigured, fmt.Errorf("restore disks: %w", err)
 		}
+		reconfigured = reconfigured || changed
 	}
 	if cached.HBAs != nil {
 		readings := readingsFromCache(cached.HBAs.Readings)
-		if _, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings, true); err != nil {
-			return false, fmt.Errorf("restore HBA: %w", err)
+		changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings, true)
+		if err != nil {
+			return reconfigured, fmt.Errorf("restore HBA: %w", err)
 		}
+		reconfigured = reconfigured || changed
 	}
 	log.Printf("restored cached hwmon inventory from %s", publisher.cachePath)
-	return cached.Disks != nil || cached.HBAs != nil, nil
+	return reconfigured, nil
 }
 
 func (publisher *hwmonPublisher) saveCache() error {
