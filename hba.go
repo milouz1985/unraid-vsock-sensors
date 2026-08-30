@@ -63,6 +63,8 @@ func hbaIdentityValue(value string) string {
 }
 
 type hbaBackend struct {
+	// A backend provides either collect or discover+readTemperatures+topology.
+	// mpt3ctl performs a complete IOC scan itself; the metadata cache is for StorCLI.
 	name             string
 	collect          func(context.Context) ([]sensors.HBA, error)
 	discover         func(context.Context) (map[int]hbaMetadata, error)
