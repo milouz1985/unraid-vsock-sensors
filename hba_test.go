@@ -259,12 +259,19 @@ func TestReadHBATopologyAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(device, "sas_address"), []byte("0x5000\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(host, "host_sas_address"), []byte("0x5000\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	second, err := readHBATopologyAt(root)
 	if err != nil || first == second {
 		t.Fatalf("first=%q second=%q err=%v", first, second, err)
+	}
+	if err := os.WriteFile(filepath.Join(host, "host_sas_address"), []byte("0x6000\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	third, err := readHBATopologyAt(root)
+	if err != nil || second == third {
+		t.Fatalf("second=%q third=%q err=%v", second, third, err)
 	}
 }
 

@@ -149,10 +149,15 @@ func readHBATopologyAt(root string) (string, error) {
 		if driver != "mpt3sas" && driver != "megaraid_sas" {
 			continue
 		}
-		sas, _ := os.ReadFile(filepath.Join(host, "device", "sas_address"))
+		// mpt3sas exposes the controller identity on the Scsi_Host itself.
+		// Keep device/sas_address as an additional signal for drivers or kernels
+		// that expose useful topology information there.
+		hostSAS, _ := os.ReadFile(filepath.Join(host, "host_sas_address"))
+		deviceSAS, _ := os.ReadFile(filepath.Join(host, "device", "sas_address"))
 		device, _ := filepath.EvalSymlinks(filepath.Join(host, "device"))
 		records = append(records, strings.Join([]string{
-			filepath.Base(host), driver, device, strings.TrimSpace(string(sas)),
+			filepath.Base(host), driver, device,
+			strings.TrimSpace(string(hostSAS)), strings.TrimSpace(string(deviceSAS)),
 		}, "\x00"))
 	}
 	sort.Strings(records)
