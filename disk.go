@@ -157,12 +157,11 @@ func readDisksWithWarnings(disksINIPath string) ([]sensors.Disk, map[string]stri
 		}
 
 		rawTemp := strings.TrimSpace(section.Key("temp").String())
+		standby := rawTemp == "*" && strings.TrimSpace(section.Key("spundown").String()) == "1"
+		pending := rawTemp == "*" && !standby
 		temp := 0.0
-		unavailable := false
+		unavailable := pending
 		if rawTemp == "*" {
-			if strings.TrimSpace(section.Key("spundown").String()) != "1" {
-				unavailable = true
-			}
 			// Report a spun-down disk as 0°C instead of omitting its sensor.
 			// CoolerControl treats repeated missing readings as a sensor failure and
 			// eventually substitutes its 100°C failsafe value, which could drive a
@@ -191,8 +190,8 @@ func readDisksWithWarnings(disksINIPath string) ([]sensors.Disk, map[string]stri
 			Rotational:  rotational,
 			Temp:        temp,
 			Unavailable: unavailable,
-			Standby:     rawTemp == "*" && strings.TrimSpace(section.Key("spundown").String()) == "1",
-			Pending:     rawTemp == "*" && strings.TrimSpace(section.Key("spundown").String()) != "1",
+			Standby:     standby,
+			Pending:     pending,
 		})
 	}
 
