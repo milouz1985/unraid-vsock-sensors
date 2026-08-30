@@ -62,16 +62,6 @@ func hbaIdentityValue(value string) string {
 	}
 }
 
-type hbaBackend struct {
-	// A backend provides either collect or discover+readTemperatures+topology.
-	// mpt3ctl performs a complete IOC scan itself; the metadata cache is for StorCLI.
-	name             string
-	collect          func(context.Context) ([]sensors.HBA, error)
-	discover         func(context.Context) (map[int]hbaMetadata, error)
-	readTemperatures func(context.Context, []int) (map[int]float64, error)
-	topology         func() (string, error)
-}
-
 type hbaBackendMode string
 
 const (
@@ -79,34 +69,35 @@ const (
 	hbaBackendStorCLI hbaBackendMode = "storcli"
 )
 
-type hbaReader struct {
-	metadata      map[int]hbaMetadata
-	topology      string
-	topologyKnown bool
-	backend       hbaBackend
+type hbaSnapshotReader interface {
+	collect(context.Context) ([]sensors.HBA, error)
 }
 
-func newHBAReaderForBackend(mode hbaBackendMode) *hbaReader {
-	mpt3 := newMPT3Reader()
-	backend := hbaBackend{name: "mpt3ctl", collect: mpt3.collect}
-	switch mode {
-	case hbaBackendStorCLI:
-		backend = hbaBackend{
-			name: "storcli", discover: discoverStorCLIHBAs, readTemperatures: readStorCLITemperatures,
-			topology: readHBATopology,
+type storCLIReader struct {
+	metadata         map[int]hbaMetadata
+	topology         string
+	topologyKnown    bool
+	discoverMetadata func(context.Context) (map[int]hbaMetadata, error)
+	readTemperatures func(context.Context, []int) (map[int]float64, error)
+	readTopology     func() (string, error)
+}
+
+func newHBAReaderForBackend(mode hbaBackendMode) hbaSnapshotReader {
+	if mode == hbaBackendStorCLI {
+		return &storCLIReader{
+			discoverMetadata: discoverStorCLIHBAs,
+			readTemperatures: readStorCLITemperatures,
+			readTopology:     readHBATopology,
 		}
 	}
-	return &hbaReader{backend: backend}
+	return newMPT3Reader()
 }
 
-func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
-	if r.backend.collect != nil {
-		return r.backend.collect(ctx)
-	}
+func (r *storCLIReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	freshDiscovery := false
 	topologyChanged := false
-	if r.metadata != nil && r.backend.topology != nil {
-		if topology, err := r.backend.topology(); err == nil {
+	if r.metadata != nil {
+		if topology, err := r.readTopology(); err == nil {
 			// If discovery could not establish a baseline, rediscover as soon as
 			// sysfs becomes readable: the hardware may have changed meanwhile.
 			topologyChanged = !r.topologyKnown || topology != r.topology
@@ -132,27 +123,25 @@ func (r *hbaReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	return r.read(ctx)
 }
 
-func (r *hbaReader) discover(ctx context.Context) error {
-	metadata, err := r.backend.discover(ctx)
+func (r *storCLIReader) discover(ctx context.Context) error {
+	metadata, err := r.discoverMetadata(ctx)
 	if err != nil {
-		return fmt.Errorf("%s discovery: %w", r.backend.name, err)
+		return fmt.Errorf("storcli discovery: %w", err)
 	}
 	r.metadata = metadata
-	if r.backend.topology != nil {
-		if topology, topologyErr := r.backend.topology(); topologyErr == nil {
-			r.topology, r.topologyKnown = topology, true
-		}
+	if topology, topologyErr := r.readTopology(); topologyErr == nil {
+		r.topology, r.topologyKnown = topology, true
 	}
 	return nil
 }
 
-func (r *hbaReader) read(ctx context.Context) ([]sensors.HBA, error) {
+func (r *storCLIReader) read(ctx context.Context) ([]sensors.HBA, error) {
 	controllers := make([]int, 0, len(r.metadata))
 	for controller := range r.metadata {
 		controllers = append(controllers, controller)
 	}
 	sort.Ints(controllers)
-	temperatures, err := r.backend.readTemperatures(ctx, controllers)
+	temperatures, err := r.readTemperatures(ctx, controllers)
 	if err != nil {
 		return nil, err
 	}

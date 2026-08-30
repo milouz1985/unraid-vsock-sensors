@@ -118,19 +118,19 @@ func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {
 
 func TestHBAReaderCachesDiscovery(t *testing.T) {
 	discoveries := 0
-	reader := &hbaReader{backend: hbaBackend{
-		name: "test",
-		discover: func(context.Context) (map[int]hbaMetadata, error) {
+	reader := &storCLIReader{
+		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) {
 			discoveries++
 			return map[int]hbaMetadata{2: {id: "sas:1234", model: "SAS3008"}}, nil
 		},
+		readTopology: func() (string, error) { return "stable", nil },
 		readTemperatures: func(_ context.Context, controllers []int) (map[int]float64, error) {
 			if len(controllers) != 1 || controllers[0] != 2 {
 				t.Fatalf("controllers = %v", controllers)
 			}
 			return map[int]float64{2: 51}, nil
 		},
-	}}
+	}
 	for range 2 {
 		readings, err := reader.collect(context.Background())
 		if err != nil || len(readings) != 1 || readings[0].ID != "sas:1234" {
@@ -157,16 +157,16 @@ func TestHBAStableIDPrefersSASAcrossBackends(t *testing.T) {
 func TestHBAReaderRefreshesChangedTopology(t *testing.T) {
 	discoveries := 0
 	topology := "one"
-	reader := &hbaReader{backend: hbaBackend{
-		name: "test", topology: func() (string, error) { return topology, nil },
-		discover: func(context.Context) (map[int]hbaMetadata, error) {
+	reader := &storCLIReader{
+		readTopology: func() (string, error) { return topology, nil },
+		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) {
 			discoveries++
 			return map[int]hbaMetadata{0: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
 		},
 		readTemperatures: func(context.Context, []int) (map[int]float64, error) {
 			return map[int]float64{0: 50}, nil
 		},
-	}}
+	}
 	first, err := reader.collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -180,23 +180,22 @@ func TestHBAReaderRefreshesChangedTopology(t *testing.T) {
 
 func TestHBAReaderRediscoversWhenTopologyBaselineRecovers(t *testing.T) {
 	discoveries, topologyReads := 0, 0
-	reader := &hbaReader{backend: hbaBackend{
-		name: "test",
-		topology: func() (string, error) {
+	reader := &storCLIReader{
+		readTopology: func() (string, error) {
 			topologyReads++
 			if topologyReads == 1 {
 				return "", errors.New("sysfs unavailable")
 			}
 			return "stable", nil
 		},
-		discover: func(context.Context) (map[int]hbaMetadata, error) {
+		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) {
 			discoveries++
 			return map[int]hbaMetadata{0: {id: "sas:1234"}}, nil
 		},
 		readTemperatures: func(context.Context, []int) (map[int]float64, error) {
 			return map[int]float64{0: 50}, nil
 		},
-	}}
+	}
 	if _, err := reader.collect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -213,9 +212,9 @@ func TestHBAReaderRediscoversWhenTopologyBaselineRecovers(t *testing.T) {
 
 func TestHBAReaderRediscoversAndRetriesAfterReadError(t *testing.T) {
 	discoveries, reads := 0, 0
-	reader := &hbaReader{backend: hbaBackend{
-		name: "test",
-		discover: func(context.Context) (map[int]hbaMetadata, error) {
+	reader := &storCLIReader{
+		readTopology: func() (string, error) { return "stable", nil },
+		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) {
 			discoveries++
 			return map[int]hbaMetadata{discoveries: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
 		},
@@ -226,7 +225,7 @@ func TestHBAReaderRediscoversAndRetriesAfterReadError(t *testing.T) {
 			}
 			return map[int]float64{controllers[0]: 51}, nil
 		},
-	}}
+	}
 	if _, err := reader.collect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -238,20 +237,20 @@ func TestHBAReaderRediscoversAndRetriesAfterReadError(t *testing.T) {
 
 func TestExplicitHBABackendSelection(t *testing.T) {
 	reader := newHBAReaderForBackend(hbaBackendMPT3CTL)
-	if reader.backend.name != "mpt3ctl" || reader.backend.collect == nil {
-		t.Fatalf("mpt3ctl backend = %#v", reader.backend)
+	if _, ok := reader.(*mpt3Reader); !ok {
+		t.Fatalf("mpt3ctl backend = %#v", reader)
 	}
 	reader = newHBAReaderForBackend(hbaBackendStorCLI)
-	if reader.backend.name != "storcli" || reader.backend.collect != nil || reader.backend.topology == nil {
-		t.Fatalf("storcli backend = %#v", reader.backend)
+	if _, ok := reader.(*storCLIReader); !ok {
+		t.Fatalf("storcli backend = %#v", reader)
 	}
 }
 
 func TestHBAReaderRediscoversOnControllerSetMismatch(t *testing.T) {
 	discoveries, reads := 0, 0
-	reader := &hbaReader{backend: hbaBackend{
-		name: "test",
-		discover: func(context.Context) (map[int]hbaMetadata, error) {
+	reader := &storCLIReader{
+		readTopology: func() (string, error) { return "stable", nil },
+		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) {
 			discoveries++
 			return map[int]hbaMetadata{discoveries - 1: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
 		},
@@ -262,7 +261,7 @@ func TestHBAReaderRediscoversOnControllerSetMismatch(t *testing.T) {
 			}
 			return map[int]float64{controllers[0]: 51}, nil
 		},
-	}}
+	}
 	if _, err := reader.collect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
