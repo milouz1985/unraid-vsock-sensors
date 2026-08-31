@@ -16,7 +16,7 @@ import (
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-func TestMakeHWMonReadings(t *testing.T) {
+func TestMakeHWMonSamples(t *testing.T) {
 	state := sensors.Response{
 		Disks: []sensors.Disk{
 			{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
@@ -27,14 +27,14 @@ func TestMakeHWMonReadings(t *testing.T) {
 		HBAs: []sensors.HBA{{ID: "sas:1234", Model: "SAS3008", PCIAddress: "0000:06:10.0", Temp: 51}},
 	}
 
-	disks, hbas := makeHWMonReadings(state)
-	wantDisks := []hwmonReading{
-		{id: "disk:group:hdd", label: "HDD maximum", temperature: 38, members: []string{"disk:1", "disk:2"}},
-		{id: "disk:1", label: "disk1 (sda)", temperature: 34},
-		{id: "disk:2", label: "disk2 (sdb)", temperature: 38},
-		{id: "disk:3", label: "cache (nvme0n1)", temperature: 45},
+	disks, hbas := makeHWMonSamples(state)
+	wantDisks := []hwmonSample{
+		hwmonTestSample("disk:group:hdd", "HDD maximum", 38, "disk:1", "disk:2"),
+		hwmonTestSample("disk:1", "disk1 (sda)", 34),
+		hwmonTestSample("disk:2", "disk2 (sdb)", 38),
+		hwmonTestSample("disk:3", "cache (nvme0n1)", 45),
 	}
-	wantHBAs := []hwmonReading{{id: "hba:sas:1234", label: "SAS3008 (0000:06:10.0)", temperature: 51}}
+	wantHBAs := []hwmonSample{hwmonTestSample("hba:sas:1234", "SAS3008 (0000:06:10.0)", 51)}
 	if !reflect.DeepEqual(disks, wantDisks) {
 		t.Fatalf("disk readings = %#v, want %#v", disks, wantDisks)
 	}
@@ -50,10 +50,10 @@ func TestUnavailableDiskFailsSafeItsGroup(t *testing.T) {
 		{ID: "3", Name: "cache1", Device: "nvme0n1", Transport: "nvme", Temp: 45},
 		{ID: "4", Name: "cache2", Device: "nvme1n1", Transport: "nvme", Temp: 47},
 	}}
-	readings := makeDiskReadings(state)
-	byID := make(map[string]hwmonReading, len(readings))
+	readings := makeDiskSamples(state)
+	byID := make(map[string]hwmonSample, len(readings))
 	for _, reading := range readings {
-		byID[reading.id] = reading
+		byID[reading.sensor.id] = reading
 	}
 	if got := byID["disk:2"].temperature; got != hwmonFailsafeTemp {
 		t.Errorf("disk:2 = %v, want failsafe", got)
@@ -64,16 +64,16 @@ func TestUnavailableDiskFailsSafeItsGroup(t *testing.T) {
 }
 
 func TestHWMonGroupMembersUseStableOrder(t *testing.T) {
-	first, _ := makeHWMonReadings(sensors.Response{Disks: []sensors.Disk{
+	first, _ := makeHWMonSamples(sensors.Response{Disks: []sensors.Disk{
 		{ID: "2", Name: "alpha", Device: "sdb", Rotational: true, Temp: 35},
 		{ID: "1", Name: "beta", Device: "sdc", Rotational: true, Temp: 36},
 	}})
-	second, _ := makeHWMonReadings(sensors.Response{Disks: []sensors.Disk{
+	second, _ := makeHWMonSamples(sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "alpha", Device: "sdc", Rotational: true, Temp: 36},
 		{ID: "2", Name: "beta", Device: "sdb", Rotational: true, Temp: 35},
 	}})
-	if len(first) == 0 || len(second) == 0 || !slices.Equal(first[0].members, second[0].members) {
-		t.Fatalf("group member order changed: first=%v second=%v", first[0].members, second[0].members)
+	if len(first) == 0 || len(second) == 0 || !slices.Equal(first[0].sensor.members, second[0].sensor.members) {
+		t.Fatalf("group member order changed: first=%v second=%v", first[0].sensor.members, second[0].sensor.members)
 	}
 }
 
@@ -83,7 +83,7 @@ func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	inventory := hwmonInventory{}
-	initial := makeDiskReadings(sensors.Response{Disks: []sensors.Disk{
+	initial := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
 		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Temp: 38},
 		{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 45},
@@ -94,7 +94,7 @@ func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatal(err)
 	}
-	current := makeDiskReadings(sensors.Response{Disks: []sensors.Disk{
+	current := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},
 		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
 		{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 46},
@@ -117,24 +117,24 @@ func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 }
 
 func TestGroupMaximumFailsSafeWhenEveryMemberIsUnavailable(t *testing.T) {
-	readings := makeDiskReadings(sensors.Response{Disks: []sensors.Disk{
+	readings := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Unavailable: true},
 		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
 	}})
 	for _, reading := range readings {
-		if reading.id == "disk:group:hdd" && reading.temperature != hwmonFailsafeTemp {
+		if reading.sensor.id == "disk:group:hdd" && reading.temperature != hwmonFailsafeTemp {
 			t.Fatal("group maximum should use the failsafe without any usable member")
 		}
 	}
 }
 
-func TestEncodeHWMonReadings(t *testing.T) {
-	readings := []hwmonReading{
-		{id: "disk:1", label: "disk1 (sda)", temperature: 34.125},
-		{id: "disk:group:hdd", label: "HDD maximum", temperature: 38},
+func TestEncodeHWMonSamples(t *testing.T) {
+	readings := []hwmonSample{
+		hwmonTestSample("disk:1", "disk1 (sda)", 34.125),
+		hwmonTestSample("disk:group:hdd", "HDD maximum", 38),
 	}
 	var output bytes.Buffer
-	if err := encodeHWMonReadings(&output, "disk", "commit", readings); err != nil {
+	if err := encodeHWMonSamples(&output, "disk", "commit", readings); err != nil {
 		t.Fatal(err)
 	}
 	want := "disk:1\t34125\tdisk1 (sda)\n" +
@@ -145,34 +145,34 @@ func TestEncodeHWMonReadings(t *testing.T) {
 	}
 }
 
-func TestEncodeHWMonReadingsRejectsInvalidFields(t *testing.T) {
+func TestEncodeHWMonSamplesRejectsInvalidFields(t *testing.T) {
 	tests := []struct {
 		name      string
 		namespace string
-		reading   hwmonReading
+		reading   hwmonSample
 	}{
-		{name: "namespace", namespace: "other", reading: hwmonReading{id: "other:1", label: "disk1", temperature: 30}},
-		{name: "wrong prefix", namespace: "disk", reading: hwmonReading{id: "hba:0", label: "hba0", temperature: 30}},
-		{name: "newline", namespace: "disk", reading: hwmonReading{id: "disk:1", label: "disk1\nbad", temperature: 30}},
-		{name: "NaN", namespace: "disk", reading: hwmonReading{id: "disk:1", label: "disk1", temperature: math.NaN()}},
-		{name: "huge", namespace: "disk", reading: hwmonReading{id: "disk:1", label: "disk1", temperature: 1e300}},
+		{name: "namespace", namespace: "other", reading: hwmonTestSample("other:1", "disk1", 30)},
+		{name: "wrong prefix", namespace: "disk", reading: hwmonTestSample("hba:0", "hba0", 30)},
+		{name: "newline", namespace: "disk", reading: hwmonTestSample("disk:1", "disk1\nbad", 30)},
+		{name: "NaN", namespace: "disk", reading: hwmonTestSample("disk:1", "disk1", math.NaN())},
+		{name: "huge", namespace: "disk", reading: hwmonTestSample("disk:1", "disk1", 1e300)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := encodeHWMonReadings(&bytes.Buffer{}, test.namespace, "commit", []hwmonReading{test.reading}); err == nil {
+			if err := encodeHWMonSamples(&bytes.Buffer{}, test.namespace, "commit", []hwmonSample{test.reading}); err == nil {
 				t.Fatal("expected validation error")
 			}
 		})
 	}
 }
 
-func TestEncodeHWMonReadingsValidatesBeforeWriting(t *testing.T) {
-	readings := []hwmonReading{
-		{id: "disk:1", label: "disk1", temperature: 30},
-		{id: "disk:2", label: "invalid\nlabel", temperature: 31},
+func TestEncodeHWMonSamplesValidatesBeforeWriting(t *testing.T) {
+	readings := []hwmonSample{
+		hwmonTestSample("disk:1", "disk1", 30),
+		hwmonTestSample("disk:2", "invalid\nlabel", 31),
 	}
 	var output bytes.Buffer
-	if err := encodeHWMonReadings(&output, "disk", "commit", readings); err == nil {
+	if err := encodeHWMonSamples(&output, "disk", "commit", readings); err == nil {
 		t.Fatal("expected validation error")
 	}
 	if output.Len() != 0 {
@@ -180,13 +180,13 @@ func TestEncodeHWMonReadingsValidatesBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestEncodeHWMonReadingsRejectsDuplicateIDsBeforeWriting(t *testing.T) {
-	readings := []hwmonReading{
-		{id: "hba:serial:1234", label: "hba0", temperature: 50},
-		{id: "hba:serial:1234", label: "hba1", temperature: 51},
+func TestEncodeHWMonSamplesRejectsDuplicateIDsBeforeWriting(t *testing.T) {
+	readings := []hwmonSample{
+		hwmonTestSample("hba:serial:1234", "hba0", 50),
+		hwmonTestSample("hba:serial:1234", "hba1", 51),
 	}
 	var output bytes.Buffer
-	if err := encodeHWMonReadings(&output, "hba", "commit", readings); err == nil {
+	if err := encodeHWMonSamples(&output, "hba", "commit", readings); err == nil {
 		t.Fatal("expected duplicate ID error")
 	}
 	if output.Len() != 0 {
@@ -227,12 +227,12 @@ func TestPublisherReconfiguresChangedTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := &hwmonPublisher{}
-	states := [][]hwmonReading{
-		makeDiskReadings(sensors.Response{Disks: []sensors.Disk{
+	states := [][]hwmonSample{
+		makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
 			{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
 			{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Temp: 38},
 		}}),
-		makeDiskReadings(sensors.Response{Disks: []sensors.Disk{
+		makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
 			{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},
 		}}),
 	}
@@ -262,8 +262,8 @@ func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 	}
 	publisher := &hwmonPublisher{
 		cachePath: cache,
-		disks: hwmonInventory{initialized: true, readings: []hwmonReading{
-			{id: "disk:serial", label: "disk1 (sda)", temperature: 35},
+		disks: hwmonInventory{initialized: true, sensors: []hwmonSensor{
+			{id: "disk:serial", label: "disk1 (sda)"},
 		}},
 	}
 	if err := publisher.saveCache(); err != nil {
@@ -362,14 +362,14 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	inventory := hwmonInventory{}
-	initial := []hwmonReading{{id: "disk:serial", label: "disk1 (sda)", temperature: 34}}
+	initial := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sda)", 34)}
 	if _, err := publishHWMonFamily(path, "disk", &inventory, initial, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatal(err)
 	}
-	changed := []hwmonReading{{id: "disk:serial", label: "disk1 (sdb)", temperature: 35}}
+	changed := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sdb)", 35)}
 	if _, err := publishHWMonFamily(path, "disk", &inventory, changed, false); err != nil {
 		t.Fatalf("a label change must not change sensor identity: %v", err)
 	}
@@ -385,11 +385,11 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 func TestPublisherReconfiguresAfterStaleCommit(t *testing.T) {
 	inventory := hwmonInventory{
 		initialized: true,
-		readings:    []hwmonReading{{id: "disk:serial", label: "disk1 (sda)", temperature: 34}},
+		sensors:     []hwmonSensor{{id: "disk:serial", label: "disk1 (sda)"}},
 	}
-	current := []hwmonReading{{id: "disk:serial", label: "disk1 (sdb)", temperature: 35}}
+	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sdb)", 35)}
 	var operations []string
-	write := func(_, _, operation string, readings []hwmonReading) error {
+	write := func(_, _, operation string, readings []hwmonSample) error {
 		operations = append(operations, operation)
 		if operation == "commit" {
 			return syscall.ESTALE
@@ -406,20 +406,20 @@ func TestPublisherReconfiguresAfterStaleCommit(t *testing.T) {
 	if want := []string{"commit", "configure"}; !reflect.DeepEqual(operations, want) {
 		t.Fatalf("operations = %v, want %v", operations, want)
 	}
-	if !reflect.DeepEqual(inventory.readings, current) {
-		t.Fatalf("inventory = %#v, want %#v", inventory.readings, current)
+	if !reflect.DeepEqual(inventory.sensors, sensorsFromSamples(current)) {
+		t.Fatalf("inventory = %#v, want %#v", inventory.sensors, sensorsFromSamples(current))
 	}
 }
 
 func TestPublisherDoesNotReconfigureAfterOtherCommitError(t *testing.T) {
 	inventory := hwmonInventory{
 		initialized: true,
-		readings:    []hwmonReading{{id: "disk:serial", label: "disk1", temperature: 34}},
+		sensors:     []hwmonSensor{{id: "disk:serial", label: "disk1"}},
 	}
-	current := []hwmonReading{{id: "disk:serial", label: "disk1", temperature: 35}}
+	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1", 35)}
 	calls := 0
 	wantErr := errors.New("write failed")
-	write := func(_, _, _ string, _ []hwmonReading) error {
+	write := func(_, _, _ string, _ []hwmonSample) error {
 		calls++
 		return wantErr
 	}
@@ -441,7 +441,7 @@ func TestPublisherWaitsForFirstNonEmptyInventory(t *testing.T) {
 	if inventory.initialized {
 		t.Fatal("empty initial inventory was frozen")
 	}
-	readings := []hwmonReading{{id: "disk:serial", label: "disk1 (sda)", temperature: 35}}
+	readings := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sda)", 35)}
 	if _, err := publishHWMonFamily(path, "disk", &inventory, readings, false); err != nil {
 		t.Fatal(err)
 	}
@@ -468,9 +468,15 @@ func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
 	}
 }
 
-func makeDiskReadings(state sensors.Response) []hwmonReading {
-	disks, _ := makeHWMonReadings(state)
+func makeDiskSamples(state sensors.Response) []hwmonSample {
+	disks, _ := makeHWMonSamples(state)
 	return disks
+}
+
+func hwmonTestSample(id, label string, temperature float64, members ...string) hwmonSample {
+	return hwmonSample{
+		sensor: hwmonSensor{id: id, label: label, members: members}, temperature: temperature,
+	}
 }
 
 func TestPublishHWMonStateReturnsFetchError(t *testing.T) {

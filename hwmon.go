@@ -35,16 +35,20 @@ const (
 	systemdRestartTimeout = 10 * time.Second
 )
 
-type hwmonReading struct {
-	id          string
-	label       string
+type hwmonSensor struct {
+	id      string
+	label   string
+	members []string
+}
+
+type hwmonSample struct {
+	sensor      hwmonSensor
 	temperature float64
-	members     []string
 }
 
 type hwmonInventory struct {
 	initialized bool
-	readings    []hwmonReading
+	sensors     []hwmonSensor
 }
 
 type hwmonPublisher struct {
@@ -62,10 +66,10 @@ type cachedHWMonInventory struct {
 }
 
 type cachedHWMonFamily struct {
-	Readings []cachedHWMonReading `json:"readings"`
+	Sensors []cachedHWMonSensor `json:"readings"`
 }
 
-type cachedHWMonReading struct {
+type cachedHWMonSensor struct {
 	ID      string   `json:"id"`
 	Label   string   `json:"label"`
 	Members []string `json:"members,omitempty"`
@@ -82,7 +86,7 @@ var hwmonDiskGroups = []hwmonDiskGroup{
 	{kind: sensors.DiskKindNVMe, label: "NVMe SSD maximum"},
 }
 
-func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmonReading) {
+func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSample) {
 	internalDisks := make([]sensors.Disk, 0, len(state.Disks))
 	for _, disk := range state.Disks {
 		if !disk.IsExternal() {
@@ -114,10 +118,10 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 				break
 			}
 		}
-		diskReadings = append(diskReadings, hwmonReading{
-			id:          "disk:group:" + string(group.kind),
-			label:       group.label,
-			members:     members,
+		diskSamples = append(diskSamples, hwmonSample{
+			sensor: hwmonSensor{
+				id: "disk:group:" + string(group.kind), label: group.label, members: members,
+			},
 			temperature: maximum,
 		})
 	}
@@ -127,9 +131,10 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 		if disk.Unavailable {
 			temperature = hwmonFailsafeTemp
 		}
-		diskReadings = append(diskReadings, hwmonReading{
-			id:          "disk:" + disk.ID,
-			label:       fmt.Sprintf("%s (%s)", disk.Name, disk.Device),
+		diskSamples = append(diskSamples, hwmonSample{
+			sensor: hwmonSensor{
+				id: "disk:" + disk.ID, label: fmt.Sprintf("%s (%s)", disk.Name, disk.Device),
+			},
 			temperature: temperature,
 		})
 	}
@@ -142,13 +147,12 @@ func makeHWMonReadings(state sensors.Response) (diskReadings, hbaReadings []hwmo
 		} else if hba.PCIAddress != "" {
 			label = hba.PCIAddress
 		}
-		hbaReadings = append(hbaReadings, hwmonReading{
-			id:          "hba:" + hba.ID,
-			label:       label,
+		hbaSamples = append(hbaSamples, hwmonSample{
+			sensor:      hwmonSensor{id: "hba:" + hba.ID, label: label},
 			temperature: hba.Temp,
 		})
 	}
-	return diskReadings, hbaReadings
+	return diskSamples, hbaSamples
 }
 
 func hwmon(args []string) error {
@@ -239,7 +243,7 @@ func (publisher *hwmonPublisher) publish(
 	if err != nil {
 		return false, err
 	}
-	disks, hbas := makeHWMonReadings(state)
+	disks, hbas := makeHWMonSamples(state)
 	var diskErr, hbaErr error
 	reconfigured := false
 	if state.Error != "" {
@@ -279,18 +283,18 @@ func (publisher *hwmonPublisher) publish(
 func publishHWMonFamily(
 	path, namespace string,
 	inventory *hwmonInventory,
-	current []hwmonReading,
+	current []hwmonSample,
 	allowEmpty bool,
 ) (bool, error) {
-	return publishHWMonFamilyWithWriter(path, namespace, inventory, current, allowEmpty, writeHWMonReadings)
+	return publishHWMonFamilyWithWriter(path, namespace, inventory, current, allowEmpty, writeHWMonSamples)
 }
 
 func publishHWMonFamilyWithWriter(
 	path, namespace string,
 	inventory *hwmonInventory,
-	current []hwmonReading,
+	current []hwmonSample,
 	allowEmpty bool,
-	write func(string, string, string, []hwmonReading) error,
+	write func(string, string, string, []hwmonSample) error,
 ) (bool, error) {
 	if len(current) == 0 && !allowEmpty {
 		return false, errors.New("inventory is empty; waiting for sensors")
@@ -300,23 +304,23 @@ func publishHWMonFamilyWithWriter(
 			return false, err
 		}
 		inventory.initialized = true
-		inventory.readings = append([]hwmonReading(nil), current...)
+		inventory.sensors = sensorsFromSamples(current)
 		return true, nil
 	}
-	if !sameHWMonTopology(inventory.readings, current) {
+	if !sameHWMonTopology(inventory.sensors, current) {
 		if err := write(path, namespace, "configure", current); err != nil {
 			return false, err
 		}
-		inventory.readings = append([]hwmonReading(nil), current...)
+		inventory.sensors = sensorsFromSamples(current)
 		return true, nil
 	}
 
-	currentByID := make(map[string]hwmonReading, len(current))
-	for _, reading := range current {
-		currentByID[reading.id] = reading
+	currentByID := make(map[string]hwmonSample, len(current))
+	for _, sample := range current {
+		currentByID[sample.sensor.id] = sample
 	}
-	updates := make([]hwmonReading, 0, len(inventory.readings))
-	for _, expected := range inventory.readings {
+	updates := make([]hwmonSample, 0, len(inventory.sensors))
+	for _, expected := range inventory.sensors {
 		reading, found := currentByID[expected.id]
 		if !found {
 			continue
@@ -332,7 +336,7 @@ func publishHWMonFamilyWithWriter(
 			// Labels describe the fixed inventory and may contain volatile names
 			// such as /dev/sdX. Keep the configured label and use only the stable
 			// ID to associate a new temperature.
-			reading.label = expected.label
+			reading.sensor = expected
 			updates = append(updates, reading)
 		}
 	}
@@ -343,19 +347,19 @@ func publishHWMonFamilyWithWriter(
 		if configureErr := write(path, namespace, "configure", current); configureErr != nil {
 			return false, fmt.Errorf("reconfigure stale %s inventory: %w", namespace, configureErr)
 		}
-		inventory.readings = append([]hwmonReading(nil), current...)
+		inventory.sensors = sensorsFromSamples(current)
 		return true, nil
 	}
 	return false, nil
 }
 
-func sameHWMonTopology(expected, current []hwmonReading) bool {
+func sameHWMonTopology(expected []hwmonSensor, current []hwmonSample) bool {
 	if len(expected) != len(current) {
 		return false
 	}
-	currentByID := make(map[string]hwmonReading, len(current))
-	for _, reading := range current {
-		currentByID[reading.id] = reading
+	currentByID := make(map[string]hwmonSensor, len(current))
+	for _, sample := range current {
+		currentByID[sample.sensor.id] = sample.sensor
 	}
 	for _, reading := range expected {
 		other, found := currentByID[reading.id]
@@ -364,6 +368,16 @@ func sameHWMonTopology(expected, current []hwmonReading) bool {
 		}
 	}
 	return true
+}
+
+func sensorsFromSamples(samples []hwmonSample) []hwmonSensor {
+	sensors := make([]hwmonSensor, 0, len(samples))
+	for _, sample := range samples {
+		sensor := sample.sensor
+		sensor.members = append([]string(nil), sensor.members...)
+		sensors = append(sensors, sensor)
+	}
+	return sensors
 }
 
 func (publisher *hwmonPublisher) restore(device string) (bool, error) {
@@ -394,7 +408,7 @@ func (publisher *hwmonPublisher) restore(device string) (bool, error) {
 	}
 	reconfigured := false
 	if cached.Disks != nil {
-		readings := readingsFromCache(cached.Disks.Readings)
+		readings := samplesFromCache(cached.Disks.Sensors)
 		changed, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, false)
 		if err != nil {
 			return reconfigured, fmt.Errorf("restore disks: %w", err)
@@ -402,7 +416,7 @@ func (publisher *hwmonPublisher) restore(device string) (bool, error) {
 		reconfigured = reconfigured || changed
 	}
 	if cached.HBAs != nil {
-		readings := readingsFromCache(cached.HBAs.Readings)
+		readings := samplesFromCache(cached.HBAs.Sensors)
 		changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings, true)
 		if err != nil {
 			return reconfigured, fmt.Errorf("restore HBA: %w", err)
@@ -416,10 +430,10 @@ func (publisher *hwmonPublisher) restore(device string) (bool, error) {
 func (publisher *hwmonPublisher) saveCache() error {
 	cached := cachedHWMonInventory{Version: 1}
 	if publisher.disks.initialized {
-		cached.Disks = &cachedHWMonFamily{Readings: readingsToCache(publisher.disks.readings)}
+		cached.Disks = &cachedHWMonFamily{Sensors: sensorsToCache(publisher.disks.sensors)}
 	}
 	if publisher.hbas.initialized {
-		cached.HBAs = &cachedHWMonFamily{Readings: readingsToCache(publisher.hbas.readings)}
+		cached.HBAs = &cachedHWMonFamily{Sensors: sensorsToCache(publisher.hbas.sensors)}
 	}
 	data, err := json.MarshalIndent(cached, "", "  ")
 	if err != nil {
@@ -453,22 +467,24 @@ func (publisher *hwmonPublisher) saveCache() error {
 	return os.Rename(temporaryPath, publisher.cachePath)
 }
 
-func readingsToCache(readings []hwmonReading) []cachedHWMonReading {
-	cached := make([]cachedHWMonReading, 0, len(readings))
-	for _, reading := range readings {
-		cached = append(cached, cachedHWMonReading{
-			ID: reading.id, Label: reading.label, Members: append([]string(nil), reading.members...),
+func sensorsToCache(sensors []hwmonSensor) []cachedHWMonSensor {
+	cached := make([]cachedHWMonSensor, 0, len(sensors))
+	for _, sensor := range sensors {
+		cached = append(cached, cachedHWMonSensor{
+			ID: sensor.id, Label: sensor.label, Members: append([]string(nil), sensor.members...),
 		})
 	}
 	return cached
 }
 
-func readingsFromCache(cached []cachedHWMonReading) []hwmonReading {
-	readings := make([]hwmonReading, 0, len(cached))
+func samplesFromCache(cached []cachedHWMonSensor) []hwmonSample {
+	readings := make([]hwmonSample, 0, len(cached))
 	for _, reading := range cached {
-		readings = append(readings, hwmonReading{
-			id: reading.ID, label: reading.Label, temperature: hwmonFailsafeTemp,
-			members: append([]string(nil), reading.Members...),
+		readings = append(readings, hwmonSample{
+			sensor: hwmonSensor{
+				id: reading.ID, label: reading.Label, members: append([]string(nil), reading.Members...),
+			},
+			temperature: hwmonFailsafeTemp,
 		})
 	}
 	return readings
@@ -511,7 +527,7 @@ func restartSystemdUnits(ctx context.Context, units []string) error {
 	return nil
 }
 
-func writeHWMonReadings(path, namespace, operation string, readings []hwmonReading) (err error) {
+func writeHWMonSamples(path, namespace, operation string, readings []hwmonSample) (err error) {
 	device, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {
 		return err
@@ -519,10 +535,10 @@ func writeHWMonReadings(path, namespace, operation string, readings []hwmonReadi
 	defer func() {
 		err = errors.Join(err, device.Close())
 	}()
-	return encodeHWMonReadings(device, namespace, operation, readings)
+	return encodeHWMonSamples(device, namespace, operation, readings)
 }
 
-func encodeHWMonReadings(out io.Writer, namespace, operation string, readings []hwmonReading) error {
+func encodeHWMonSamples(out io.Writer, namespace, operation string, readings []hwmonSample) error {
 	prefix := namespace + ":"
 	ids := make(map[string]struct{}, len(readings))
 	if namespace != "disk" && namespace != "hba" {
@@ -532,28 +548,29 @@ func encodeHWMonReadings(out io.Writer, namespace, operation string, readings []
 		return fmt.Errorf("invalid hwmon operation %q", operation)
 	}
 	for _, reading := range readings {
-		if !strings.HasPrefix(reading.id, prefix) || len(reading.id) > maxHWMonIDSize ||
-			strings.ContainsAny(reading.id, "\t\r\n") {
-			return fmt.Errorf("invalid hwmon sensor ID %q", reading.id)
+		sensor := reading.sensor
+		if !strings.HasPrefix(sensor.id, prefix) || len(sensor.id) > maxHWMonIDSize ||
+			strings.ContainsAny(sensor.id, "\t\r\n") {
+			return fmt.Errorf("invalid hwmon sensor ID %q", sensor.id)
 		}
-		if _, duplicate := ids[reading.id]; duplicate {
-			return fmt.Errorf("duplicate hwmon sensor ID %q", reading.id)
+		if _, duplicate := ids[sensor.id]; duplicate {
+			return fmt.Errorf("duplicate hwmon sensor ID %q", sensor.id)
 		}
-		ids[reading.id] = struct{}{}
-		if reading.label == "" || len(reading.label) > maxHWMonLabelSize ||
-			strings.ContainsAny(reading.label, "\t\r\n") {
-			return fmt.Errorf("invalid hwmon sensor label %q", reading.label)
+		ids[sensor.id] = struct{}{}
+		if sensor.label == "" || len(sensor.label) > maxHWMonLabelSize ||
+			strings.ContainsAny(sensor.label, "\t\r\n") {
+			return fmt.Errorf("invalid hwmon sensor label %q", sensor.label)
 		}
 		if math.IsNaN(reading.temperature) || math.IsInf(reading.temperature, 0) {
-			return fmt.Errorf("invalid temperature for %q", reading.id)
+			return fmt.Errorf("invalid temperature for %q", sensor.id)
 		}
 		if reading.temperature < 0 || reading.temperature > 150 {
-			return fmt.Errorf("temperature out of range for %q", reading.id)
+			return fmt.Errorf("temperature out of range for %q", sensor.id)
 		}
 	}
 	for _, reading := range readings {
 		milliCelsius := int64(math.Round(reading.temperature * 1000))
-		if _, err := fmt.Fprintf(out, "%s\t%d\t%s\n", reading.id, milliCelsius, reading.label); err != nil {
+		if _, err := fmt.Fprintf(out, "%s\t%d\t%s\n", reading.sensor.id, milliCelsius, reading.sensor.label); err != nil {
 			return err
 		}
 	}

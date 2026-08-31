@@ -57,7 +57,7 @@ func TestDiskReaderGraceWithoutPreviousTemperatureAvoidsFailsafe(t *testing.T) {
 	if err != nil || len(disks) != 1 || disks[0].Temp != 0 || disks[0].Unavailable {
 		t.Fatalf("initial grace reading = %#v, %v", disks, err)
 	}
-	readings := makeDiskReadings(sensors.Response{Disks: disks})
+	readings := makeDiskSamples(sensors.Response{Disks: disks})
 	if len(readings) != 1 || readings[0].temperature == hwmonFailsafeTemp {
 		t.Fatalf("initial grace triggered hwmon failsafe: %#v", readings)
 	}
