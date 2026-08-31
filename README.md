@@ -217,10 +217,12 @@ unraid-vsock-sensors get --cid 3 --port 990 --json
 `unraid_hba` contient un canal par contrôleur lorsque la collecte HBA est
 activée.
 
-Les disques USB, les slots Unraid non assignés (`DISK_NP`) et la clé USB de
-démarrage `flash` ne sont pas publiés. Les SSD utilisant un autre transport que
-SATA ou NVMe restent accessibles en ligne de commande, mais ne créent pas de
-canal maximum dédié.
+Les disques USB sont exposés dans le JSON et restent accessibles avec
+`disk all`, leur nom ou leur périphérique, mais ne créent aucun canal hwmon et
+ne participent pas aux groupes. Les slots Unraid non assignés (`DISK_NP`) et la
+clé USB de démarrage `flash` sont entièrement exclus. Les SSD internes utilisant
+un autre transport que SATA ou NVMe possèdent un canal individuel, mais ne
+créent pas de canal maximum dédié.
 
 Un disque en veille (`temp="*"` et `spundown="1"`) est conservé dans
 l'inventaire avec une température de `0 °C`. Cette valeur signifie que la sonde
@@ -277,8 +279,10 @@ Pendant l'exécution :
   famille disque atteindre le failsafe ; après une éventuelle grâce de spin-up,
   une température indisponible ou invalide place son disque et le maximum de sa
   catégorie au failsafe ;
-- une lecture HBA sans métadonnées correspondantes est ignorée sans
-  interrompre l'actualisation des autres contrôleurs ;
+- une erreur HBA invalide le relevé complet : l'inventaire précédent reste
+  configuré sans être actualisé et atteint donc le failsafe. StorCLI tente
+  auparavant une redécouverte unique lorsque la topologie ou l'ensemble des
+  contrôleurs a changé ;
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
   automatiquement la famille hwmon concernée et met à jour le cache ;
 - un changement de `/dev/sdX`, de nom affiché ou d'index IOC ne modifie pas
@@ -362,7 +366,7 @@ apt purge unraid-vsock-sensors-hwmon
 Go 1.27.0 ou plus récent est nécessaire sur la machine de développement.
 
 ```sh
-make check          # exécute go vet et go test
+make check          # vérifie le Go, les scripts, la page PHP et le script rc
 make build          # crée bin/unraid-vsock-sensors
 make unraid-package # crée le .txz et le .plg Unraid
 make hwmon-package  # crée le .deb Proxmox
@@ -370,7 +374,9 @@ make all            # exécute tous les contrôles et construit tous les artefac
 ```
 
 Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
-commit courant n'est pas exactement tagué.
+commit courant n'est pas exactement tagué. Une version explicite s'écrit sans
+le préfixe `v`, par exemple `make all VERSION=1.4.2` ; le tag Git correspondant
+peut ensuite s'appeler `v1.4.2`.
 
 ### Tester manuellement un paquet Unraid de développement
 

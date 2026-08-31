@@ -79,15 +79,20 @@ la durée de `poll_attributes` augmentée de cinq secondes, sans déclarer la so
 en panne avant le prochain relevé configuré. Un changement de label seul
 n'affecte pas l'identité.
 
+Si l'enregistrement d'une nouvelle topologie échoue, le pilote réenregistre
+l'inventaire précédent au lieu de laisser disparaître les sondes. L'erreur est
+retournée à l'agent, qui retente la nouvelle configuration, tandis que les
+anciens canaux non actualisés atteignent naturellement le failsafe.
+
 Si le module `virt_temp` est déchargé puis rechargé sans redémarrer l'agent, le
 premier `commit` retourne `ESTALE` parce que le noyau a perdu son inventaire.
 L'agent répond par une unique opération `configure`, restaure les canaux et
 notifie les consommateurs comme lors de tout changement de topologie.
 
-De même, une lecture HBA qui ne correspond à aucune métadonnée mise en
-cache est écartée seule. Les contrôleurs correctement identifiés continuent
-d'être actualisés ; si aucun ne l'est, l'inventaire précédent reste en place et
-atteint le failsafe.
+Une erreur HBA invalide le relevé complet. L'inventaire précédent reste en
+place sans être actualisé et atteint donc le failsafe. StorCLI tente auparavant
+une redécouverte unique lorsque la topologie ou l'ensemble des contrôleurs a
+changé.
 
 Les logiciels qui n'observent pas les ajouts hwmon à chaud peuvent être
 relancés après une restauration ou une reconfiguration. La liste est optionnelle
