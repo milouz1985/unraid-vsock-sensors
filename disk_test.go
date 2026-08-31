@@ -47,7 +47,7 @@ func TestDiskReaderAllowsSpinupGrace(t *testing.T) {
 	}
 }
 
-func TestDiskReaderUsesZeroWithoutPreviousTemperature(t *testing.T) {
+func TestDiskReaderGraceWithoutPreviousTemperatureAvoidsFailsafe(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "disks.ini")
 	if err := os.WriteFile(path, []byte("[disk1]\nid=serial1\ndevice=sdb\ntemp=*\nspundown=0\nrotational=1\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -56,6 +56,10 @@ func TestDiskReaderUsesZeroWithoutPreviousTemperature(t *testing.T) {
 	disks, err := reader.read()
 	if err != nil || len(disks) != 1 || disks[0].Temp != 0 || disks[0].Unavailable {
 		t.Fatalf("initial grace reading = %#v, %v", disks, err)
+	}
+	readings := makeDiskReadings(sensors.Response{Disks: disks})
+	if len(readings) != 1 || readings[0].temperature == hwmonFailsafeTemp {
+		t.Fatalf("initial grace triggered hwmon failsafe: %#v", readings)
 	}
 }
 
@@ -204,7 +208,7 @@ func TestReadAndSelect(t *testing.T) {
 	if err := os.WriteFile(p, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	disks, err := readDisks(p)
+	disks, err := newDiskReader(p, time.Minute).read()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +238,7 @@ func TestReadDisksMarksInvalidTemperatureUnavailable(t *testing.T) {
 			if err := os.WriteFile(p, []byte(data), 0600); err != nil {
 				t.Fatal(err)
 			}
-			disks, err := readDisks(p)
+			disks, err := newDiskReader(p, time.Minute).read()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -265,7 +269,7 @@ func TestSelectDisksExcludesExternalDisksFromKindSelectors(t *testing.T) {
 	}
 }
 
-func TestReadDisksMarksMissingTemperatureOnActiveDiskUnavailable(t *testing.T) {
+func TestReadDisksMarksMissingTemperatureOnActiveDiskPending(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "disks.ini")
 	if err := os.WriteFile(p, []byte("[disk1]\nid=serial\ndevice=sdb\ntemp=*\nrotational=1\nspundown=0\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -274,7 +278,7 @@ func TestReadDisksMarksMissingTemperatureOnActiveDiskUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(disks) != 1 || !disks[0].Unavailable {
-		t.Fatalf("missing temperature should affect only its disk: %#v", disks)
+	if len(disks) != 1 || disks[0].state != diskStatePending {
+		t.Fatalf("missing temperature should mark the raw disk pending: %#v", disks)
 	}
 }
