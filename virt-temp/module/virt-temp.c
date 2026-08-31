@@ -328,7 +328,7 @@ static ssize_t device_write(struct file *file, const char __user *user,
 {
 	struct virt_temp_session *session = file->private_data;
 	struct virt_temp_record *record;
-	char *buffer = NULL, *cursor, *first, *temperature, *label;
+	char *buffer = NULL, *cursor, *kind, *id, *temperature, *label;
 	long value;
 	int err;
 
@@ -349,20 +349,39 @@ static ssize_t device_write(struct file *file, const char __user *user,
 		err = -EINVAL;
 		goto out;
 	}
+	/*
+	 * Parse the text protocol emitted by encodeHWMonSamples() in hwmon.go.
+	 * Every write on an open file is either a tab-separated sample:
+	 *
+	 *   sample\t<stable ID>\t<temperature in milli-Celsius>\t<label>\n
+	 *
+	 * or the command that atomically applies the session's samples:
+	 *
+	 *   configure\t<namespace>\n
+	 *   commit\t<namespace>\n
+	 *
+	 * IDs and labels are deliberately forbidden from containing tabs or
+	 * newlines, so no quoting or escaping is required here.
+	 */
 	cursor = strim(buffer);
-	first = strsep(&cursor, "\t");
-	if ((!strcmp(first, "configure") || !strcmp(first, "commit")) &&
+	kind = strsep(&cursor, "\t");
+	if ((!strcmp(kind, "configure") || !strcmp(kind, "commit")) &&
 	    cursor && *cursor && !strchr(cursor, '\t')) {
-		err = apply(session, first, cursor);
+		err = apply(session, kind, cursor);
 		if (!err)
 			session->applied = true;
 		goto out;
 	}
+	if (strcmp(kind, "sample")) {
+		err = -EINVAL;
+		goto out;
+	}
+	id = strsep(&cursor, "\t");
 	temperature = strsep(&cursor, "\t");
 	label = cursor;
-	if (!first || !*first || !temperature || !*temperature ||
-	    !label || !*label || strpbrk(first, "\t\r\n") ||
-	    strpbrk(label, "\t\r\n") || strlen(first) >= ID_SIZE ||
+	if (!id || !*id || !temperature || !*temperature || !label || !*label ||
+	    strpbrk(id, "\t\r\n") || strpbrk(label, "\t\r\n") ||
+	    strlen(id) >= ID_SIZE ||
 	    strlen(label) >= LABEL_SIZE) {
 		err = -EINVAL;
 		goto out;
@@ -374,7 +393,7 @@ static ssize_t device_write(struct file *file, const char __user *user,
 		err = -ERANGE;
 		goto out;
 	}
-	record = find_record(session, first);
+	record = find_record(session, id);
 	if (!record) {
 		if (session->count >= MAX_RECORDS) {
 			err = -ENOSPC;
@@ -385,7 +404,7 @@ static ssize_t device_write(struct file *file, const char __user *user,
 			err = -ENOMEM;
 			goto out;
 		}
-		strscpy(record->id, first, sizeof(record->id));
+		strscpy(record->id, id, sizeof(record->id));
 		list_add_tail(&record->node, &session->records);
 		session->count++;
 	}

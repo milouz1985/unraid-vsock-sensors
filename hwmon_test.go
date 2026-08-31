@@ -106,10 +106,10 @@ func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "disk:group:hdd\t100000\tHDD maximum\n" +
-		"disk:1\t35000\tdisk1 (sda)\n" +
-		"disk:2\t100000\tdisk2 (sdb)\n" +
-		"disk:3\t46000\tcache (nvme0n1)\n" +
+	want := "sample\tdisk:group:hdd\t100000\tHDD maximum\n" +
+		"sample\tdisk:1\t35000\tdisk1 (sda)\n" +
+		"sample\tdisk:2\t100000\tdisk2 (sdb)\n" +
+		"sample\tdisk:3\t46000\tcache (nvme0n1)\n" +
 		"commit\tdisk\n"
 	if got := string(data); got != want {
 		t.Fatalf("update = %q, want explicit disk and group failsafe %q", got, want)
@@ -137,8 +137,8 @@ func TestEncodeHWMonSamples(t *testing.T) {
 	if err := encodeHWMonSamples(&output, "disk", "commit", readings); err != nil {
 		t.Fatal(err)
 	}
-	want := "disk:1\t34125\tdisk1 (sda)\n" +
-		"disk:group:hdd\t38000\tHDD maximum\n" +
+	want := "sample\tdisk:1\t34125\tdisk1 (sda)\n" +
+		"sample\tdisk:group:hdd\t38000\tHDD maximum\n" +
 		"commit\tdisk\n"
 	if got := output.String(); got != want {
 		t.Fatalf("encoded snapshot = %q, want %q", got, want)
@@ -216,7 +216,7 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if got, want := string(data), "hba:sas:1234\t51000\tsas:1234\nconfigure\thba\n"; got != want {
+	if got, want := string(data), "sample\thba:sas:1234\t51000\tsas:1234\nconfigure\thba\n"; got != want {
 		t.Fatalf("HBA snapshot = %q, want %q", got, want)
 	}
 }
@@ -248,7 +248,7 @@ func TestPublisherReconfiguresChangedTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "disk:1\t35000\tdisk1 (sda)\nconfigure\tdisk\n"; got != want {
+	if got, want := string(data), "sample\tdisk:1\t35000\tdisk1 (sda)\nconfigure\tdisk\n"; got != want {
 		t.Fatalf("update = %q, want replacement inventory %q", got, want)
 	}
 }
@@ -296,7 +296,7 @@ func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "disk:serial\t100000\tdisk1 (sda)\nconfigure\tdisk\n"; got != want {
+	if got, want := string(data), "sample\tdisk:serial\t100000\tdisk1 (sda)\nconfigure\tdisk\n"; got != want {
 		t.Fatalf("restored inventory = %q, want failsafe inventory %q", got, want)
 	}
 }
@@ -338,7 +338,7 @@ func TestPublisherReportsPartialCacheRestore(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if got, want := string(contents), "disk:serial\t100000\tdisk1\nconfigure\tdisk\n"; got != want {
+	if got, want := string(contents), "sample\tdisk:serial\t100000\tdisk1\nconfigure\tdisk\n"; got != want {
 		t.Fatalf("restored disk inventory = %q, want %q", got, want)
 	}
 }
@@ -377,7 +377,7 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "disk:serial\t35000\tdisk1 (sda)\ncommit\tdisk\n"; got != want {
+	if got, want := string(data), "sample\tdisk:serial\t35000\tdisk1 (sda)\ncommit\tdisk\n"; got != want {
 		t.Fatalf("update = %q, want configured label %q", got, want)
 	}
 }

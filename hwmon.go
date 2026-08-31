@@ -538,6 +538,18 @@ func writeHWMonSamples(path, namespace, operation string, readings []hwmonSample
 	return encodeHWMonSamples(device, namespace, operation, readings)
 }
 
+// encodeHWMonSamples writes the text protocol consumed by virt-temp's
+// device_write(). Each sample is one tab-separated write:
+//
+//	sample\t<stable ID>\t<temperature in milli°C>\t<label>\n
+//
+// The final write atomically applies the samples collected on this open file:
+//
+//	configure\t<namespace>\n
+//	commit\t<namespace>\n
+//
+// IDs and labels cannot contain tabs or newlines, so the kernel parser does
+// not need quoting or escaping rules.
 func encodeHWMonSamples(out io.Writer, namespace, operation string, readings []hwmonSample) error {
 	prefix := namespace + ":"
 	ids := make(map[string]struct{}, len(readings))
@@ -570,7 +582,7 @@ func encodeHWMonSamples(out io.Writer, namespace, operation string, readings []h
 	}
 	for _, reading := range readings {
 		milliCelsius := int64(math.Round(reading.temperature * 1000))
-		if _, err := fmt.Fprintf(out, "%s\t%d\t%s\n", reading.sensor.id, milliCelsius, reading.sensor.label); err != nil {
+		if _, err := fmt.Fprintf(out, "sample\t%s\t%d\t%s\n", reading.sensor.id, milliCelsius, reading.sensor.label); err != nil {
 			return err
 		}
 	}

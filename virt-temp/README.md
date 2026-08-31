@@ -29,6 +29,17 @@ Le module crée `/dev/virt-temp`. L'agent y envoie séparément les familles
 2. `commit` actualise uniquement les identifiants déjà configurés ;
 3. une fermeture sans opération finale ne modifie rien.
 
+Le protocole textuel utilise un discriminant explicite dans son premier champ :
+
+```text
+sample<TAB><ID stable><TAB><température en milli°C><TAB><label>
+configure<TAB><famille>
+commit<TAB><famille>
+```
+
+Les tabulations et retours à la ligne sont interdits dans les ID et labels.
+Chaque ligne est transmise par une écriture distincte sur la même session.
+
 Chaque session accepte au maximum 1 024 enregistrements. Cette limite borne les
 allocations contrôlées depuis l'espace utilisateur ; elle ne correspond pas à
 une limite matérielle.
