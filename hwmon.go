@@ -440,10 +440,11 @@ func (publisher *hwmonPublisher) saveCache() error {
 		return err
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(publisher.cachePath), 0755); err != nil {
+	directoryPath := filepath.Dir(publisher.cachePath)
+	if err := os.MkdirAll(directoryPath, 0755); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(publisher.cachePath), ".hwmon-inventory-*")
+	temporary, err := os.CreateTemp(directoryPath, ".hwmon-inventory-*")
 	if err != nil {
 		return err
 	}
@@ -464,7 +465,23 @@ func (publisher *hwmonPublisher) saveCache() error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, publisher.cachePath)
+	if err := os.Rename(temporaryPath, publisher.cachePath); err != nil {
+		return err
+	}
+	// Syncing the file makes its contents durable; syncing the directory after
+	// the rename also makes the new directory entry durable across a power loss.
+	return syncDirectory(directoryPath)
+}
+
+func syncDirectory(path string) (err error) {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, directory.Close())
+	}()
+	return directory.Sync()
 }
 
 func sensorsToCache(sensors []hwmonSensor) []cachedHWMonSensor {
