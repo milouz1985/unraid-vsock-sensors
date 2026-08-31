@@ -194,6 +194,30 @@ static void free_inventory(struct virt_temp_family *family)
 	family->count = 0;
 }
 
+static void rebase_inventory_descriptors(struct virt_temp_family *family)
+{
+	family->channel_info.config = family->config;
+	family->info[0] = &family->channel_info;
+	family->info[1] = NULL;
+	family->chip_info.info = family->info;
+}
+
+static int register_hwmon_inventory(struct virt_temp_family *family)
+{
+	if (!family->count)
+		return 0;
+	family->hwmon = hwmon_device_register_with_info(
+		&family->platform->dev, family->hwmon_name, family,
+		&family->chip_info, NULL);
+	if (IS_ERR(family->hwmon)) {
+		int err = PTR_ERR(family->hwmon);
+
+		family->hwmon = NULL;
+		return err;
+	}
+	return 0;
+}
+
 static int build_inventory(struct virt_temp_family *family,
 			   struct virt_temp_session *session)
 {
@@ -237,6 +261,8 @@ static int configure(struct virt_temp_session *session,
 		.lock = family->lock,
 		.platform = family->platform,
 	};
+	struct virt_temp_family previous;
+	int rollback_err;
 	int err = build_inventory(&replacement, session);
 
 	if (err)
@@ -248,23 +274,28 @@ static int configure(struct virt_temp_session *session,
 	 * or free of sensors/count. This lifetime guarantee is also why read_value
 	 * and read_label do not need the family mutex.
 	 */
+	previous = *family;
 	unregister_hwmon(family);
-	free_inventory(family);
+	previous.hwmon = NULL;
 	*family = replacement;
 	/* Rebase the descriptor pointers copied from the stack replacement. */
-	family->channel_info.config = family->config;
-	family->info[0] = &family->channel_info;
-	family->info[1] = NULL;
-	family->chip_info.info = family->info;
-	if (family->count) {
-		family->hwmon = hwmon_device_register_with_info(
-			&family->platform->dev, family->hwmon_name, family,
-			&family->chip_info, NULL);
-		if (IS_ERR(family->hwmon)) {
-			err = PTR_ERR(family->hwmon);
-			family->hwmon = NULL;
-			free_inventory(family);
-		}
+	rebase_inventory_descriptors(family);
+	err = register_hwmon_inventory(family);
+	if (!err) {
+		free_inventory(&previous);
+	} else {
+		/*
+		 * Keep a working, stale-safe hwmon device if registering the new
+		 * topology fails. The userspace error makes the agent retry the new
+		 * inventory, while the restored sensors naturally reach their failsafe.
+		 */
+		free_inventory(family);
+		*family = previous;
+		rebase_inventory_descriptors(family);
+		rollback_err = register_hwmon_inventory(family);
+		if (rollback_err)
+			pr_err("failed to restore %s hwmon inventory: %d\n",
+			       family->namespace, rollback_err);
 	}
 	mutex_unlock(family->lock);
 	return err;
