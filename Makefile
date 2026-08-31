@@ -9,7 +9,8 @@ DEBIAN_REVISION ?= 1
 VERSION := $(VERSION)
 LDFLAGS = -s -w -X main.version=$(VERSION)
 BASH_SCRIPTS := version.sh unraid-plugin/package.sh \
-	unraid-plugin/rc.unraid-vsock-sensors unraid-plugin/service.sh \
+	unraid-plugin/rc.unraid-vsock-sensors unraid-plugin/rc_test.sh \
+	unraid-plugin/service.sh \
 	virt-temp/package.sh virt-temp/prepare-dkms.sh
 POSIX_SCRIPTS := virt-temp/debian/postinst.in virt-temp/debian/prerm.in \
 	virt-temp/debian/postrm.in
@@ -39,6 +40,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	bash -n $(BASH_SCRIPTS)
 	sh -n $(POSIX_SCRIPTS)
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
+	bash unraid-plugin/rc_test.sh
 
 check: vet test check-scripts ## Vérifie le projet sans créer d'artefacts
 

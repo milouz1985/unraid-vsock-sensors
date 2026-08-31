@@ -100,7 +100,7 @@ Vérification depuis le terminal Unraid :
 ```sh
 /etc/rc.d/rc.unraid-vsock-sensors status
 /usr/local/sbin/unraid-vsock-sensors version
-grep 'unraid-vsock-sensors' /var/log/syslog | tail -n 50
+tail -n 50 /var/log/unraid-vsock-sensors.log
 ```
 
 ### 3. Installer l'intégration hwmon sur Proxmox

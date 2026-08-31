@@ -1,18 +1,18 @@
 #!/bin/bash
 
 name="unraid-vsock-sensors"
-binary="/usr/local/sbin/$name"
-config="/boot/config/plugins/$name/$name.cfg"
-pid_file="/var/run/$name.pid"
+binary="${UVSS_RC_BINARY:-/usr/local/sbin/$name}"
+config="${UVSS_RC_CONFIG:-/boot/config/plugins/$name/$name.cfg}"
+pid_file="${UVSS_RC_PID_FILE:-/var/run/$name.pid}"
+log_file="${UVSS_RC_LOG_FILE:-/var/log/$name.log}"
 
-log_stream() {
-    local line priority
-    while IFS= read -r line; do
-        case "$line" in
-            warning:*) priority="daemon.warning" ;;
-            *) priority="daemon.info" ;;
-        esac
-        logger -t "$name" -p "$priority" "$line"
+close_inherited_fds() {
+    local descriptor path
+    for path in /proc/self/fd/*; do
+        descriptor="${path##*/}"
+        if [[ "$descriptor" =~ ^[0-9]+$ ]] && (( descriptor > 2 )); then
+            eval "exec ${descriptor}>&-"
+        fi
     done
 }
 
@@ -95,15 +95,20 @@ start() {
         return 1
     fi
 
-    nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" --hba-backend "$HBA_BACKEND" \
-        --hba-interval "$HBA_INTERVAL" \
-        </dev/null > >(log_stream) 2>&1 &
+    # Plugin Manager invokes this script with private pipes and extra file
+    # descriptors. Detach completely before exec so the long-lived daemon can
+    # never keep an install or update operation pending.
+    (
+        close_inherited_fds
+        exec nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" \
+            --hba-backend "$HBA_BACKEND" --hba-interval "$HBA_INTERVAL"
+    ) </dev/null >>"$log_file" 2>&1 &
     pid=$!
     printf '%s\n' "$pid" > "$pid_file"
     sleep 1
     if ! kill -0 "$pid" 2>/dev/null; then
         rm -f "$pid_file"
-        echo "$name failed to start; see /var/log/syslog" >&2
+        echo "$name failed to start; see $log_file" >&2
         return 1
     fi
     echo "$name started (PID $pid)"
