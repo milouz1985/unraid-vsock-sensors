@@ -29,6 +29,9 @@ type hwmonPublisher struct {
 	cachePath    string
 	restartUnits []string
 	cacheDirty   bool
+	// guestAvailable prevents repeated consumer restarts after the first
+	// successful VSOCK response. A restart is still requested on topology changes.
+	guestAvailable bool
 }
 
 func hwmon(args []string) error {
@@ -67,21 +70,21 @@ func hwmon(args []string) error {
 
 	log.Printf("publishing fixed Unraid hwmon inventories through %s every %s", *device, *interval)
 	publisher := &hwmonPublisher{cachePath: *cache, restartUnits: restartUnits}
-	restored, err := publisher.restore(*device)
+	_, err = publisher.restore(*device)
 	if err != nil {
 		log.Printf("hwmon inventory cache warning: %s", err)
 	}
-	if restored {
-		if err := restartSystemdUnits(ctx, publisher.restartUnits); err != nil {
-			log.Printf("topology consumer restart warning: %s", err)
-		} else if len(publisher.restartUnits) != 0 {
-			log.Printf("restarted topology consumers after cache restore: %s", strings.Join(publisher.restartUnits, ", "))
-		}
-	}
+	// Restoring the cache creates the expected virtual sensors before the guest is
+	// reachable, but it is too early to restart consumers: CoolerControl could
+	// still retain disks discovered through drivetemp before the host released the
+	// HBA to the VM. Wait for the first successful VSOCK response, then restart the
+	// consumer so it drops those stale disks and discovers the virtual sensors.
 	lastError := ""
 	for {
-		reconfigured, err := publisher.publish(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
-		if reconfigured {
+		reconfigured, becameAvailable, err := publisher.publish(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
+		// The first response makes the guest-backed inventory authoritative even
+		// when it matches the cache, so consumers must discard stale disk entries.
+		if reconfigured || becameAvailable {
 			if restartErr := restartSystemdUnits(ctx, publisher.restartUnits); restartErr != nil {
 				log.Printf("topology consumer restart warning: %s", restartErr)
 			} else if len(publisher.restartUnits) != 0 {
@@ -112,13 +115,17 @@ func (publisher *hwmonPublisher) publish(
 	port uint32,
 	device string,
 	fetch func(context.Context, uint32, uint32) (sensors.Response, error),
-) (bool, error) {
+) (bool, bool, error) {
 	ctx, cancel := context.WithTimeout(parent, requestTimeout)
 	defer cancel()
 	state, err := fetch(ctx, cid, port)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
+	// Only a completed VSOCK request proves that the guest is ready. Connection
+	// failures must leave the initial consumer restart pending.
+	becameAvailable := !publisher.guestAvailable
+	publisher.guestAvailable = true
 	disks, hbas := makeHWMonSamples(state)
 	var diskErr, hbaErr error
 	reconfigured := false
@@ -147,11 +154,11 @@ func (publisher *hwmonPublisher) publish(
 	}
 	if publisher.cacheDirty {
 		if err := publisher.saveCache(); err != nil {
-			return reconfigured, errors.Join(diskErr, hbaErr, fmt.Errorf("save hwmon inventory cache: %w", err))
+			return reconfigured, becameAvailable, errors.Join(diskErr, hbaErr, fmt.Errorf("save hwmon inventory cache: %w", err))
 		}
 		publisher.cacheDirty = false
 	}
-	return reconfigured, errors.Join(diskErr, hbaErr)
+	return reconfigured, becameAvailable, errors.Join(diskErr, hbaErr)
 }
 
 func parseRestartUnits(value string) ([]string, error) {

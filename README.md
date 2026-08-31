@@ -288,7 +288,9 @@ Pendant l'exécution :
 - un changement de `/dev/sdX`, de nom affiché ou d'index IOC ne modifie pas
   l'identité si l'ID stable reste identique ;
 - les consommateurs configurés dans `UNRAID_VSOCK_RESTART_UNITS` sont relancés
-  après la reconfiguration afin de découvrir les nouveaux canaux.
+  une première fois dès que la VM répond, même si la topologie restaurée depuis
+  le cache est inchangée, puis après chaque reconfiguration afin de découvrir
+  les nouveaux canaux.
 
 ## Failsafe et fraîcheur des mesures
 

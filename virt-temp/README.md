@@ -95,8 +95,9 @@ une redécouverte unique lorsque la topologie ou l'ensemble des contrôleurs a
 changé.
 
 Les logiciels qui n'observent pas les ajouts hwmon à chaud peuvent être
-relancés après une restauration ou une reconfiguration. La liste est optionnelle
-et générique :
+relancés une première fois lorsque la VM répond, même si l'inventaire restauré
+est inchangé, puis après chaque reconfiguration. La liste est optionnelle et
+générique :
 
 ```sh
 UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
