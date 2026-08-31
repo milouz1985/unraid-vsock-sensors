@@ -1,6 +1,6 @@
 Menu="OtherSettings"
 Title="Unraid VSOCK Sensors"
-Icon="refresh"
+Icon="icon.png"
 ---
 <?php
 $plugin = 'unraid-vsock-sensors';

@@ -24,7 +24,7 @@ esac
 mkdir -p \
     "$stage_dir/etc/rc.d" \
     "$stage_dir/install" \
-    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors" \
+    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/images" \
     "$stage_dir/usr/local/sbin" \
     "$dist_dir"
 
@@ -37,6 +37,8 @@ mkdir -p \
 install -m 0755 "$plugin_dir/rc.unraid-vsock-sensors" "$stage_dir/etc/rc.d/rc.unraid-vsock-sensors"
 install -m 0644 "$plugin_dir/UnraidVsockSensors.page" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/UnraidVsockSensors.page"
+install -m 0644 "$plugin_dir/images/icon.png" \
+    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/images/icon.png"
 install -m 0644 "$plugin_dir/default.cfg" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/default.cfg"
 install -m 0644 "$repo_dir/LICENSE" \
