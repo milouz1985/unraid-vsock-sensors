@@ -66,7 +66,7 @@ simple redémarrage de service dans Unraid ne suffit pas.
 Dans **Plugins → Install Plugin**, fournir l'URL du descripteur `.plg` publié :
 
 ```text
-https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg
+https://raw.githubusercontent.com/milouz1985/unraid-vsock-sensors/refs/heads/main/unraid-plugin/unraid-vsock-sensors.plg
 ```
 
 Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
