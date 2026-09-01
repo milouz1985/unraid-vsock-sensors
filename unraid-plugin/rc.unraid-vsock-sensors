@@ -4,7 +4,6 @@ name="unraid-vsock-sensors"
 binary="${UVSS_RC_BINARY:-/usr/local/sbin/$name}"
 config="${UVSS_RC_CONFIG:-/boot/config/plugins/$name/$name.cfg}"
 pid_file="${UVSS_RC_PID_FILE:-/var/run/$name.pid}"
-log_file="${UVSS_RC_LOG_FILE:-/var/log/$name.log}"
 
 close_inherited_fds() {
     local descriptor path
@@ -101,14 +100,14 @@ start() {
     (
         close_inherited_fds
         exec nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" \
-            --hba-backend "$HBA_BACKEND" --hba-interval "$HBA_INTERVAL"
-    ) </dev/null >>"$log_file" 2>&1 &
+            --hba-backend "$HBA_BACKEND" --hba-interval "$HBA_INTERVAL" --syslog
+    ) </dev/null >/dev/null 2>&1 &
     pid=$!
     printf '%s\n' "$pid" > "$pid_file"
     sleep 1
     if ! kill -0 "$pid" 2>/dev/null; then
         rm -f "$pid_file"
-        echo "$name failed to start; see $log_file" >&2
+        echo "$name failed to start; see /var/log/syslog (tag $name)" >&2
         return 1
     fi
     echo "$name started (PID $pid)"

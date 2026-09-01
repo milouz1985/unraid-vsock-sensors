@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/syslog"
 	"net"
 	"os"
 	"os/signal"
@@ -28,6 +29,7 @@ import (
 const (
 	defaultPort          = 990
 	requestTimeout       = 3 * time.Second
+	maxRequestSize       = 1024
 	maxConcurrentClients = 32
 )
 
@@ -87,6 +89,7 @@ Serve options:
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
   --hba-interval DURATION   Delay between HBA temperature refreshes (default: 30s)
+  --syslog                  Send service logs to the system logger
 
 Get options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
@@ -128,11 +131,21 @@ func serve(args []string) error {
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
 	hbaInterval := fs.Duration("hba-interval", 30*time.Second, "delay between HBA temperature refreshes")
+	useSyslog := fs.Bool("syslog", false, "send service logs to syslog")
 	// Keep the former option for upgrades whose service script has not yet been
 	// replaced. Both flags update the same value.
 	fs.DurationVar(hbaInterval, "storcli-interval", 30*time.Second, "deprecated alias for --hba-interval")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *useSyslog {
+		writer, err := syslog.New(syslog.LOG_INFO|syslog.LOG_DAEMON, "unraid-vsock-sensors")
+		if err != nil {
+			return fmt.Errorf("connect to syslog: %w", err)
+		}
+		// The writer is intentionally kept for the process lifetime so errors
+		// returned by serve and logged by main use the same destination.
+		log.SetOutput(writer)
 	}
 	if *hbaInterval <= 0 {
 		return errors.New("hba-interval must be greater than zero")
@@ -215,15 +228,19 @@ func serve(args []string) error {
 }
 
 func handle(conn net.Conn, disks *diskReader, collector *hbaCollector) {
+	handleWithTimeout(conn, disks, collector, requestTimeout)
+}
+
+func handleWithTimeout(conn net.Conn, disks *diskReader, collector *hbaCollector, timeout time.Duration) {
 	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(requestTimeout))
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	// The protocol accepts one fixed command and caps input so an idle or
 	// malformed host connection cannot retain unbounded resources.
-	line, err := bufio.NewReader(io.LimitReader(conn, 1024)).ReadString('\n')
+	line, err := bufio.NewReader(io.LimitReader(conn, maxRequestSize+1)).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return
 	}
-	if strings.TrimSpace(line) != "GET" {
+	if len(line) > maxRequestSize || strings.TrimSpace(line) != "GET" {
 		return
 	}
 	diskReadings, err := disks.read()
@@ -238,7 +255,7 @@ func handle(conn net.Conn, disks *diskReader, collector *hbaCollector) {
 	if err != nil {
 		response.HBAError = err.Error()
 	}
-	_ = conn.SetWriteDeadline(time.Now().Add(requestTimeout))
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
 	if err := json.NewEncoder(conn).Encode(response); err != nil {
 		log.Printf("write response: %v", err)
 	}
@@ -276,9 +293,13 @@ func get(args []string) error {
 		return err
 	}
 	if *printJSON {
-		return json.NewEncoder(os.Stdout).Encode(response)
+		return writeJSONResponse(os.Stdout, response)
 	}
 	return writeResponse(os.Stdout, response, kind, fs.Arg(1))
+}
+
+func writeJSONResponse(out io.Writer, response sensors.Response) error {
+	return json.NewEncoder(out).Encode(response)
 }
 
 func writeResponse(out io.Writer, response sensors.Response, kind sensorType, selector string) error {

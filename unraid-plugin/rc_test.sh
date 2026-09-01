@@ -4,6 +4,9 @@ set -euo pipefail
 # The rc script starts this file as a stand-in daemon during the test. Preserve
 # its path as argv[0] so running_pid() recognizes it after exec.
 if [[ "${1:-}" == "serve" ]]; then
+    if [[ -n "${UVSS_RC_TEST_ARGS_FILE:-}" ]]; then
+        printf '%s\n' "$@" > "$UVSS_RC_TEST_ARGS_FILE"
+    fi
     exec -a "$0" sleep 30
 fi
 
@@ -11,13 +14,14 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 rc_script="$script_dir/rc.unraid-vsock-sensors"
 test_dir="$(mktemp -d)"
 pid_file="$test_dir/service.pid"
+args_file="$test_dir/service.args"
 pipe_reader_pid=""
 
 cleanup() {
     UVSS_RC_BINARY="$script_dir/rc_test.sh" \
         UVSS_RC_CONFIG="$test_dir/missing.cfg" \
         UVSS_RC_PID_FILE="$pid_file" \
-        UVSS_RC_LOG_FILE="$test_dir/service.log" \
+        UVSS_RC_TEST_ARGS_FILE="$args_file" \
         "$rc_script" stop >/dev/null 2>&1 || true
     exec 9>&- 2>/dev/null || true
     if [[ -n "$pipe_reader_pid" ]]; then
@@ -38,7 +42,7 @@ run_rc() {
         UVSS_RC_BINARY="$script_dir/rc_test.sh" \
         UVSS_RC_CONFIG="$test_dir/missing.cfg" \
         UVSS_RC_PID_FILE="$pid_file" \
-        UVSS_RC_LOG_FILE="$test_dir/service.log" \
+        UVSS_RC_TEST_ARGS_FILE="$args_file" \
         "$rc_script" "$1"
 }
 
@@ -52,6 +56,10 @@ fi
 read -r daemon_pid < "$pid_file"
 if ! kill -0 "$daemon_pid" 2>/dev/null; then
     echo "daemon $daemon_pid is not running after restart" >&2
+    exit 1
+fi
+if ! grep -Fxq -- "--syslog" "$args_file"; then
+    echo "daemon was not started with syslog logging" >&2
     exit 1
 fi
 for descriptor in "/proc/$daemon_pid/fd/"*; do

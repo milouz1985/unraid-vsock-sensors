@@ -11,11 +11,26 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type connection interface {
+	io.ReadWriteCloser
+	SetDeadline(time.Time) error
+}
+
+type dialer func(context.Context, uint32, uint32) (connection, error)
+
+const maxResponseSize = 1 << 20
+
 // Fetch retrieves one sensor snapshot from the VSOCK server at cid and port.
 // The context controls connection establishment and all subsequent I/O.
 func Fetch(ctx context.Context, cid, port uint32) (Response, error) {
+	return fetchWithDialer(ctx, cid, port, func(ctx context.Context, cid, port uint32) (connection, error) {
+		return dialContext(ctx, cid, port)
+	})
+}
+
+func fetchWithDialer(ctx context.Context, cid, port uint32, dial dialer) (Response, error) {
 	var response Response
-	conn, err := dialContext(ctx, cid, port)
+	conn, err := dial(ctx, cid, port)
 	if err != nil {
 		return response, fmt.Errorf("connect to vsock %d:%d: %w", cid, port, err)
 	}
@@ -34,7 +49,7 @@ func Fetch(ctx context.Context, cid, port uint32) (Response, error) {
 	if _, err := io.WriteString(conn, "GET\n"); err != nil {
 		return response, fmt.Errorf("write Unraid request: %w", err)
 	}
-	if err := json.NewDecoder(io.LimitReader(conn, 1<<20)).Decode(&response); err != nil {
+	if err := json.NewDecoder(io.LimitReader(conn, maxResponseSize)).Decode(&response); err != nil {
 		return response, fmt.Errorf("decode Unraid response: %w", err)
 	}
 	return response, nil

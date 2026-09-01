@@ -399,6 +399,33 @@ func TestParseStorCLI(t *testing.T) {
 	}
 }
 
+func TestParseStorCLIRejectsUnexpectedOutput(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data string
+		want string
+	}{
+		{name: "malformed JSON", data: `{`, want: "parse storcli JSON"},
+		{name: "failed status", data: `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Failure"},"Response Data":{}}]}`, want: `status is "Failure"`},
+		{name: "missing temperature", data: `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[]}}]}`, want: "has no ROC temperature"},
+		{name: "not a number", data: storCLIResponseWithTemperature("broken"), want: `invalid temperature "broken"`},
+		{name: "NaN", data: storCLIResponseWithTemperature("NaN"), want: `invalid temperature "NaN"`},
+		{name: "positive Inf", data: storCLIResponseWithTemperature("+Inf"), want: `invalid temperature "+Inf"`},
+		{name: "negative Inf", data: storCLIResponseWithTemperature("-Inf"), want: `invalid temperature "-Inf"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseStorCLI([]byte(test.data))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("got %v, want error containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func storCLIResponseWithTemperature(temperature string) string {
+	return `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"` + temperature + `"}]}}]}`
+}
+
 func TestStorCLIDiscoveryRequiresStableIdentity(t *testing.T) {
 	data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Model":"SAS3008"}}]}`)
 	if _, err := parseStorCLIMetadata(data); err == nil {
