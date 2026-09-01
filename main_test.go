@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -118,6 +119,73 @@ func TestHandleReadTimeout(t *testing.T) {
 		t.Fatal("silent client was not disconnected after the read timeout")
 	}
 	client.Close()
+}
+
+func TestHandleStopsWhenSettingDeadlineFails(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		failRead bool
+		request  string
+	}{
+		{name: "read deadline", failRead: true},
+		{name: "write deadline", request: "GET\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, client := net.Pipe()
+			conn := &deadlineFailConn{Conn: server, failRead: test.failRead}
+			disks := newDiskReader(filepath.Join(t.TempDir(), "missing.ini"), time.Minute)
+			done := make(chan struct{})
+			go func() {
+				handle(conn, disks, newHBACollector(time.Minute, hbaModeEnabled))
+				close(done)
+			}()
+
+			if test.request != "" {
+				if _, err := io.WriteString(client, test.request); err != nil {
+					t.Fatal(err)
+				}
+			}
+			response, err := io.ReadAll(client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.Close()
+			<-done
+			if len(response) != 0 {
+				t.Fatalf("deadline failure returned %q", response)
+			}
+			if conn.readCalls != 1 {
+				t.Fatalf("SetReadDeadline called %d times, want 1", conn.readCalls)
+			}
+			wantWriteCalls := 1
+			if test.failRead {
+				wantWriteCalls = 0
+			}
+			if conn.writeCalls != wantWriteCalls {
+				t.Fatalf("SetWriteDeadline called %d times, want %d", conn.writeCalls, wantWriteCalls)
+			}
+		})
+	}
+}
+
+type deadlineFailConn struct {
+	net.Conn
+	failRead   bool
+	readCalls  int
+	writeCalls int
+}
+
+func (conn *deadlineFailConn) SetReadDeadline(deadline time.Time) error {
+	conn.readCalls++
+	if conn.failRead {
+		return errors.New("deadline failed")
+	}
+	return conn.Conn.SetReadDeadline(deadline)
+}
+
+func (conn *deadlineFailConn) SetWriteDeadline(time.Time) error {
+	conn.writeCalls++
+	return errors.New("deadline failed")
 }
 
 func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {

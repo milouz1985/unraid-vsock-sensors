@@ -233,7 +233,9 @@ func handle(conn net.Conn, disks *diskReader, collector *hbaCollector) {
 
 func handleWithTimeout(conn net.Conn, disks *diskReader, collector *hbaCollector, timeout time.Duration) {
 	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return
+	}
 	// The protocol accepts one fixed command and caps input so an idle or
 	// malformed host connection cannot retain unbounded resources.
 	line, err := bufio.NewReader(io.LimitReader(conn, maxRequestSize+1)).ReadString('\n')
@@ -255,7 +257,9 @@ func handleWithTimeout(conn net.Conn, disks *diskReader, collector *hbaCollector
 	if err != nil {
 		response.HBAError = err.Error()
 	}
-	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
+	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		return
+	}
 	if err := json.NewEncoder(conn).Encode(response); err != nil {
 		log.Printf("write response: %v", err)
 	}
