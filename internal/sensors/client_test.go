@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -71,8 +72,25 @@ func TestFetchLimitsResponseSize(t *testing.T) {
 	}()
 
 	_, err := fetchWithDialer(context.Background(), 42, 990, pipeDialer(client))
-	if err == nil || !strings.Contains(err.Error(), "decode Unraid response") {
+	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
 		t.Fatalf("oversized response should fail decoding, got %v", err)
+	}
+	<-serverDone
+}
+
+func TestFetchRejectsTrailingData(t *testing.T) {
+	server, client := net.Pipe()
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer server.Close()
+		_, _ = bufio.NewReader(server).ReadString('\n')
+		_, _ = io.WriteString(server, `{"version":"test"} {}`)
+	}()
+
+	_, err := fetchWithDialer(context.Background(), 42, 990, pipeDialer(client))
+	if err == nil || !strings.Contains(err.Error(), "unexpected trailing data") {
+		t.Fatalf("trailing response data should fail decoding, got %v", err)
 	}
 	<-serverDone
 }

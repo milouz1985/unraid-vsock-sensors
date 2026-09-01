@@ -1,8 +1,10 @@
 package sensors
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -49,8 +51,22 @@ func fetchWithDialer(ctx context.Context, cid, port uint32, dial dialer) (Respon
 	if _, err := io.WriteString(conn, "GET\n"); err != nil {
 		return response, fmt.Errorf("write Unraid request: %w", err)
 	}
-	if err := json.NewDecoder(io.LimitReader(conn, maxResponseSize)).Decode(&response); err != nil {
+	data, err := io.ReadAll(io.LimitReader(conn, maxResponseSize+1))
+	if err != nil {
+		return response, fmt.Errorf("read Unraid response: %w", err)
+	}
+	if len(data) > maxResponseSize {
+		return response, fmt.Errorf("Unraid response exceeds %d bytes", maxResponseSize)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&response); err != nil {
 		return response, fmt.Errorf("decode Unraid response: %w", err)
+	}
+	// A second decode must reach EOF: the protocol permits exactly one JSON
+	// object, optionally followed by whitespace, and no trailing value or data.
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return Response{}, errors.New("decode Unraid response: unexpected trailing data")
 	}
 	return response, nil
 }
