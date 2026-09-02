@@ -79,6 +79,11 @@ Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 - **HBA refresh interval** : `15 seconds` avec `mpt3ctl` ou `30 seconds` avec
   StorCLI.
 
+Ces intervalles sont des choix propres à l'intégration Unraid, qui transmet
+toujours la valeur au serveur. Lorsqu'il est lancé manuellement sans option,
+le binaire conserve un défaut générique de `30s`, quel que soit le backend.
+Cette différence n'affecte donc pas le service installé par le plugin.
+
 Le serveur lit directement `/dev/mpt3ctl` pour les contrôleurs gérés par
 `mpt3sas` : aucun utilitaire supplémentaire n'est nécessaire. Le backend
 StorCLI exige que la commande `storcli` soit installée, directement avec son
