@@ -22,10 +22,11 @@ if [[ ! "$debian_revision" =~ ^[1-9][0-9]*$ ]]; then
     exit 2
 fi
 
-# Debian uses ~ for prereleases and reserves the final -N component for the
-# packaging revision. A tagged 0.4.0 therefore becomes 0.4.0-1, while a Git
-# development build sorts before it as 0.4.0~dev.N.gHASH-1.
-debian_version="${version/-dev./~dev.}-$debian_revision"
+# Git development builds describe commits made after the nearest release, so
+# Debian must sort them after that release. A tagged 1.4.3 becomes 1.4.3-1 and
+# a following snapshot becomes 1.4.3+dev.N.gHASH-1; the next release still
+# sorts after both. The final -N component remains the packaging revision.
+debian_version="${version/-dev./+dev.}-$debian_revision"
 output="$output_dir/${package}_${debian_version}_${architecture}.deb"
 
 mkdir -p \
