@@ -71,7 +71,7 @@ static struct virt_temp_family disk_family = {
 	.namespace = "disk", .hwmon_name = "unraid_storage",
 	.lock = &storage_lock,
 };
-static struct virt_temp_family hba = {
+static struct virt_temp_family hba_family = {
 	.namespace = "hba", .hwmon_name = "unraid_hba",
 	.lock = &hba_lock,
 };
@@ -100,8 +100,8 @@ static struct virt_temp_family *find_family(const char *namespace)
 {
 	if (!strcmp(namespace, disk_family.namespace))
 		return &disk_family;
-	if (!strcmp(namespace, hba.namespace))
-		return &hba;
+	if (!strcmp(namespace, hba_family.namespace))
+		return &hba_family;
 	return NULL;
 }
 
@@ -479,16 +479,16 @@ static int __init virt_temp_init(void)
 		"virt_temp_storage", PLATFORM_DEVID_NONE, NULL, 0);
 	if (IS_ERR(disk_family.platform))
 		return PTR_ERR(disk_family.platform);
-	hba.platform = platform_device_register_simple(
+	hba_family.platform = platform_device_register_simple(
 		"virt_temp_hba", PLATFORM_DEVID_NONE, NULL, 0);
-	if (IS_ERR(hba.platform)) {
-		err = PTR_ERR(hba.platform);
+	if (IS_ERR(hba_family.platform)) {
+		err = PTR_ERR(hba_family.platform);
 		platform_device_unregister(disk_family.platform);
 		return err;
 	}
 	err = misc_register(&control_device);
 	if (err) {
-		platform_device_unregister(hba.platform);
+		platform_device_unregister(hba_family.platform);
 		platform_device_unregister(disk_family.platform);
 	}
 	return err;
@@ -497,11 +497,11 @@ static int __init virt_temp_init(void)
 static void __exit virt_temp_exit(void)
 {
 	misc_deregister(&control_device);
-	unregister_inventory(hba.inventory);
-	free_inventory(hba.inventory);
+	unregister_inventory(hba_family.inventory);
+	free_inventory(hba_family.inventory);
 	unregister_inventory(disk_family.inventory);
 	free_inventory(disk_family.inventory);
-	platform_device_unregister(hba.platform);
+	platform_device_unregister(hba_family.platform);
 	platform_device_unregister(disk_family.platform);
 }
 
