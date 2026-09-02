@@ -39,6 +39,11 @@ commit<TAB><famille>
 
 Les tabulations et retours à la ligne sont interdits dans les ID et labels.
 Chaque ligne est transmise par une écriture distincte sur la même session.
+Un ID doit contenir entre 1 et 63 octets et commencer par le nom de sa famille
+suivi de `:`. Un label doit contenir entre 1 et 95 octets. Une température doit
+être un entier compris entre `0` et `150000` milli°C inclus. Les seules familles
+acceptées sont `disk` et `hba`, et les seules opérations finales sont
+`configure` et `commit`.
 
 Chaque session accepte au maximum 1 024 enregistrements. Cette limite borne les
 allocations contrôlées depuis l'espace utilisateur ; elle ne correspond pas à
