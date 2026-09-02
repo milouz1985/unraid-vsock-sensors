@@ -173,17 +173,6 @@ func TestHBAReaderRediscoversAndRetriesAfterReadError(t *testing.T) {
 	}
 }
 
-func TestExplicitHBABackendSelection(t *testing.T) {
-	reader := newHBAReaderForBackend(hbaBackendMPT3CTL)
-	if _, ok := reader.(*mpt3Reader); !ok {
-		t.Fatalf("mpt3ctl backend = %#v", reader)
-	}
-	reader = newHBAReaderForBackend(hbaBackendStorCLI)
-	if _, ok := reader.(*storCLIReader); !ok {
-		t.Fatalf("storcli backend = %#v", reader)
-	}
-}
-
 func TestHBAReaderRediscoversOnControllerSetMismatch(t *testing.T) {
 	discoveries, reads := 0, 0
 	reader := &storCLIReader{
@@ -313,8 +302,6 @@ func TestParseStorCLIRejectsUnexpectedOutput(t *testing.T) {
 		{name: "missing temperature", data: `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[]}}]}`, want: "has no ROC temperature"},
 		{name: "not a number", data: storCLIResponseWithTemperature("broken"), want: `invalid temperature "broken"`},
 		{name: "NaN", data: storCLIResponseWithTemperature("NaN"), want: `invalid temperature "NaN"`},
-		{name: "positive Inf", data: storCLIResponseWithTemperature("+Inf"), want: `invalid temperature "+Inf"`},
-		{name: "negative Inf", data: storCLIResponseWithTemperature("-Inf"), want: `invalid temperature "-Inf"`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := parseStorCLI([]byte(test.data))

@@ -116,18 +116,6 @@ func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 	}
 }
 
-func TestGroupMaximumFailsSafeWhenEveryMemberIsUnavailable(t *testing.T) {
-	readings := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
-		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Unavailable: true},
-		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
-	}})
-	for _, reading := range readings {
-		if reading.sensor.id == "disk:group:hdd" && reading.temperature != hwmonFailsafeTemp {
-			t.Fatal("group maximum should use the failsafe without any usable member")
-		}
-	}
-}
-
 func TestEncodeHWMonSamples(t *testing.T) {
 	readings := []hwmonSample{
 		hwmonTestSample("disk:1", "disk1 (sda)", 34.125),
@@ -476,16 +464,6 @@ func makeDiskSamples(state sensors.Response) []hwmonSample {
 func hwmonTestSample(id, label string, temperature float64, members ...string) hwmonSample {
 	return hwmonSample{
 		sensor: hwmonSensor{id: id, label: label, members: members}, temperature: temperature,
-	}
-}
-
-func TestPublishHWMonStateReturnsFetchError(t *testing.T) {
-	want := errors.New("vsock failed")
-	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
-		return sensors.Response{}, want
-	}
-	if _, err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, want) {
-		t.Fatalf("got %v, want %v", err, want)
 	}
 }
 

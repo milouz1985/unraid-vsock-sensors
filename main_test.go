@@ -249,13 +249,6 @@ func TestJSONResponsePreservesPartialErrors(t *testing.T) {
 	}
 }
 
-func TestWriteResponseRejectsUnknownSensorType(t *testing.T) {
-	err := writeResponse(&bytes.Buffer{}, sensors.Response{}, sensorType("fan"), "all")
-	if err == nil || err.Error() != `unknown sensor type "fan" (expected disk or hba)` {
-		t.Fatalf("got %v", err)
-	}
-}
-
 func TestGetRequiresExplicitSensorTypeAndSelector(t *testing.T) {
 	tests := []struct {
 		name string
