@@ -80,11 +80,8 @@ type hbaSnapshotReader interface {
 
 type storCLIReader struct {
 	metadata         map[int]hbaMetadata
-	topology         string
-	topologyKnown    bool
 	discoverMetadata func(context.Context) (map[int]hbaMetadata, error)
 	readTemperatures func(context.Context) (map[int]float64, error)
-	readTopology     func() (string, error)
 }
 
 func newHBAReaderForBackend(mode hbaBackendMode) hbaSnapshotReader {
@@ -92,7 +89,6 @@ func newHBAReaderForBackend(mode hbaBackendMode) hbaSnapshotReader {
 		return &storCLIReader{
 			discoverMetadata: discoverStorCLIHBAs,
 			readTemperatures: readStorCLITemperatures,
-			readTopology:     readHBATopology,
 		}
 	}
 	return newMPT3Reader()
@@ -100,15 +96,7 @@ func newHBAReaderForBackend(mode hbaBackendMode) hbaSnapshotReader {
 
 func (r *storCLIReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	freshDiscovery := false
-	topologyChanged := false
-	if r.metadata != nil {
-		if topology, err := r.readTopology(); err == nil {
-			// If discovery could not establish a baseline, rediscover as soon as
-			// sysfs becomes readable: the hardware may have changed meanwhile.
-			topologyChanged = !r.topologyKnown || topology != r.topology
-		}
-	}
-	if r.metadata == nil || topologyChanged {
+	if r.metadata == nil {
 		if err := r.discover(ctx); err != nil {
 			return nil, err
 		}
@@ -134,9 +122,6 @@ func (r *storCLIReader) discover(ctx context.Context) error {
 		return fmt.Errorf("storcli discovery: %w", err)
 	}
 	r.metadata = metadata
-	if topology, topologyErr := r.readTopology(); topologyErr == nil {
-		r.topology, r.topologyKnown = topology, true
-	}
 	return nil
 }
 

@@ -5,8 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -124,7 +122,6 @@ func TestHBAReaderCachesDiscovery(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{2: {id: "sas:1234", model: "SAS3008"}}, nil
 		},
-		readTopology: func() (string, error) { return "stable", nil },
 		readTemperatures: func(context.Context) (map[int]float64, error) {
 			return map[int]float64{2: 51}, nil
 		},
@@ -152,66 +149,9 @@ func TestHBAStableIDPrefersSASAcrossBackends(t *testing.T) {
 	}
 }
 
-func TestHBAReaderRefreshesChangedTopology(t *testing.T) {
-	discoveries := 0
-	topology := "one"
-	reader := &storCLIReader{
-		readTopology: func() (string, error) { return topology, nil },
-		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) {
-			discoveries++
-			return map[int]hbaMetadata{0: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
-		},
-		readTemperatures: func(context.Context) (map[int]float64, error) {
-			return map[int]float64{0: 50}, nil
-		},
-	}
-	first, err := reader.collect(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	topology = "two"
-	second, err := reader.collect(context.Background())
-	if err != nil || discoveries != 2 || first[0].ID == second[0].ID {
-		t.Fatalf("discoveries=%d first=%#v second=%#v err=%v", discoveries, first, second, err)
-	}
-}
-
-func TestHBAReaderRediscoversWhenTopologyBaselineRecovers(t *testing.T) {
-	discoveries, topologyReads := 0, 0
-	reader := &storCLIReader{
-		readTopology: func() (string, error) {
-			topologyReads++
-			if topologyReads == 1 {
-				return "", errors.New("sysfs unavailable")
-			}
-			return "stable", nil
-		},
-		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) {
-			discoveries++
-			return map[int]hbaMetadata{0: {id: "sas:1234"}}, nil
-		},
-		readTemperatures: func(context.Context) (map[int]float64, error) {
-			return map[int]float64{0: 50}, nil
-		},
-	}
-	if _, err := reader.collect(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if reader.topologyKnown {
-		t.Fatal("failed initial topology read unexpectedly established a baseline")
-	}
-	if _, err := reader.collect(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if discoveries != 2 || !reader.topologyKnown || reader.topology != "stable" {
-		t.Fatalf("discoveries=%d topologyKnown=%v topology=%q", discoveries, reader.topologyKnown, reader.topology)
-	}
-}
-
 func TestHBAReaderRediscoversAndRetriesAfterReadError(t *testing.T) {
 	discoveries, reads := 0, 0
 	reader := &storCLIReader{
-		readTopology: func() (string, error) { return "stable", nil },
 		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) {
 			discoveries++
 			return map[int]hbaMetadata{discoveries: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
@@ -247,7 +187,6 @@ func TestExplicitHBABackendSelection(t *testing.T) {
 func TestHBAReaderRediscoversOnControllerSetMismatch(t *testing.T) {
 	discoveries, reads := 0, 0
 	reader := &storCLIReader{
-		readTopology: func() (string, error) { return "stable", nil },
 		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) {
 			discoveries++
 			return map[int]hbaMetadata{discoveries - 1: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
@@ -266,42 +205,6 @@ func TestHBAReaderRediscoversOnControllerSetMismatch(t *testing.T) {
 	readings, err := reader.collect(context.Background())
 	if err != nil || discoveries != 2 || reads != 3 || readings[0].ID != "sas:2" {
 		t.Fatalf("discoveries=%d reads=%d readings=%#v err=%v", discoveries, reads, readings, err)
-	}
-}
-
-func TestReadHBATopologyAt(t *testing.T) {
-	root := t.TempDir()
-	device := filepath.Join(root, "devices", "0000:06:00.0")
-	if err := os.MkdirAll(device, 0755); err != nil {
-		t.Fatal(err)
-	}
-	host := filepath.Join(root, "host2")
-	if err := os.MkdirAll(host, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(host, "proc_name"), []byte("mpt3sas\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(device, filepath.Join(host, "device")); err != nil {
-		t.Fatal(err)
-	}
-	first, err := readHBATopologyAt(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(host, "host_sas_address"), []byte("0x5000\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	second, err := readHBATopologyAt(root)
-	if err != nil || first == second {
-		t.Fatalf("first=%q second=%q err=%v", first, second, err)
-	}
-	if err := os.WriteFile(filepath.Join(host, "host_sas_address"), []byte("0x6000\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	third, err := readHBATopologyAt(root)
-	if err != nil || second == third {
-		t.Fatalf("second=%q third=%q err=%v", second, third, err)
 	}
 }
 

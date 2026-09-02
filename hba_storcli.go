@@ -2,15 +2,11 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -128,44 +124,6 @@ func firstHBAValue(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// readHBATopology returns a stable fingerprint of the Linux SCSI hosts managed
-// by HBA drivers. Sysfs attributes are polled because change notifications for
-// virtual sysfs files are not reliable across kernels.
-func readHBATopology() (string, error) {
-	return readHBATopologyAt("/sys/class/scsi_host")
-}
-
-func readHBATopologyAt(root string) (string, error) {
-	hosts, err := filepath.Glob(filepath.Join(root, "host*"))
-	if err != nil {
-		return "", err
-	}
-	var records []string
-	for _, host := range hosts {
-		procName, err := os.ReadFile(filepath.Join(host, "proc_name"))
-		if err != nil {
-			continue
-		}
-		driver := strings.TrimSpace(string(procName))
-		if driver != "mpt3sas" && driver != "megaraid_sas" {
-			continue
-		}
-		// mpt3sas exposes the controller identity on the Scsi_Host itself.
-		// Keep device/sas_address as an additional signal for drivers or kernels
-		// that expose useful topology information there.
-		hostSAS, _ := os.ReadFile(filepath.Join(host, "host_sas_address"))
-		deviceSAS, _ := os.ReadFile(filepath.Join(host, "device", "sas_address"))
-		device, _ := filepath.EvalSymlinks(filepath.Join(host, "device"))
-		records = append(records, strings.Join([]string{
-			filepath.Base(host), driver, device,
-			strings.TrimSpace(string(hostSAS)), strings.TrimSpace(string(deviceSAS)),
-		}, "\x00"))
-	}
-	sort.Strings(records)
-	sum := sha256.Sum256([]byte(strings.Join(records, "\n")))
-	return fmt.Sprintf("%x", sum), nil
 }
 
 func normalizePCIAddress(address string) string {
