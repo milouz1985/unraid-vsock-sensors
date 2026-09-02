@@ -381,7 +381,7 @@ static ssize_t device_write(struct file *file, const char __user *user,
 		goto out;
 	}
 	/*
-	 * Parse the text protocol emitted by encodeHWMonSamples() in hwmon.go.
+	 * Parse the text protocol emitted by encodeHWMonSamples() in hwmon_device.go.
 	 * Every write on an open file is either a tab-separated sample:
 	 *
 	 *   sample\t<stable ID>\t<temperature in milli-Celsius>\t<label>\n
