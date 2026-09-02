@@ -36,7 +36,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"runtime"
 	"sort"
@@ -80,27 +79,10 @@ type mpt3Reader struct {
 	// SAS identity once observed so a transient page failure cannot rename the
 	// same PCI controller to its weaker pci: fallback.
 	sasAddressByPCI map[string]string
-	// Optional firmware-page failures can persist for every polling cycle. Keep
-	// their last text per IOC and page so syslog records changes, not duplicates.
-	optionalWarnings map[string]string
 }
 
 func newMPT3Reader() *mpt3Reader {
-	return &mpt3Reader{
-		sasAddressByPCI:  make(map[string]string),
-		optionalWarnings: make(map[string]string),
-	}
-}
-
-func (r *mpt3Reader) warnOptional(key, message string) {
-	if r.optionalWarnings[key] != message {
-		log.Printf("warning: %s", message)
-		r.optionalWarnings[key] = message
-	}
-}
-
-func (r *mpt3Reader) clearOptionalWarning(key string) {
-	delete(r.optionalWarnings, key)
+	return &mpt3Reader{sasAddressByPCI: make(map[string]string)}
 }
 
 func (r *mpt3Reader) stableID(pci, sasAddress string, page5Failed bool) string {
@@ -267,46 +249,14 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 			return nil, fmt.Errorf("mpt3ctl IOC %d discovery: %w", ioc, err)
 		}
 		pci, model, sasAddress := parseMPT3PCIAddress(info), "", ""
-		page0Warning := fmt.Sprintf("ioc-%d-page-0", ioc)
-		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 0); pageErr != nil {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			r.warnOptional(page0Warning, fmt.Sprintf(
-				"mpt3ctl IOC %d Manufacturing Page 0 unavailable; model omitted: %v", ioc, pageErr))
-		} else if model = parseMPT3Model(page); model == "" {
-			r.warnOptional(page0Warning, fmt.Sprintf(
-				"mpt3ctl IOC %d Manufacturing Page 0 contains no usable model; model omitted", ioc))
-		} else {
-			r.clearOptionalWarning(page0Warning)
+		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 0); pageErr == nil {
+			model = parseMPT3Model(page)
 		}
 		page5Failed := false
-		page5Warning := fmt.Sprintf("ioc-%d-page-5", ioc)
-		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 5); pageErr != nil {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			fallback := "using PCI identity " + pci
-			if r.sasAddressByPCI[pci] != "" {
-				fallback = "cached SAS identity retained"
-			} else if pci == "" {
-				fallback = "no identity fallback available"
-			}
-			r.warnOptional(page5Warning, fmt.Sprintf(
-				"mpt3ctl IOC %d Manufacturing Page 5 unavailable; %s: %v", ioc, fallback, pageErr))
-			page5Failed = true
-		} else {
+		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 5); pageErr == nil {
 			sasAddress = parseMPT3SASAddress(page)
-			if sasAddress == "" {
-				fallback := "using PCI identity " + pci
-				if pci == "" {
-					fallback = "no identity fallback available"
-				}
-				r.warnOptional(page5Warning, fmt.Sprintf(
-					"mpt3ctl IOC %d Manufacturing Page 5 contains no SAS address; %s", ioc, fallback))
-			} else {
-				r.clearOptionalWarning(page5Warning)
-			}
+		} else {
+			page5Failed = true
 		}
 		id := r.stableID(pci, sasAddress, page5Failed)
 		if id == "" {
