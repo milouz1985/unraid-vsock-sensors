@@ -82,7 +82,7 @@ running_pid() {
 }
 
 start() {
-    local pid
+    local pid running
     if pid="$(running_pid)"; then
         echo "$name is already running (PID $pid)"
         return 0
@@ -109,7 +109,8 @@ start() {
         return 1
     fi
     sleep 1
-    if ! kill -0 "$pid" 2>/dev/null; then
+    if ! running="$(running_pid)" || [[ "$running" != "$pid" ]]; then
+        kill "$pid" 2>/dev/null || true
         rm -f "$pid_file"
         echo "$name failed to start; see /var/log/syslog (tag $name)" >&2
         return 1
