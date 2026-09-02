@@ -345,6 +345,18 @@ Ces commandes écrivent uniquement un nombre en degrés Celsius et conviennent �
 une source `cmd` de fan2go. L'option `--json` affiche le snapshot complet avec
 les erreurs éventuelles de chaque famille.
 
+## Mise à jour et désinstallation Unraid
+
+Une mise à jour du plugin conserve
+`/boot/config/plugins/unraid-vsock-sensors/unraid-vsock-sensors.cfg` et ne le
+remplace jamais par les valeurs par défaut du nouveau paquet.
+
+Une désinstallation explicite depuis le gestionnaire de plugins arrête le
+service et supprime sa configuration ainsi que le paquet conservé sur la clé
+USB. Une réinstallation ultérieure repart donc des valeurs par défaut. Copier
+le fichier `.cfg` avant la désinstallation si ses réglages doivent être
+réutilisés.
+
 ## Mise à jour et désinstallation Proxmox
 
 Installer une nouvelle version avec `apt` :
