@@ -24,7 +24,11 @@ type hbaCollector struct {
 	collectSnapshot func(context.Context) ([]sensors.HBA, error)
 }
 
-type hbaMetadata struct{ id, model, pciAddress string }
+type hbaMetadata struct {
+	id         string
+	model      string
+	pciAddress string
+}
 
 // hbaStableID gives every backend the same controller identity. Prefer the SAS
 // address shared by mpt3ctl and StorCLI, then progressively weaker fallbacks.
