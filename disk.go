@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"sort"
@@ -28,7 +27,6 @@ type diskReader struct {
 	mu           sync.Mutex
 	lastValid    map[string]float64
 	pendingSince map[string]time.Time
-	rotWarnings  map[string]string
 	now          func() time.Time
 }
 
@@ -61,14 +59,14 @@ func (d unraidDisk) sensor(temp float64, unavailable bool) sensors.Disk {
 func newDiskReader(path string, grace time.Duration) *diskReader {
 	return &diskReader{
 		path: path, grace: grace, lastValid: make(map[string]float64),
-		pendingSince: make(map[string]time.Time), rotWarnings: make(map[string]string), now: time.Now,
+		pendingSince: make(map[string]time.Time), now: time.Now,
 	}
 }
 
 func (r *diskReader) read() ([]sensors.Disk, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rawDisks, rotationalWarnings, err := readDisksWithWarnings(r.path)
+	rawDisks, err := readDisks(r.path)
 	if err != nil {
 		return nil, err
 	}
@@ -104,20 +102,6 @@ func (r *diskReader) read() ([]sensors.Disk, error) {
 		}
 		disks = append(disks, disk.sensor(temperature, unavailable))
 	}
-	for id, warning := range rotationalWarnings {
-		if r.rotWarnings[id] != warning {
-			log.Printf("warning: %s", warning)
-		}
-	}
-	for id := range r.rotWarnings {
-		if _, stillInvalid := rotationalWarnings[id]; stillInvalid {
-			continue
-		}
-		if _, stillPresent := present[id]; stillPresent {
-			log.Printf("disk %q rotational value recovered", id)
-		}
-	}
-	r.rotWarnings = rotationalWarnings
 	for id := range r.lastValid {
 		if _, ok := present[id]; !ok {
 			delete(r.lastValid, id)
@@ -163,18 +147,12 @@ func diskPollingIntervals(configPath string) (poll, grace time.Duration, err err
 // readDisks reads the temperatures already cached by Unraid in disks.ini.
 // It does not call smartctl and therefore does not wake sleeping disks.
 func readDisks(disksINIPath string) ([]unraidDisk, error) {
-	disks, _, err := readDisksWithWarnings(disksINIPath)
-	return disks, err
-}
-
-func readDisksWithWarnings(disksINIPath string) ([]unraidDisk, map[string]string, error) {
 	config, err := ini.Load(disksINIPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	var disks []unraidDisk
-	rotationalWarnings := make(map[string]string)
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
@@ -209,15 +187,8 @@ func readDisksWithWarnings(disksINIPath string) ([]unraidDisk, map[string]string
 				state = diskStateUnavailable
 			}
 		}
-		// Unraid writes rotational as 0 or 1 in disks.ini, so trust its value.
-		rotationalKey := section.Key("rotational")
-		rotational, rotationalErr := rotationalKey.Bool()
-		if rotationalErr != nil {
-			rotationalWarnings[id] = fmt.Sprintf(
-				"disk %q (%s) has invalid rotational value %q: %s",
-				name, device, rotationalKey.String(), rotationalErr,
-			)
-		}
+		// Unraid writes 1 for rotational disks and 0 for solid-state disks.
+		rotational := strings.TrimSpace(section.Key("rotational").String()) == "1"
 		disks = append(disks, unraidDisk{
 			id: id, name: name, device: device,
 			transport:  strings.ToLower(section.Key("transport").String()),
@@ -226,7 +197,7 @@ func readDisksWithWarnings(disksINIPath string) ([]unraidDisk, map[string]string
 	}
 
 	sort.Slice(disks, func(i, j int) bool { return disks[i].name < disks[j].name })
-	return disks, rotationalWarnings, nil
+	return disks, nil
 }
 
 func selectDisks(disks []sensors.Disk, selector string) []sensors.Disk {
