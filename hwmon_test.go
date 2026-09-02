@@ -205,7 +205,7 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 			HBAs:  []sensors.HBA{{ID: "sas:1234", Temp: 51}},
 		}, nil
 	}
-	_, _, err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, path, fetch)
+	_, err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, path, fetch)
 	if err == nil {
 		t.Fatal("expected disk error")
 	}
@@ -484,7 +484,7 @@ func TestPublishHWMonStateReturnsFetchError(t *testing.T) {
 	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
 		return sensors.Response{}, want
 	}
-	if _, _, err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, want) {
+	if _, err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, want) {
 		t.Fatalf("got %v, want %v", err, want)
 	}
 }
@@ -495,17 +495,17 @@ func TestPublisherReportsGuestAvailabilityOnlyOnce(t *testing.T) {
 	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
 		return sensors.Response{}, fetchErr
 	}
-	if _, becameAvailable, err := publisher.publish(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, fetchErr) || becameAvailable {
-		t.Fatalf("failed fetch: becameAvailable=%v err=%v", becameAvailable, err)
+	if result, err := publisher.publish(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, fetchErr) || result.BecameAvailable {
+		t.Fatalf("failed fetch: becameAvailable=%v err=%v", result.BecameAvailable, err)
 	}
 
 	fetch = func(context.Context, uint32, uint32) (sensors.Response, error) {
 		return sensors.Response{Error: "disk data unavailable", HBAError: "HBA data unavailable"}, nil
 	}
-	if _, becameAvailable, _ := publisher.publish(context.Background(), 42, 19090, "/dev/null", fetch); !becameAvailable {
+	if result, _ := publisher.publish(context.Background(), 42, 19090, "/dev/null", fetch); !result.BecameAvailable {
 		t.Fatal("first successful VSOCK response did not report the guest as available")
 	}
-	if _, becameAvailable, _ := publisher.publish(context.Background(), 42, 19090, "/dev/null", fetch); becameAvailable {
+	if result, _ := publisher.publish(context.Background(), 42, 19090, "/dev/null", fetch); result.BecameAvailable {
 		t.Fatal("second successful VSOCK response reported guest availability again")
 	}
 }
@@ -527,8 +527,8 @@ func TestPublisherReportsReconfigurationWhenCacheSaveFails(t *testing.T) {
 			HBADisabled: true,
 		}, nil
 	}
-	reconfigured, _, err := publisher.publish(context.Background(), 42, 19090, device, fetch)
-	if !reconfigured {
+	result, err := publisher.publish(context.Background(), 42, 19090, device, fetch)
+	if !result.Reconfigured {
 		t.Fatal("kernel reconfiguration must be reported even when the cache cannot be saved")
 	}
 	if err == nil || !strings.Contains(err.Error(), "save hwmon inventory cache") {
