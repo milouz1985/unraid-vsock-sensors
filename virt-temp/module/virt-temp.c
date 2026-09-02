@@ -53,7 +53,10 @@ struct virt_temp_record {
 	long temperature;
 };
 
-/* Each open file stages one complete configure or update operation. */
+/*
+ * Each open file stages samples for one operation. Configure replaces a
+ * family's complete inventory; commit may update any subset of its sensors.
+ */
 struct virt_temp_session {
 	struct list_head records;
 	struct mutex lock;
