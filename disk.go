@@ -92,19 +92,15 @@ func (c *diskCollector) run(ctx context.Context) {
 func (c *diskCollector) refresh(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, diskCollectionTimeout)
 	defer cancel()
-	deadline, _ := ctx.Deadline()
 
 	rawDisks, err := readDisks(c.path)
 	var readings []sensors.Disk
 	if err == nil {
 		probes := collectDiskProbes(ctx, rawDisks)
-		if !time.Now().Before(deadline) {
-			err = context.DeadlineExceeded
-		} else if ctx.Err() != nil {
-			err = ctx.Err()
-		} else {
-			readings = c.state.apply(rawDisks, probes, time.Now(), c.grace)
-		}
+		// A collection timeout belongs to each probe which did not finish.
+		// Successful probes remain usable and failed probes follow their own
+		// grace period instead of invalidating the complete disk snapshot.
+		readings = c.state.apply(rawDisks, probes, time.Now(), c.grace)
 	}
 
 	c.mu.Lock()

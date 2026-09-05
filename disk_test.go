@@ -42,6 +42,39 @@ func TestDiskStateAllowsTransientSMARTFailure(t *testing.T) {
 	}
 }
 
+func TestDiskStateIsolatesTimedOutSMARTProbe(t *testing.T) {
+	disks := []unraidDisk{
+		{id: "serial1", name: "disk1", rotational: true},
+		{id: "serial2", name: "disk2", rotational: true},
+	}
+	tracker := newDiskStateTracker()
+	now := time.Unix(1000, 0)
+	grace := 35 * time.Second
+
+	tracker.apply(disks, []diskProbe{{temperature: 35}, {temperature: 40}}, now, grace)
+	readings := tracker.apply(disks, []diskProbe{
+		{err: context.DeadlineExceeded},
+		{temperature: 42},
+	}, now.Add(30*time.Second), grace)
+	if readings[0].Temp != 35 || readings[0].Unavailable {
+		t.Fatalf("timed out disk during grace = %#v", readings[0])
+	}
+	if readings[1].Temp != 42 || readings[1].Unavailable {
+		t.Fatalf("successful disk affected by peer timeout = %#v", readings[1])
+	}
+
+	readings = tracker.apply(disks, []diskProbe{
+		{err: context.DeadlineExceeded},
+		{temperature: 43},
+	}, now.Add(65*time.Second), grace)
+	if !readings[0].Unavailable {
+		t.Fatalf("timed out disk did not expire = %#v", readings[0])
+	}
+	if readings[1].Temp != 43 || readings[1].Unavailable {
+		t.Fatalf("successful disk affected after peer grace = %#v", readings[1])
+	}
+}
+
 func TestDiskStateGraceWithoutPreviousTemperatureAvoidsFailsafe(t *testing.T) {
 	tracker := newDiskStateTracker()
 	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true}
