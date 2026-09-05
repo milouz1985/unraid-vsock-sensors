@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unsafe"
 
@@ -100,6 +101,53 @@ func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 	if len(readings) != 0 || err == nil {
 		t.Fatalf("failed refresh returned %#v, %v", readings, err)
 	}
+}
+
+func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		collector := newHBACollector(time.Minute, hbaModeEnabled)
+		collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
+			return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
+		}
+		collector.refresh(context.Background())
+		// The normal interval between collections must not expire the cache.
+		time.Sleep(collector.interval)
+		if readings, err := collector.read(); err != nil || len(readings) != 1 || readings[0].Temp != 42 {
+			t.Fatalf("between collections: readings=%v err=%v", readings, err)
+		}
+
+		release := make(chan struct{})
+		defer close(release)
+		collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
+			<-release // A synchronous ioctl can keep waiting after its context expires.
+			return []sensors.HBA{{ID: "sas:1234", Temp: 43}}, nil
+		}
+		go collector.refresh(context.Background())
+		synctest.Wait()
+		if readings, err := collector.read(); err != nil || len(readings) != 1 || readings[0].Temp != 42 {
+			t.Fatalf("during collection: readings=%v err=%v", readings, err)
+		}
+
+		time.Sleep(hbaCollectionTimeout)
+		synctest.Wait()
+		if readings, err := collector.read(); len(readings) != 0 || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("blocked past deadline: readings=%v err=%v", readings, err)
+		}
+
+		release <- struct{}{}
+		synctest.Wait()
+		if readings, err := collector.read(); len(readings) != 0 || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("late successful collection: readings=%v err=%v", readings, err)
+		}
+
+		collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
+			return []sensors.HBA{{ID: "sas:1234", Temp: 44}}, nil
+		}
+		collector.refresh(context.Background())
+		if readings, err := collector.read(); err != nil || len(readings) != 1 || readings[0].Temp != 44 {
+			t.Fatalf("after recovery: readings=%v err=%v", readings, err)
+		}
+	})
 }
 
 func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {

@@ -322,6 +322,13 @@ serveur actualise ce relevé en arrière-plan ; les requêtes VSOCK n'attendent
 jamais une commande du contrôleur. Lorsque le backend StorCLI est sélectionné,
 la température ROC fournie par sa sortie JSON est utilisée à la place.
 
+Une collecte HBA dispose de 15 secondes. Au-delà, le serveur signale une erreur
+HBA même si l'ioctl reste bloqué : l'ancien relevé cesse d'être publié et les
+canaux hwmon atteignent leur failsafe après leur délai de 10 secondes sans
+actualisation. Un résultat arrivé après l'échéance est rejeté ; une nouvelle
+collecte réussie rétablit les mesures. Le cache reste valide pendant l'intervalle
+normal entre deux collectes.
+
 ## Utilisation en ligne de commande
 
 Les sélecteurs de groupe retournent la température maximale :

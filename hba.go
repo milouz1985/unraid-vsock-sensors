@@ -21,6 +21,7 @@ type hbaCollector struct {
 	mu              sync.RWMutex
 	readings        []sensors.HBA
 	err             error
+	refreshDeadline time.Time
 	collectSnapshot func(context.Context) ([]sensors.HBA, error)
 }
 
@@ -204,9 +205,22 @@ func (c *hbaCollector) run(ctx context.Context) {
 func (c *hbaCollector) refresh(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, hbaCollectionTimeout)
 	defer cancel()
+	deadline, _ := ctx.Deadline()
+	// A native ioctl may outlive its context. Readers enforce the deadline
+	// independently, while the previous snapshot remains usable until then.
+	c.mu.Lock()
+	c.refreshDeadline = deadline
+	c.mu.Unlock()
+
 	readings, err := c.collectSnapshot(ctx)
+	if !time.Now().Before(deadline) {
+		err = context.DeadlineExceeded
+	} else if err == nil {
+		err = ctx.Err()
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.refreshDeadline = time.Time{}
 	c.err = err
 	if err != nil {
 		c.readings = nil
@@ -218,6 +232,9 @@ func (c *hbaCollector) refresh(parent context.Context) {
 func (c *hbaCollector) read() ([]sensors.HBA, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	if !c.refreshDeadline.IsZero() && !time.Now().Before(c.refreshDeadline) {
+		return nil, context.DeadlineExceeded
+	}
 	return slices.Clone(c.readings), c.err
 }
 
