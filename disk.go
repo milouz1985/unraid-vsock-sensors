@@ -1,14 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
-	"fmt"
-	"os"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,11 +14,11 @@ import (
 )
 
 const (
-	diskPollMargin             = 5 * time.Second
-	defaultDiskPollInterval    = 2 * time.Minute
-	maximumRecommendedDiskPoll = 5 * time.Minute
-	diskCollectionTimeout      = 15 * time.Second
-	maxConcurrentSMARTReads    = 4
+	diskFailureMargin              = 5 * time.Second
+	defaultDiskInterval            = 30 * time.Second
+	maximumRecommendedDiskInterval = 5 * time.Minute
+	diskCollectionTimeout          = 15 * time.Second
+	maxConcurrentSMARTReads        = 4
 )
 
 type diskCollector struct {
@@ -213,35 +209,6 @@ func (s *diskStateTracker) failureDeadlines(grace time.Duration) map[string]time
 		deadlines[id] = started.Add(grace)
 	}
 	return deadlines
-}
-
-func diskPollingIntervals(configPath string) (configured, effective, grace time.Duration, err error) {
-	file, err := os.Open(configPath)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "poll_attributes=") {
-			continue
-		}
-		value := strings.Trim(strings.TrimPrefix(line, "poll_attributes="), `"`)
-		seconds, parseErr := strconv.ParseUint(value, 10, 32)
-		if parseErr != nil {
-			return 0, 0, 0, fmt.Errorf("invalid poll_attributes %q: %w", value, parseErr)
-		}
-		configured = time.Duration(seconds) * time.Second
-		break
-	}
-	if err := scanner.Err(); err != nil {
-		return 0, 0, 0, err
-	}
-	if configured == 0 {
-		return 0, defaultDiskPollInterval, defaultDiskPollInterval, nil
-	}
-	return configured, configured, configured + diskPollMargin, nil
 }
 
 // readDisks reads inventory and power state from Unraid. smartctl_type uses the

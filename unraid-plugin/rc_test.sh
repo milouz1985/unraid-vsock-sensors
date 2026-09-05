@@ -62,6 +62,12 @@ if ! grep -Fxq -- "--syslog" "$args_file"; then
     echo "daemon was not started with syslog logging" >&2
     exit 1
 fi
+mapfile -t daemon_args < "$args_file"
+expected_args=(serve --port 990 --hba-mode enabled --hba-backend mpt3ctl --hba-interval 15s --disk-interval 30s --syslog)
+if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
+    echo "unexpected daemon arguments: ${daemon_args[*]}" >&2
+    exit 1
+fi
 for descriptor in "/proc/$daemon_pid/fd/"*; do
     target="$(readlink "$descriptor" 2>/dev/null || true)"
     if [[ "$target" == pipe:* ]]; then

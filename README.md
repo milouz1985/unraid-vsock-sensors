@@ -74,6 +74,7 @@ https://raw.githubusercontent.com/milouz1985/unraid-vsock-sensors/refs/heads/mai
 Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 
 - **VSOCK port** : `990` ;
+- **Disk SMART refresh interval** : `30 seconds` ;
 - **HBA monitoring** : `enabled` si un HBA compatible est disponible, sinon
   `disabled` ;
 - **HBA backend** : `Native /dev/mpt3ctl` pour un contrôleur `mpt3sas`, ou
@@ -81,10 +82,10 @@ Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 - **HBA refresh interval** : `15 seconds` avec `mpt3ctl` ou `30 seconds` avec
   StorCLI.
 
-Ces intervalles sont des choix propres à l'intégration Unraid, qui transmet
-toujours la valeur au serveur. Lorsqu'il est lancé manuellement sans option,
-le binaire conserve un défaut générique de `30s`, quel que soit le backend.
-Cette différence n'affecte donc pas le service installé par le plugin.
+Le plugin transmet ces deux intervalles au serveur. La collecte disque vaut
+`30s` par défaut dans les deux cas. Pour le HBA, le plugin choisit `15s` avec
+`mpt3ctl` et `30s` avec StorCLI ; lancé manuellement sans option, le binaire
+utilise le défaut générique de `30s`, quel que soit le backend.
 
 Le serveur lit directement `/dev/mpt3ctl` pour les contrôleurs gérés par
 `mpt3sas` : aucun utilitaire supplémentaire n'est nécessaire. Le backend
@@ -248,12 +249,11 @@ d'identification du périphérique. Le code `3` accompagné du mode `STANDBY` ou
 l'option `-n standby`.
 
 Une erreur SMART transitoire conserve la dernière température valide pendant
-`poll_attributes + 5 secondes`, ou publie la sentinelle `0 °C` si aucune mesure
-précédente n'existe. Si l'erreur persiste à l'expiration, le disque et le
-maximum de sa catégorie passent explicitement au failsafe de `100 °C`. La
-valeur `poll_attributes` est lue dans `/boot/config/disk.cfg` et cadence le
-collecteur ; une valeur nulle ou absente utilise un repli prudent de deux
-minutes.
+l'intervalle de collecte augmenté de cinq secondes, ou publie la sentinelle
+`0 °C` si aucune mesure précédente n'existe. Si l'erreur persiste à
+l'expiration, le disque et le maximum de sa catégorie passent explicitement au
+failsafe de `100 °C`. Cet intervalle appartient au service, vaut `30s` par
+défaut et ne dépend plus du réglage Unraid **Tunable (poll_attributes)**.
 
 ## Inventaire persistant et changement de topologie
 
@@ -310,15 +310,16 @@ l'arrêt du serveur ou de l'agent, une perte VSOCK, une erreur de lecture et la
 disparition d'une sonde attendue.
 
 La température des disques vient d'une collecte SMART directe, exécutée en
-arrière-plan à la cadence de **Tunable (poll_attributes)**. Les requêtes VSOCK
-intermédiaires réutilisent ce relevé et n'attendent jamais une commande disque.
-Pour une régulation thermique réactive, une valeur de 30 à 60 secondes est
-recommandée. Cinq minutes constitue une limite haute raisonnable ; au-delà, une
-température peut rester ancienne trop longtemps pour piloter efficacement les
-ventilateurs. Le serveur continue de démarrer afin de préserver les autres
-sondes, mais écrit un avertissement dans son journal lorsque `poll_attributes`
-est supérieur à cinq minutes. Une valeur nulle ou absente produit également un
-avertissement et active le repli de deux minutes.
+arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.
+Les requêtes VSOCK intermédiaires réutilisent ce relevé et n'attendent jamais
+une commande disque. Leur cadence d'une seconde reste indépendante : elle
+alimente le heartbeat du module `virt-temp`, dont le failsafe se déclenche après
+10 secondes sans mise à jour. Pour une régulation thermique réactive, une
+valeur de 30 à 60 secondes est recommandée. Cinq minutes constitue une limite
+haute raisonnable ; au-delà, une température peut rester ancienne trop
+longtemps pour piloter efficacement les ventilateurs. Le serveur accepte une
+valeur plus longue passée en ligne de commande, mais écrit alors un
+avertissement dans son journal.
 
 La température HBA vient de IO Unit Page 7, lue avec des commandes MPI CONFIG
 strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et

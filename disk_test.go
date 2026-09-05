@@ -124,29 +124,6 @@ func TestDiskStatePurgesDisappearedDisks(t *testing.T) {
 	}
 }
 
-func TestDiskPollingIntervals(t *testing.T) {
-	for name, value := range map[string]struct {
-		config                       string
-		wantConfigured, wantInterval time.Duration
-		wantGrace                    time.Duration
-	}{
-		"poll plus margin": {config: "poll_attributes=\"30\"\n", wantConfigured: 30 * time.Second, wantInterval: 30 * time.Second, wantGrace: 35 * time.Second},
-		"long poll":        {config: "poll_attributes=\"1800\"\n", wantConfigured: 30 * time.Minute, wantInterval: 30 * time.Minute, wantGrace: 30*time.Minute + 5*time.Second},
-		"missing setting":  {config: "spindownDelay=\"0\"\n", wantInterval: 2 * time.Minute, wantGrace: 2 * time.Minute},
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "disk.cfg")
-			if err := os.WriteFile(path, []byte(value.config), 0600); err != nil {
-				t.Fatal(err)
-			}
-			configured, interval, grace, err := diskPollingIntervals(path)
-			if err != nil || configured != value.wantConfigured || interval != value.wantInterval || grace != value.wantGrace {
-				t.Fatalf("configured/interval/grace = %v/%v/%v, %v; want %v/%v/%v", configured, interval, grace, err, value.wantConfigured, value.wantInterval, value.wantGrace)
-			}
-		})
-	}
-}
-
 func TestReadInventoryAndSelect(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "disks.ini")
 	data := strings.ReplaceAll(strings.TrimSpace(`

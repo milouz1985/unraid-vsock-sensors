@@ -6,35 +6,13 @@ Icon="icon.png"
 $plugin = 'unraid-vsock-sensors';
 $cfg = parse_plugin_cfg($plugin);
 $port = htmlspecialchars($cfg['PORT'] ?? '990', ENT_QUOTES);
+$diskInterval = $cfg['DISK_INTERVAL'] ?? '30s';
 $hbaMode = $cfg['HBA_MODE'] ?? 'enabled';
 if ($hbaMode === 'auto') {
     $hbaMode = 'enabled';
 }
 $hbaBackend = $cfg['HBA_BACKEND'] ?? 'mpt3ctl';
 $hbaInterval = $cfg['HBA_INTERVAL'] ?? ($hbaBackend === 'storcli' ? '30s' : '15s');
-
-$pollAttributes = null;
-$diskConfig = '/boot/config/disk.cfg';
-if (is_readable($diskConfig)) {
-    foreach (file($diskConfig, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
-        if (preg_match('/^\s*poll_attributes\s*=\s*"?([0-9]+)"?\s*$/', $line, $matches)) {
-            $pollAttributes = (int)$matches[1];
-            break;
-        }
-    }
-}
-$pollWarning = '';
-if ($pollAttributes === null || $pollAttributes === 0) {
-    $pollWarning = 'Tunable (poll_attributes) is disabled or unavailable. Disk SMART temperatures will use a 2 minute refresh interval.';
-} elseif ($pollAttributes > 300) {
-    $pollDisplay = $pollAttributes % 60 === 0
-        ? sprintf('%d minutes', intdiv($pollAttributes, 60))
-        : sprintf('%d seconds', $pollAttributes);
-    $pollWarning = sprintf(
-        'Disk temperature polling is set to %s. Values older than 5 minutes are not recommended for reliable fan control.',
-        $pollDisplay
-    );
-}
 
 $statusOutput = [];
 exec('/etc/rc.d/rc.unraid-vsock-sensors status 2>/dev/null', $statusOutput, $statusCode);
@@ -59,21 +37,7 @@ if ($version === '') {
     max-width: 90px !important;
     margin: 0 !important;
 }
-.uvss-warning {
-    margin: 16px 0;
-    padding: 12px 16px;
-    border: 1px solid #d32f2f;
-    border-left-width: 5px;
-    border-radius: 3px;
-    background: rgba(211, 47, 47, 0.12);
-    color: #d32f2f;
-    font-weight: 600;
-}
 </style>
-
-<?php if ($pollWarning !== ''): ?>
-<div class="uvss-warning"><strong>_(Warning)_:</strong> <?=htmlspecialchars($pollWarning, ENT_QUOTES)?></div>
-<?php endif; ?>
 
 ### Service
 
@@ -101,6 +65,16 @@ _(VSOCK port)_:
 : <input type="number" name="PORT" value="<?=$port?>" min="1" max="4294967294" required>
 
 > The Proxmox client and the CoolerControl plugin must use the same port.
+
+_(Disk SMART refresh interval)_:
+: <select name="DISK_INTERVAL">
+<option value="30s" <?=$diskInterval === '30s' ? 'selected' : ''?>>30 seconds</option>
+<option value="1m" <?=$diskInterval === '1m' ? 'selected' : ''?>>1 minute</option>
+<option value="2m" <?=$diskInterval === '2m' ? 'selected' : ''?>>2 minutes</option>
+<option value="5m" <?=$diskInterval === '5m' ? 'selected' : ''?>>5 minutes</option>
+</select>
+
+> Active disks are collected in the background. Sleeping disks are not queried. VSOCK requests always use the cached value.
 
 _(HBA monitoring)_:
 : <select name="HBA_MODE">

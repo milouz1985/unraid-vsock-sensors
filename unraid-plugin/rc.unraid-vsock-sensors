@@ -17,6 +17,7 @@ close_inherited_fds() {
 
 load_config() {
     PORT="990"
+    DISK_INTERVAL="30s"
     HBA_MODE="enabled"
     HBA_BACKEND="mpt3ctl"
     HBA_INTERVAL="15s"
@@ -30,7 +31,7 @@ load_config() {
 
             # update.php writes KEY="value". Parse that format as data: sourcing
             # this file would execute shell syntax embedded in a crafted value.
-            if [[ "$line" =~ ^(PORT|HBA_MODE|HBA_BACKEND|HBA_INTERVAL)=\"([^\"]*)\"$ ]]; then
+            if [[ "$line" =~ ^(PORT|DISK_INTERVAL|HBA_MODE|HBA_BACKEND|HBA_INTERVAL)=\"([^\"]*)\"$ ]]; then
                 key="${BASH_REMATCH[1]}"
                 value="${BASH_REMATCH[2]}"
                 printf -v "$key" '%s' "$value"
@@ -45,6 +46,10 @@ load_config() {
         echo "Invalid VSOCK port: $PORT" >&2
         return 1
     fi
+    case "$DISK_INTERVAL" in
+        30s|1m|2m|5m) ;;
+        *) echo "Invalid disk SMART refresh interval: $DISK_INTERVAL" >&2; return 1 ;;
+    esac
     case "$HBA_MODE" in
         enabled|disabled) ;;
         auto) HBA_MODE="enabled" ;;
@@ -100,7 +105,8 @@ start() {
     (
         close_inherited_fds
         exec nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" \
-            --hba-backend "$HBA_BACKEND" --hba-interval "$HBA_INTERVAL" --syslog
+            --hba-backend "$HBA_BACKEND" --hba-interval "$HBA_INTERVAL" \
+            --disk-interval "$DISK_INTERVAL" --syslog
     ) </dev/null >/dev/null 2>&1 &
     pid=$!
     if ! printf '%s\n' "$pid" > "$pid_file"; then

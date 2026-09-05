@@ -84,7 +84,7 @@ Commands:
 
 Serve options:
   --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
-  --disk-config PATH        Unraid disk settings (default: /boot/config/disk.cfg)
+  --disk-interval DURATION  Delay between disk SMART refreshes (default: 30s)
   --port PORT               AF_VSOCK port (default: 990)
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
@@ -126,7 +126,7 @@ Examples:
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	disksINIPath := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
-	diskConfigPath := fs.String("disk-config", "/boot/config/disk.cfg", "Unraid disk settings")
+	diskInterval := fs.Duration("disk-interval", defaultDiskInterval, "delay between disk SMART refreshes")
 	port := fs.Uint("port", defaultPort, "vsock port")
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
@@ -153,6 +153,9 @@ func serve(args []string) error {
 	if *hbaInterval <= 0 {
 		return errors.New("hba-interval must be greater than zero")
 	}
+	if *diskInterval <= 0 {
+		return errors.New("disk-interval must be greater than zero")
+	}
 	hbaMode := hbaMode(*hbaModeValue)
 	if hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
 		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
@@ -164,22 +167,17 @@ func serve(args []string) error {
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
-	configuredDiskInterval, diskPollInterval, diskFailureGrace, err := diskPollingIntervals(*diskConfigPath)
-	if err != nil {
-		return fmt.Errorf("read Unraid disk settings: %w", err)
-	}
-	disks := newDiskCollector(*disksINIPath, diskPollInterval, diskFailureGrace)
+	diskFailureGrace := *diskInterval + diskFailureMargin
+	disks := newDiskCollector(*disksINIPath, *diskInterval, diskFailureGrace)
 	listener, err := vsock.Listen(uint32(*port), nil)
 	if err != nil {
 		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
 	}
 	defer listener.Close()
 	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
-	log.Printf("disk SMART refresh interval is %s; failure grace is %s", diskPollInterval, diskFailureGrace)
-	if configuredDiskInterval == 0 {
-		log.Printf("warning: poll_attributes is disabled or missing; using the %s disk SMART refresh fallback", diskPollInterval)
-	} else if configuredDiskInterval > maximumRecommendedDiskPoll {
-		log.Printf("warning: unsafe poll_attributes=%s exceeds the recommended maximum of %s; disk temperatures may be too stale for reliable fan control", configuredDiskInterval, maximumRecommendedDiskPoll)
+	log.Printf("disk SMART refresh interval is %s; failure grace is %s", *diskInterval, diskFailureGrace)
+	if *diskInterval > maximumRecommendedDiskInterval {
+		log.Printf("warning: disk-interval=%s exceeds the recommended maximum of %s; disk temperatures may be too stale for reliable fan control", *diskInterval, maximumRecommendedDiskInterval)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

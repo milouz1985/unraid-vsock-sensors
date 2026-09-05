@@ -80,7 +80,7 @@ failsafe. Une température de disque indisponible n'interrompt pas les autres
 mises à jour : ce disque et le maximum de sa catégorie reçoivent explicitement
 la température failsafe, tandis que les autres canaux restent actualisés. Le
 serveur Unraid collecte les températures SMART en arrière-plan et masque une
-erreur transitoire pendant la durée de `poll_attributes` augmentée de cinq
+erreur transitoire pendant l'intervalle SMART configuré augmenté de cinq
 secondes, sans déclarer la sonde en panne avant le prochain relevé configuré.
 Un changement de label seul n'affecte pas l'identité.
 
