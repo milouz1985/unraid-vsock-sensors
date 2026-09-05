@@ -37,8 +37,12 @@ test: ## Exécute tous les tests Go
 	$(GO) test ./...
 
 check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
-	bash -n $(BASH_SCRIPTS)
-	sh -n $(POSIX_SCRIPTS)
+	for script in $(BASH_SCRIPTS); do \
+		bash -n "$$script" || exit $$?; \
+	done
+	for script in $(POSIX_SCRIPTS); do \
+		sh -n "$$script" || exit $$?; \
+	done
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
 	bash unraid-plugin/rc_test.sh
 
