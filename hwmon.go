@@ -21,6 +21,7 @@ const (
 	virtTempDevicePath    = "/dev/virt-temp"
 	defaultHWMonCache     = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"
 	systemdRestartTimeout = 10 * time.Second
+	restartRetryDelay     = 30 * time.Second
 )
 
 type hwmonPublisher struct {
@@ -84,16 +85,25 @@ func hwmon(args []string) error {
 	// still retain disks discovered through drivetemp before the host released the
 	// HBA to the VM. Wait for the first successful VSOCK response, then restart the
 	// consumer so it drops those stale disks and discovers the virtual sensors.
-	lastError := ""
+	lastError, restartPending := "", false
+	restartAfter := time.Time{}
 	for {
 		result, err := publisher.publish(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
 		// The first response makes the guest-backed inventory authoritative even
 		// when it matches the cache, so consumers must discard stale disk entries.
 		if result.Reconfigured || result.BecameAvailable {
+			restartPending = true
+		}
+		if restartPending && !time.Now().Before(restartAfter) {
 			if restartErr := restartSystemdUnits(ctx, publisher.restartUnits); restartErr != nil {
+				restartAfter = time.Now().Add(restartRetryDelay)
 				log.Printf("topology consumer restart warning: %s", restartErr)
-			} else if len(publisher.restartUnits) != 0 {
-				log.Printf("restarted topology consumers: %s", strings.Join(publisher.restartUnits, ", "))
+			} else {
+				restartPending = false
+				restartAfter = time.Time{}
+				if len(publisher.restartUnits) != 0 {
+					log.Printf("restarted topology consumers: %s", strings.Join(publisher.restartUnits, ", "))
+				}
 			}
 		}
 		if err != nil && err.Error() != lastError {
