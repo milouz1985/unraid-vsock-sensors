@@ -79,10 +79,10 @@ nouvelle topologie : les anciens canaux restent alors en place et atteignent le
 failsafe. Une température de disque indisponible n'interrompt pas les autres
 mises à jour : ce disque et le maximum de sa catégorie reçoivent explicitement
 la température failsafe, tandis que les autres canaux restent actualisés. Le
-serveur Unraid masque auparavant l'état transitoire qui suit un spin-up pendant
-la durée de `poll_attributes` augmentée de cinq secondes, sans déclarer la sonde
-en panne avant le prochain relevé configuré. Un changement de label seul
-n'affecte pas l'identité.
+serveur Unraid collecte les températures SMART en arrière-plan et masque une
+erreur transitoire pendant la durée de `poll_attributes` augmentée de cinq
+secondes, sans déclarer la sonde en panne avant le prochain relevé configuré.
+Un changement de label seul n'affecte pas l'identité.
 
 Si l'enregistrement d'une nouvelle topologie échoue, le pilote réenregistre
 l'inventaire précédent au lieu de laisser disparaître les sondes. L'erreur est

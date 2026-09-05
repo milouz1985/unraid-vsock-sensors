@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,119 +13,108 @@ import (
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-func TestDiskReaderAllowsSpinupGrace(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "disks.ini")
-	write := func(temp, spundown string) {
-		data := "[disk1]\nid=serial1\ndevice=sdb\ntemp=" + temp + "\nspundown=" + spundown + "\nrotational=1\n"
-		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-			t.Fatal(err)
-		}
+func newDiskStateTracker() diskStateTracker {
+	return diskStateTracker{
+		lastValid: make(map[string]float64), pendingSince: make(map[string]time.Time),
 	}
+}
+
+func TestDiskStateAllowsTransientSMARTFailure(t *testing.T) {
+	disk := unraidDisk{id: "serial1", name: "disk1", device: "sdb", rotational: true}
+	tracker := newDiskStateTracker()
 	now := time.Unix(1000, 0)
-	reader := newDiskReader(path, 35*time.Second)
-	reader.now = func() time.Time { return now }
 
-	write("35", "0")
-	disks, err := reader.read()
-	if err != nil || disks[0].Temp != 35 {
-		t.Fatalf("initial reading = %#v, %v", disks, err)
+	readings := tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, 35*time.Second)
+	if readings[0].Temp != 35 || readings[0].Unavailable {
+		t.Fatalf("initial reading = %#v", readings)
 	}
-	write("*", "1")
-	if disks, err = reader.read(); err != nil || disks[0].Temp != 0 || disks[0].Unavailable {
-		t.Fatalf("standby reading = %#v, %v", disks, err)
+	readings = tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}}, now, 35*time.Second)
+	if readings[0].Temp != 35 || readings[0].Unavailable {
+		t.Fatalf("failure grace reading = %#v", readings)
 	}
-	write("*", "0")
-	if disks, err = reader.read(); err != nil || disks[0].Temp != 35 || disks[0].Unavailable {
-		t.Fatalf("spinup grace reading = %#v, %v", disks, err)
+	readings = tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("still unavailable")}}, now.Add(35*time.Second), 35*time.Second)
+	if !readings[0].Unavailable {
+		t.Fatalf("expired failure reused stale temperature: %#v", readings)
 	}
-	now = now.Add(35 * time.Second)
-	if disks, err = reader.read(); err != nil || !disks[0].Unavailable {
-		t.Fatalf("expired spinup reading = %#v, %v", disks, err)
-	}
-	write("40", "0")
-	if disks, err = reader.read(); err != nil || disks[0].Temp != 40 || disks[0].Unavailable {
-		t.Fatalf("recovered reading = %#v, %v", disks, err)
+	readings = tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 40}}, now.Add(36*time.Second), 35*time.Second)
+	if readings[0].Temp != 40 || readings[0].Unavailable {
+		t.Fatalf("recovered reading = %#v", readings)
 	}
 }
 
-func TestDiskReaderGraceWithoutPreviousTemperatureAvoidsFailsafe(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "disks.ini")
-	if err := os.WriteFile(path, []byte("[disk1]\nid=serial1\ndevice=sdb\ntemp=*\nspundown=0\nrotational=1\n"), 0600); err != nil {
-		t.Fatal(err)
+func TestDiskStateGraceWithoutPreviousTemperatureAvoidsFailsafe(t *testing.T) {
+	tracker := newDiskStateTracker()
+	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true}
+	readings := tracker.apply(
+		[]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}}, time.Now(), time.Minute,
+	)
+	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
+		t.Fatalf("initial grace reading = %#v", readings)
 	}
-	reader := newDiskReader(path, time.Minute)
-	disks, err := reader.read()
-	if err != nil || len(disks) != 1 || disks[0].Temp != 0 || disks[0].Unavailable {
-		t.Fatalf("initial grace reading = %#v, %v", disks, err)
-	}
-	readings := makeDiskSamples(sensors.Response{Disks: disks})
-	if len(readings) != 1 || readings[0].temperature == hwmonFailsafeTemp {
-		t.Fatalf("initial grace triggered hwmon failsafe: %#v", readings)
+	if samples := makeDiskSamples(sensors.Response{Disks: readings}); len(samples) != 1 || samples[0].temperature == hwmonFailsafeTemp {
+		t.Fatalf("initial grace triggered hwmon failsafe: %#v", samples)
 	}
 }
 
-func TestDiskReaderPurgesStateForDisappearedDisks(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "disks.ini")
-	write := func(data string) {
-		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-			t.Fatal(err)
-		}
+func TestDiskStateReportsStandbyAsZero(t *testing.T) {
+	tracker := newDiskStateTracker()
+	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true, spundown: true}
+	readings := tracker.apply([]unraidDisk{disk}, []diskProbe{{standby: true}}, time.Now(), time.Minute)
+	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
+		t.Fatalf("standby reading = %#v", readings)
 	}
-	const active = "[disk1]\nid=serial1\ndevice=sdb\ntemp=35\nspundown=0\nrotational=1\n"
-	const pending = "[disk1]\nid=serial1\ndevice=sdb\ntemp=*\nspundown=0\nrotational=1\n"
+}
 
+func TestCollectDiskProbesSkipsKnownStandbyDisk(t *testing.T) {
+	probes := collectDiskProbes(context.Background(), []unraidDisk{{name: "disk1", spundown: true}})
+	if len(probes) != 1 || !probes[0].standby || probes[0].err != nil {
+		t.Fatalf("standby probe = %#v", probes)
+	}
+}
+
+func TestDiskStatePurgesDisappearedDisks(t *testing.T) {
+	tracker := newDiskStateTracker()
+	disk := unraidDisk{id: "serial1", name: "disk1"}
 	now := time.Unix(1000, 0)
-	reader := newDiskReader(path, time.Minute)
-	reader.now = func() time.Time { return now }
-	write(active)
-	if _, err := reader.read(); err != nil {
-		t.Fatal(err)
-	}
-	write(pending)
-	if _, err := reader.read(); err != nil {
-		t.Fatal(err)
+	tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, time.Minute)
+	tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("missing")}}, now, time.Minute)
+	tracker.apply(nil, nil, now, time.Minute)
+	if len(tracker.lastValid) != 0 || len(tracker.pendingSince) != 0 {
+		t.Fatalf("state was not purged: lastValid=%v pendingSince=%v", tracker.lastValid, tracker.pendingSince)
 	}
 
-	write("[disk1]\nstatus=DISK_NP\n")
-	if _, err := reader.read(); err != nil {
-		t.Fatal(err)
-	}
-	if len(reader.lastValid) != 0 || len(reader.pendingSince) != 0 {
-		t.Fatalf("state was not purged: lastValid=%v pendingSince=%v", reader.lastValid, reader.pendingSince)
-	}
-
-	now = now.Add(2 * time.Minute)
-	write(pending)
-	disks, err := reader.read()
-	if err != nil || len(disks) != 1 || disks[0].Temp != 0 || disks[0].Unavailable {
-		t.Fatalf("reappeared disk reused stale state: disks=%#v err=%v", disks, err)
+	readings := tracker.apply(
+		[]unraidDisk{disk}, []diskProbe{{err: errors.New("missing")}}, now.Add(2*time.Minute), time.Minute,
+	)
+	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
+		t.Fatalf("reappeared disk reused stale state: %#v", readings)
 	}
 }
 
-func TestDiskSpinupGraceUsesPollAttributesWithoutCap(t *testing.T) {
+func TestDiskPollingIntervals(t *testing.T) {
 	for name, value := range map[string]struct {
-		config   string
-		wantPoll time.Duration
-		want     time.Duration
+		config                       string
+		wantConfigured, wantInterval time.Duration
+		wantGrace                    time.Duration
 	}{
-		"poll plus margin": {config: "poll_attributes=\"30\"\n", wantPoll: 30 * time.Second, want: 35 * time.Second},
-		"long poll":        {config: "poll_attributes=\"1800\"\n", wantPoll: 30 * time.Minute, want: 30*time.Minute + 5*time.Second},
-		"missing setting":  {config: "spindownDelay=\"0\"\n", want: 2 * time.Minute},
+		"poll plus margin": {config: "poll_attributes=\"30\"\n", wantConfigured: 30 * time.Second, wantInterval: 30 * time.Second, wantGrace: 35 * time.Second},
+		"long poll":        {config: "poll_attributes=\"1800\"\n", wantConfigured: 30 * time.Minute, wantInterval: 30 * time.Minute, wantGrace: 30*time.Minute + 5*time.Second},
+		"missing setting":  {config: "spindownDelay=\"0\"\n", wantInterval: 2 * time.Minute, wantGrace: 2 * time.Minute},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "disk.cfg")
 			if err := os.WriteFile(path, []byte(value.config), 0600); err != nil {
 				t.Fatal(err)
 			}
-			poll, got, err := diskPollingIntervals(path)
-			if err != nil || poll != value.wantPoll || got != value.want {
-				t.Fatalf("poll/grace = %v/%v, %v; want %v/%v", poll, got, err, value.wantPoll, value.want)
+			configured, interval, grace, err := diskPollingIntervals(path)
+			if err != nil || configured != value.wantConfigured || interval != value.wantInterval || grace != value.wantGrace {
+				t.Fatalf("configured/interval/grace = %v/%v/%v, %v; want %v/%v/%v", configured, interval, grace, err, value.wantConfigured, value.wantInterval, value.wantGrace)
 			}
 		})
 	}
 }
 
-func TestReadAndSelect(t *testing.T) {
+func TestReadInventoryAndSelect(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "disks.ini")
 	data := strings.ReplaceAll(strings.TrimSpace(`
 		["disk1"]
@@ -132,6 +124,7 @@ func TestReadAndSelect(t *testing.T) {
 		temp="35"
 		rotational="1"
 		transport="ata"
+		spundown="0"
 
 		["fast"]
 		id="NVME_fast_serial"
@@ -139,6 +132,7 @@ func TestReadAndSelect(t *testing.T) {
 		temp="48"
 		rotational="0"
 		transport="nvme"
+		spundown="0"
 
 		["disk2"]
 		id="WDC_disk2_serial"
@@ -150,60 +144,103 @@ func TestReadAndSelect(t *testing.T) {
 		["disk13"]
 		device=""
 		status="DISK_NP"
-		temp="*"
-		spundown="0"
 
 		["flash"]
 		device="sdi"
 		transport="usb"
 		rotational="1"
-		temp="*"
-		spundown="0"
 	`), "\n\t\t", "\n")
 	if err := os.WriteFile(p, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	disks, err := newDiskReader(p, time.Minute).read()
+	disks, err := readDisks(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(disks) != 3 {
-		t.Fatalf("got %d disks", len(disks))
+	if len(disks) != 3 || disks[0].id != "WDC_disk1_serial" || !disks[1].spundown {
+		t.Fatalf("inventory = %#v", disks)
 	}
-	if disks[0].ID != "WDC_disk1_serial" {
-		t.Fatalf("got disk ID %q", disks[0].ID)
-	}
-	if got := selectDisks(disks, "hdd"); len(got) != 2 || got[0].Temp != 35 || got[1].Temp != 0 {
+
+	tracker := newDiskStateTracker()
+	readings := tracker.apply(disks, []diskProbe{
+		{temperature: 35}, {standby: true}, {temperature: 48},
+	}, time.Now(), time.Minute)
+	if got := selectDisks(readings, "hdd"); len(got) != 2 || got[0].Temp != 35 || got[1].Temp != 0 {
 		t.Fatalf("hdd: %#v", got)
 	}
-	if got := selectDisks(disks, "nvme"); len(got) != 1 || got[0].Temp != 48 {
+	if got := selectDisks(readings, "nvme"); len(got) != 1 || got[0].Temp != 48 {
 		t.Fatalf("nvme: %#v", got)
 	}
-	if got := selectDisks(disks, "fast"); len(got) != 1 || got[0].Device != "nvme0n1" {
+	if got := selectDisks(readings, "fast"); len(got) != 1 || got[0].Device != "nvme0n1" {
 		t.Fatalf("name: %#v", got)
 	}
 }
 
-func TestReadDisksMarksInvalidTemperatureUnavailable(t *testing.T) {
-	for _, temperature := range []string{"broken", "NaN", "-20", "255"} {
-		t.Run(temperature, func(t *testing.T) {
-			p := filepath.Join(t.TempDir(), "disks.ini")
-			data := "[disk1]\nid=serial1\ndevice=sdb\ntemp=" + temperature + "\nrotational=1\n" +
-				"[disk2]\nid=serial2\ndevice=sdc\ntemp=35\nrotational=1\n"
-			if err := os.WriteFile(p, []byte(data), 0600); err != nil {
-				t.Fatal(err)
-			}
-			disks, err := newDiskReader(p, time.Minute).read()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(disks) != 2 || !disks[0].Unavailable || disks[0].Temp != 0 {
-				t.Fatalf("invalid temperature should affect only its disk: %#v", disks)
-			}
-			if disks[1].Unavailable || disks[1].Temp != 35 {
-				t.Fatalf("invalid temperature should not affect another disk: %#v", disks)
+func TestParseSMARTTemperature(t *testing.T) {
+	for name, test := range map[string]struct {
+		json        string
+		runErr      error
+		wantTemp    float64
+		wantStandby bool
+		wantErr     bool
+	}{
+		"active": {
+			json:     `{"smartctl":{"exit_status":0},"temperature":{"current":35}}`,
+			wantTemp: 35,
+		},
+		"health warning still has valid temperature": {
+			json:     `{"smartctl":{"exit_status":64},"temperature":{"current":41}}`,
+			runErr:   &exec.ExitError{},
+			wantTemp: 41,
+		},
+		"standby": {
+			json:        `{"smartctl":{"exit_status":3},"power_mode":{"name":"STANDBY"}}`,
+			runErr:      &exec.ExitError{},
+			wantStandby: true,
+		},
+		"ambiguous exit three": {
+			json:    `{"smartctl":{"exit_status":3}}`,
+			runErr:  &exec.ExitError{},
+			wantErr: true,
+		},
+		"missing temperature": {
+			json:    `{"smartctl":{"exit_status":0}}`,
+			wantErr: true,
+		},
+		"invalid temperature": {
+			json:    `{"smartctl":{"exit_status":0},"temperature":{"current":255}}`,
+			wantErr: true,
+		},
+		"invalid JSON": {json: `{`, wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			temperature, standby, err := parseSMARTTemperature("disk1", []byte(test.json), test.runErr)
+			if temperature != test.wantTemp || standby != test.wantStandby || (err != nil) != test.wantErr {
+				t.Fatalf("temperature/standby/error = %v/%v/%v; want %v/%v/error=%v", temperature, standby, err, test.wantTemp, test.wantStandby, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestDiskCollectorRejectsExpiredSnapshot(t *testing.T) {
+	collector := newDiskCollector("unused", time.Minute, time.Minute)
+	collector.err = nil
+	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
+	collector.validUntil = time.Now().Add(-time.Second)
+	if _, err := collector.read(); err == nil {
+		t.Fatal("expired snapshot was accepted")
+	}
+}
+
+func TestDiskCollectorExpiresFailedReadingAtGraceDeadline(t *testing.T) {
+	collector := newDiskCollector("unused", time.Minute, time.Minute)
+	collector.err = nil
+	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
+	collector.validUntil = time.Now().Add(time.Minute)
+	collector.failAfter = map[string]time.Time{"serial": time.Now().Add(-time.Second)}
+	readings, err := collector.read()
+	if err != nil || len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
+		t.Fatalf("expired failed reading = %#v, %v", readings, err)
 	}
 }
 
@@ -221,19 +258,5 @@ func TestSelectDisksExcludesExternalDisksFromKindSelectors(t *testing.T) {
 	}
 	if got := selectDisks(disks, "all"); len(got) != 2 {
 		t.Fatalf("all should include external disks: %#v", got)
-	}
-}
-
-func TestReadDisksMarksMissingTemperatureOnActiveDiskPending(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "disks.ini")
-	if err := os.WriteFile(p, []byte("[disk1]\nid=serial\ndevice=sdb\ntemp=*\nrotational=1\nspundown=0\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	disks, err := readDisks(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(disks) != 1 || disks[0].state != diskStatePending {
-		t.Fatalf("missing temperature should mark the raw disk pending: %#v", disks)
 	}
 }

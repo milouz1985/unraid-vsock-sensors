@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Disk describes a disk and its latest cached temperature reported by Unraid.
+// Disk describes an Unraid disk and its latest collected temperature.
 type Disk struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`

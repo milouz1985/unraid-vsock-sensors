@@ -1,4 +1,4 @@
-// Command unraid-vsock-sensors exports Unraid's cached temperatures over AF_VSOCK.
+// Command unraid-vsock-sensors exports Unraid storage temperatures over AF_VSOCK.
 package main
 
 import (
@@ -164,22 +164,22 @@ func serve(args []string) error {
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
-	diskPollInterval, spinupGrace, err := diskPollingIntervals(*diskConfigPath)
+	configuredDiskInterval, diskPollInterval, spinupGrace, err := diskPollingIntervals(*diskConfigPath)
 	if err != nil {
 		return fmt.Errorf("read Unraid disk settings: %w", err)
 	}
-	disks := newDiskReader(*disksINIPath, spinupGrace)
+	disks := newDiskCollector(*disksINIPath, diskPollInterval, spinupGrace)
 	listener, err := vsock.Listen(uint32(*port), nil)
 	if err != nil {
 		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
 	}
 	defer listener.Close()
 	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
-	log.Printf("disk spin-up grace is %s", spinupGrace)
-	if diskPollInterval == 0 {
-		log.Printf("warning: poll_attributes is disabled or missing; disk temperatures may not be refreshed automatically")
-	} else if diskPollInterval > maximumRecommendedDiskPoll {
-		log.Printf("warning: unsafe poll_attributes=%s exceeds the recommended maximum of %s; disk temperatures may be too stale for reliable fan control", diskPollInterval, maximumRecommendedDiskPoll)
+	log.Printf("disk SMART refresh interval is %s; failure grace is %s", diskPollInterval, spinupGrace)
+	if configuredDiskInterval == 0 {
+		log.Printf("warning: poll_attributes is disabled or missing; using the %s disk SMART refresh fallback", diskPollInterval)
+	} else if configuredDiskInterval > maximumRecommendedDiskPoll {
+		log.Printf("warning: unsafe poll_attributes=%s exceeds the recommended maximum of %s; disk temperatures may be too stale for reliable fan control", configuredDiskInterval, maximumRecommendedDiskPoll)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -189,8 +189,9 @@ func serve(args []string) error {
 		_ = listener.Close()
 	}()
 	hbas := newConfiguredHBACollector(*hbaInterval, hbaMode, hbaBackend)
-	// HBA temperatures are refreshed independently so VSOCK requests never wait
-	// for a controller command.
+	// Storage temperatures are refreshed independently so VSOCK requests never
+	// wait for a disk or controller command.
+	go disks.run(ctx)
 	go hbas.run(ctx)
 	var clients sync.WaitGroup
 	clientSlots := make(chan struct{}, maxConcurrentClients)
@@ -230,11 +231,11 @@ func serve(args []string) error {
 	}
 }
 
-func handle(conn net.Conn, disks *diskReader, collector *hbaCollector) {
+func handle(conn net.Conn, disks *diskCollector, collector *hbaCollector) {
 	handleWithTimeout(conn, disks, collector, requestTimeout)
 }
 
-func handleWithTimeout(conn net.Conn, disks *diskReader, collector *hbaCollector, timeout time.Duration) {
+func handleWithTimeout(conn net.Conn, disks *diskCollector, collector *hbaCollector, timeout time.Duration) {
 	defer conn.Close()
 	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 		return

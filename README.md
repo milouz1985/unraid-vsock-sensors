@@ -10,15 +10,17 @@ Sur Proxmox, ces températures peuvent être :
 - interrogées directement en ligne de commande ;
 - utilisées sans réseau IP entre la VM et l'hôte.
 
-Le serveur lit le cache de températures d'Unraid. Il n'exécute jamais
-`smartctl` et ne réveille donc pas les disques en veille.
+Le serveur lit l'inventaire et l'état de rotation d'Unraid, puis relève en
+arrière-plan la température des disques actifs avec le helper
+`smartctl_type`. Il ne consulte pas les disques déjà signalés en veille et
+utilise `smartctl -n standby` pour couvrir un changement d'état concurrent.
 
 ## Architecture
 
 ```text
 VM Unraid                                      Hôte Proxmox
 ┌────────────────────────────┐                 ┌─────────────────────────────┐
-│ disks.ini                  │                 │ unraid-vsock-sensors hwmon  │
+│ disks.ini + smartctl_type  │                 │ unraid-vsock-sensors hwmon  │
 │ /dev/mpt3ctl (HBA)         │                 │            │                │
 │            │               │     AF_VSOCK    │            ▼                │
 │ unraid-vsock-sensors serve ├────────────────►│ /dev/virt-temp              │
@@ -229,25 +231,25 @@ clé USB de démarrage `flash` sont entièrement exclus. Les SSD internes utilis
 un autre transport que SATA ou NVMe possèdent un canal individuel, mais ne
 créent pas de canal maximum dédié.
 
-Un disque en veille (`temp="*"` et `spundown="1"`) est conservé dans
-l'inventaire avec une température de `0 °C`. Cette valeur signifie que la sonde
-est inactive et évite de déclencher le failsafe pendant un spindown normal.
+Un disque signalé en veille par `spundown="1"` est conservé dans l'inventaire
+avec une température de `0 °C`, sans exécuter de commande SMART. Cette valeur
+signifie que la sonde est inactive et évite de déclencher le failsafe pendant
+un spindown normal.
 
-Unraid met à jour l'état de rotation et la température séparément. Juste après
-un spin-up, `disks.ini` peut donc contenir temporairement `temp="*"` avec
-`spundown="0"`, jusqu'au prochain relevé SMART réglé par `poll_attributes`.
-Le serveur accorde alors une grâce de
-`poll_attributes + 5 secondes`, sans la plafonner avant le prochain relevé
-configuré. Pendant cette grâce, il conserve
-la dernière température valide du disque, ou publie la sentinelle `0 °C` si
-aucune mesure précédente n'existe. Une nouvelle température interrompt
-immédiatement la grâce.
+Pour chaque disque actif, le serveur appelle le helper Unraid
+`/usr/local/sbin/smartctl_type` avec `--json -n standby,3 -A`. Unraid résout
+ainsi le périphérique et les éventuels paramètres particuliers du contrôleur.
+Le code de sortie `3` accompagné du mode `STANDBY` ou `SLEEP` est également
+traité comme une veille normale. Les NVMe sont interrogés sans l'option
+`-n standby`.
 
-Si la température reste absente à l'expiration, le disque et le maximum de sa
-catégorie (HDD, SATA SSD ou NVMe) passent explicitement au failsafe de `100 °C`.
-Une autre température invalide déclenche ce failsafe sans grâce. La valeur
-`poll_attributes` est lue comme donnée dans `/boot/config/disk.cfg` ; une valeur
-nulle ou absente utilise un repli prudent de deux minutes.
+Une erreur SMART transitoire conserve la dernière température valide pendant
+`poll_attributes + 5 secondes`, ou publie la sentinelle `0 °C` si aucune mesure
+précédente n'existe. Si l'erreur persiste à l'expiration, le disque et le
+maximum de sa catégorie passent explicitement au failsafe de `100 °C`. La
+valeur `poll_attributes` est lue dans `/boot/config/disk.cfg` et cadence le
+collecteur ; une valeur nulle ou absente utilise un repli prudent de deux
+minutes.
 
 ## Inventaire persistant et changement de topologie
 
@@ -303,15 +305,16 @@ Chaque canal non actualisé pendant 10 secondes retourne `100 °C`. Cela couvre
 l'arrêt du serveur ou de l'agent, une perte VSOCK, une erreur de lecture et la
 disparition d'une sonde attendue.
 
-La température des disques vient de `/var/local/emhttp/disks.ini`. Sa fraîcheur
-dépend de **Tunable (poll_attributes)** dans Unraid : interroger toutes les
-secondes peut donc retourner plusieurs fois la même valeur mise en cache.
+La température des disques vient d'une collecte SMART directe, exécutée en
+arrière-plan à la cadence de **Tunable (poll_attributes)**. Les requêtes VSOCK
+intermédiaires réutilisent ce relevé et n'attendent jamais une commande disque.
 Pour une régulation thermique réactive, une valeur de 30 à 60 secondes est
 recommandée. Cinq minutes constitue une limite haute raisonnable ; au-delà, une
 température peut rester ancienne trop longtemps pour piloter efficacement les
 ventilateurs. Le serveur continue de démarrer afin de préserver les autres
 sondes, mais écrit un avertissement dans son journal lorsque `poll_attributes`
-est supérieur à cinq minutes, nul ou absent.
+est supérieur à cinq minutes. Une valeur nulle ou absente produit également un
+avertissement et active le repli de deux minutes.
 
 La température HBA vient de IO Unit Page 7, lue avec des commandes MPI CONFIG
 strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
