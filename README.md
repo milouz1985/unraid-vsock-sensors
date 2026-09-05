@@ -269,10 +269,10 @@ exposés ni dans le JSON, ni dans les sélecteurs, ni dans le cache hwmon.
 `mpt3ctl` relit l'identité et la température dans chaque relevé, mais conserve
 par adresse PCI la dernière identité SAS valide afin qu'une erreur transitoire
 de la page Manufacturing 5 ne renomme pas la sonde. StorCLI conserve
-la correspondance `/cN` sans expiration et surveille l'empreinte des HBA dans
-`/sys/class/scsi_host`. Un changement de cette empreinte, une erreur de lecture
-ou un ensemble de contrôleurs différent invalide immédiatement le cache et
-déclenche une unique redécouverte suivie, si nécessaire, d'une nouvelle tentative.
+la correspondance `/cN` découverte lors du premier relevé tant que les lectures
+réussissent. Une erreur de lecture, notamment un ensemble de contrôleurs
+différent, invalide cette correspondance et déclenche une redécouverte. Lorsqu'un
+cache existait déjà, StorCLI effectue ensuite une unique nouvelle tentative.
 Les deux backends produisent en priorité le même ID `sas:<adresse>` ; l'adresse
 PCI puis le numéro de série servent de replis lorsqu'elle est indisponible.
 Le label HBA est construit à partir du modèle et de l'adresse PCI, avec l'ID
@@ -286,8 +286,8 @@ Pendant l'exécution :
   catégorie au failsafe ;
 - une erreur HBA invalide le relevé complet : l'inventaire précédent reste
   configuré sans être actualisé et atteint donc le failsafe. StorCLI tente
-  auparavant une redécouverte unique lorsque la topologie ou l'ensemble des
-  contrôleurs a changé ;
+  auparavant une redécouverte et une nouvelle lecture lorsque celle fondée sur
+  sa correspondance en cache échoue ;
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
   automatiquement la famille hwmon concernée et met à jour le cache ;
 - un changement de `/dev/sdX`, de nom affiché ou d'index IOC ne modifie pas
