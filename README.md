@@ -239,9 +239,13 @@ un spindown normal.
 Pour chaque disque actif, le serveur appelle le helper Unraid
 `/usr/local/sbin/smartctl_type` avec `--json -n standby,3 -A`. Unraid résout
 ainsi le périphérique et les éventuels paramètres particuliers du contrôleur.
-Le code de sortie `3` accompagné du mode `STANDBY` ou `SLEEP` est également
-traité comme une veille normale. Les NVMe sont interrogés sans l'option
-`-n standby`.
+Le second paramètre de `-n` demande explicitement à `smartctl` de retourner
+le code `3` lorsqu'il interrompt la lecture pour un mode basse consommation.
+La documentation de `smartctl` recommande cette valeur pour distinguer la
+veille du code par défaut `2`, qui peut aussi signaler un échec d'ouverture ou
+d'identification du périphérique. Le code `3` accompagné du mode `STANDBY` ou
+`SLEEP` est donc traité comme une veille normale. Les NVMe sont interrogés sans
+l'option `-n standby`.
 
 Une erreur SMART transitoire conserve la dernière température valide pendant
 `poll_attributes + 5 secondes`, ou publie la sentinelle `0 °C` si aucune mesure

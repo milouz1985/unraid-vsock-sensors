@@ -226,6 +226,11 @@ func TestParseSMARTTemperature(t *testing.T) {
 			runErr:   &exec.ExitError{},
 			wantTemp: 41,
 		},
+		"command failure rejects reported temperature": {
+			json:    `{"smartctl":{"exit_status":4},"temperature":{"current":41}}`,
+			runErr:  &exec.ExitError{},
+			wantErr: true,
+		},
 		"standby": {
 			json:        `{"smartctl":{"exit_status":3},"power_mode":{"name":"STANDBY"}}`,
 			runErr:      &exec.ExitError{},
@@ -238,6 +243,15 @@ func TestParseSMARTTemperature(t *testing.T) {
 		},
 		"missing temperature": {
 			json:    `{"smartctl":{"exit_status":0}}`,
+			wantErr: true,
+		},
+		"missing exit status": {
+			json:    `{"smartctl":{},"temperature":{"current":35}}`,
+			wantErr: true,
+		},
+		"expired command with valid output": {
+			json:    `{"smartctl":{"exit_status":0},"temperature":{"current":35}}`,
+			runErr:  context.DeadlineExceeded,
 			wantErr: true,
 		},
 		"invalid temperature": {
