@@ -164,18 +164,18 @@ func serve(args []string) error {
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
-	configuredDiskInterval, diskPollInterval, spinupGrace, err := diskPollingIntervals(*diskConfigPath)
+	configuredDiskInterval, diskPollInterval, diskFailureGrace, err := diskPollingIntervals(*diskConfigPath)
 	if err != nil {
 		return fmt.Errorf("read Unraid disk settings: %w", err)
 	}
-	disks := newDiskCollector(*disksINIPath, diskPollInterval, spinupGrace)
+	disks := newDiskCollector(*disksINIPath, diskPollInterval, diskFailureGrace)
 	listener, err := vsock.Listen(uint32(*port), nil)
 	if err != nil {
 		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
 	}
 	defer listener.Close()
 	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
-	log.Printf("disk SMART refresh interval is %s; failure grace is %s", diskPollInterval, spinupGrace)
+	log.Printf("disk SMART refresh interval is %s; failure grace is %s", diskPollInterval, diskFailureGrace)
 	if configuredDiskInterval == 0 {
 		log.Printf("warning: poll_attributes is disabled or missing; using the %s disk SMART refresh fallback", diskPollInterval)
 	} else if configuredDiskInterval > maximumRecommendedDiskPoll {

@@ -39,8 +39,8 @@ type diskCollector struct {
 }
 
 type diskStateTracker struct {
-	lastValid    map[string]float64
-	pendingSince map[string]time.Time
+	lastValid   map[string]float64
+	failedSince map[string]time.Time
 }
 
 // unraidDisk is the inventory and power state read from Unraid's disks.ini.
@@ -69,7 +69,7 @@ func newDiskCollector(path string, interval, grace time.Duration) *diskCollector
 		path: path, interval: interval, grace: grace,
 		err: errors.New("disk temperatures have not been collected yet"),
 		state: diskStateTracker{
-			lastValid: make(map[string]float64), pendingSince: make(map[string]time.Time),
+			lastValid: make(map[string]float64), failedSince: make(map[string]time.Time),
 		},
 	}
 }
@@ -173,15 +173,15 @@ func (s *diskStateTracker) apply(disks []unraidDisk, probes []diskProbe, now tim
 		switch {
 		case probe.standby:
 			temperature = 0
-			delete(s.pendingSince, disk.id)
+			delete(s.failedSince, disk.id)
 		case probe.err == nil:
 			s.lastValid[disk.id] = probe.temperature
-			delete(s.pendingSince, disk.id)
+			delete(s.failedSince, disk.id)
 		default:
-			started, ok := s.pendingSince[disk.id]
+			started, ok := s.failedSince[disk.id]
 			if !ok {
 				started = now
-				s.pendingSince[disk.id] = started
+				s.failedSince[disk.id] = started
 			}
 			if now.Sub(started) < grace {
 				// Avoid the hwmon failsafe during a normal spin-up or one missed
@@ -199,17 +199,17 @@ func (s *diskStateTracker) apply(disks []unraidDisk, probes []diskProbe, now tim
 			delete(s.lastValid, id)
 		}
 	}
-	for id := range s.pendingSince {
+	for id := range s.failedSince {
 		if _, ok := present[id]; !ok {
-			delete(s.pendingSince, id)
+			delete(s.failedSince, id)
 		}
 	}
 	return readings
 }
 
 func (s *diskStateTracker) failureDeadlines(grace time.Duration) map[string]time.Time {
-	deadlines := make(map[string]time.Time, len(s.pendingSince))
-	for id, started := range s.pendingSince {
+	deadlines := make(map[string]time.Time, len(s.failedSince))
+	for id, started := range s.failedSince {
 		deadlines[id] = started.Add(grace)
 	}
 	return deadlines

@@ -15,7 +15,7 @@ import (
 
 func newDiskStateTracker() diskStateTracker {
 	return diskStateTracker{
-		lastValid: make(map[string]float64), pendingSince: make(map[string]time.Time),
+		lastValid: make(map[string]float64), failedSince: make(map[string]time.Time),
 	}
 }
 
@@ -112,8 +112,8 @@ func TestDiskStatePurgesDisappearedDisks(t *testing.T) {
 	tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, time.Minute)
 	tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("missing")}}, now, time.Minute)
 	tracker.apply(nil, nil, now, time.Minute)
-	if len(tracker.lastValid) != 0 || len(tracker.pendingSince) != 0 {
-		t.Fatalf("state was not purged: lastValid=%v pendingSince=%v", tracker.lastValid, tracker.pendingSince)
+	if len(tracker.lastValid) != 0 || len(tracker.failedSince) != 0 {
+		t.Fatalf("state was not purged: lastValid=%v failedSince=%v", tracker.lastValid, tracker.failedSince)
 	}
 
 	readings := tracker.apply(
