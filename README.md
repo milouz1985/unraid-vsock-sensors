@@ -156,7 +156,6 @@ Le fichier `/etc/default/unraid-vsock-hwmon` contient :
 ```sh
 UNRAID_VSOCK_CID=3
 UNRAID_VSOCK_PORT=990
-UNRAID_VSOCK_INTERVAL=1s
 UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 UNRAID_VSOCK_SOCKET=/run/unraid-vsock-sensors/sensors.sock
 # UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
@@ -164,8 +163,6 @@ UNRAID_VSOCK_SOCKET=/run/unraid-vsock-sensors/sensors.sock
 
 - `UNRAID_VSOCK_CID` désigne la VM Unraid configurée dans Proxmox ;
 - `UNRAID_VSOCK_PORT` doit correspondre au port du plugin Unraid ;
-- `UNRAID_VSOCK_INTERVAL` indique la cadence attendue des snapshots poussés par
-  Unraid. Il ne détermine pas la fréquence SMART d'Unraid ;
 - `UNRAID_VSOCK_CACHE` conserve la structure des canaux entre deux démarrages ;
 - `UNRAID_VSOCK_SOCKET` expose le dernier snapshot au client local `get` ;
 - `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
@@ -311,9 +308,14 @@ Pendant l'exécution :
 
 ## Failsafe et fraîcheur des mesures
 
-Chaque canal non actualisé pendant 10 secondes retourne `100 °C`. Cela couvre
-l'arrêt de l'agent Unraid ou du récepteur Proxmox, une perte VSOCK, une erreur
-de lecture et la disparition d'une sonde attendue.
+Le récepteur Proxmox suit séparément la fraîcheur des familles disque et HBA.
+Une famille qui ne reçoit plus de snapshot valide pendant trois secondes est
+explicitement publiée à `100 °C`.
+Une erreur d'une famille n'interrompt pas l'autre.
+
+Le module `virt_temp` conserve son propre garde-fou : chaque canal non actualisé
+pendant 10 secondes retourne aussi `100 °C`. Ce second délai reste actif si le
+récepteur Proxmox lui-même s'arrête et ne peut donc plus injecter le failsafe.
 
 La température des disques vient d'une collecte SMART directe, exécutée en
 arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.

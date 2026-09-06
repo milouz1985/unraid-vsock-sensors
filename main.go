@@ -82,7 +82,6 @@ Serve options:
   --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
   --disk-interval DURATION  Delay between disk SMART refreshes (default: 30s)
   --port PORT               AF_VSOCK port (default: 990)
-  --publish-interval DUR.   Delay between pushed snapshots (default: 1s)
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
   --hba-interval DURATION   Delay between HBA temperature refreshes (default: 30s)
@@ -96,7 +95,6 @@ Get options:
 Hwmon options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
   --port PORT               AF_VSOCK port (default: 990)
-  --interval DURATION       Delay between updates (default: 1s)
   --device PATH             virt-temp control device (default: /dev/virt-temp)
   --cache PATH              Persistent hwmon inventory cache
                             (default: /var/lib/unraid-vsock-sensors/hwmon-inventory.json)
@@ -127,7 +125,6 @@ func serve(args []string) error {
 	disksINIPath := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
 	diskInterval := fs.Duration("disk-interval", defaultDiskInterval, "delay between disk SMART refreshes")
 	port := fs.Uint("port", defaultPort, "vsock port")
-	publishInterval := fs.Duration("publish-interval", defaultPublishInterval, "delay between pushed snapshots")
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
 	hbaInterval := fs.Duration("hba-interval", 30*time.Second, "delay between HBA temperature refreshes")
@@ -153,9 +150,6 @@ func serve(args []string) error {
 	if *diskInterval <= 0 {
 		return errors.New("disk-interval must be greater than zero")
 	}
-	if *publishInterval <= 0 {
-		return errors.New("publish-interval must be greater than zero")
-	}
 	hbaMode := hbaMode(*hbaModeValue)
 	if hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
 		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
@@ -180,7 +174,7 @@ func serve(args []string) error {
 	// command can never block the VSOCK heartbeat.
 	go disks.run(ctx)
 	go hbas.run(ctx)
-	return publishSnapshots(ctx, uint32(*port), *publishInterval, disks, hbas)
+	return publishSnapshots(ctx, uint32(*port), disks, hbas)
 }
 
 func currentResponse(disks *diskCollector, collector *hbaCollector) sensors.Response {
@@ -202,7 +196,6 @@ func currentResponse(disks *diskCollector, collector *hbaCollector) sensors.Resp
 func publishSnapshots(
 	ctx context.Context,
 	port uint32,
-	interval time.Duration,
 	disks *diskCollector,
 	collector *hbaCollector,
 ) error {
@@ -217,7 +210,7 @@ func publishSnapshots(
 				log.Printf("VSOCK publish warning: %s", message)
 				lastError = message
 			}
-			if !waitFor(ctx, interval) {
+			if !waitFor(ctx, defaultPublishInterval) {
 				break
 			}
 			continue
@@ -239,12 +232,12 @@ func publishSnapshots(
 				}
 				break
 			}
-			if !waitFor(ctx, interval) {
+			if !waitFor(ctx, defaultPublishInterval) {
 				_ = conn.Close()
 				return nil
 			}
 		}
-		if ctx.Err() == nil && !waitFor(ctx, interval) {
+		if ctx.Err() == nil && !waitFor(ctx, defaultPublishInterval) {
 			break
 		}
 	}

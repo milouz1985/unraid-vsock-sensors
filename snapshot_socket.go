@@ -45,6 +45,20 @@ func (s *snapshotStore) get() sensors.Response {
 	return cloneResponse(s.response)
 }
 
+func (s *snapshotStore) expireDisks() {
+	s.mu.Lock()
+	s.response.Disks = nil
+	s.response.Error = "disk snapshot TTL expired"
+	s.mu.Unlock()
+}
+
+func (s *snapshotStore) expireHBAs() {
+	s.mu.Lock()
+	s.response.HBAs = nil
+	s.response.HBAError = "HBA snapshot TTL expired"
+	s.mu.Unlock()
+}
+
 func cloneResponse(response sensors.Response) sensors.Response {
 	response.Disks = append([]sensors.Disk(nil), response.Disks...)
 	response.HBAs = append([]sensors.HBA(nil), response.HBAs...)

@@ -120,8 +120,13 @@ UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
 Le récepteur utilise `systemctl try-restart` : une unité absente ou inactive n'est
 pas démarrée. La valeur reste vide par défaut.
 
-Chaque canal retourne `100000` millidegrés Celsius après 10 secondes sans mise
-à jour. Le délai est un paramètre du module compris entre 1 et 300 secondes. Par
+Le récepteur suit un TTL distinct pour les familles disque et HBA. Après trois
+secondes sans snapshot valide, il écrit explicitement `100000` millidegrés
+Celsius pour la famille expirée.
+
+Chaque canal applique en plus le même failsafe après 10 secondes sans mise à
+jour. Ce second délai, géré dans le module, protège encore le système si le
+récepteur lui-même s'arrête. Il est configurable entre 1 et 300 secondes. Par
 exemple, pour utiliser 15 secondes de manière persistante :
 
 ```sh

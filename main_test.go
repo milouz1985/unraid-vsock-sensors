@@ -105,6 +105,28 @@ func TestHandleReturnsLatestSnapshot(t *testing.T) {
 	}
 }
 
+func TestSnapshotStoreExpiresFamiliesIndependently(t *testing.T) {
+	store := &snapshotStore{}
+	store.set(sensors.Response{
+		Disks: []sensors.Disk{{ID: "disk", Temp: 37}},
+		HBAs:  []sensors.HBA{{ID: "hba", Temp: 48}},
+	})
+	store.expireDisks()
+	response := store.get()
+	if response.Error == "" || len(response.Disks) != 0 {
+		t.Fatalf("disk family did not expire: %#v", response)
+	}
+	if response.HBAError != "" || len(response.HBAs) != 1 {
+		t.Fatalf("disk expiry changed HBA family: %#v", response)
+	}
+
+	store.expireHBAs()
+	response = store.get()
+	if response.HBAError == "" || len(response.HBAs) != 0 {
+		t.Fatalf("HBA family did not expire: %#v", response)
+	}
+}
+
 func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {
 	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{ID: "sas:1234", Temp: 46}}}
 	var out bytes.Buffer

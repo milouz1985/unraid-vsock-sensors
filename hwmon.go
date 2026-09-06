@@ -22,6 +22,7 @@ import (
 
 const (
 	defaultHWMonInterval  = time.Second
+	snapshotFreshnessTTL  = 3 * defaultHWMonInterval
 	virtTempDevicePath    = "/dev/virt-temp"
 	defaultHWMonCache     = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"
 	systemdRestartTimeout = 10 * time.Second
@@ -35,11 +36,28 @@ type hwmonPublisher struct {
 	cacheDirty bool
 }
 
+type freshnessDeadline struct {
+	until   time.Time
+	expired bool
+}
+
+func (f *freshnessDeadline) refresh(now time.Time, ttl time.Duration) {
+	f.until = now.Add(ttl)
+	f.expired = false
+}
+
+func (f *freshnessDeadline) expire(now time.Time) bool {
+	if f.expired || f.until.IsZero() || now.Before(f.until) {
+		return false
+	}
+	f.expired = true
+	return true
+}
+
 func hwmon(args []string) error {
 	fs := flag.NewFlagSet("hwmon", flag.ContinueOnError)
 	cid := fs.Uint("cid", 3, "guest vsock CID")
 	port := fs.Uint("port", defaultPort, "vsock port")
-	interval := fs.Duration("interval", defaultHWMonInterval, "expected delay between pushed snapshots")
 	device := fs.String("device", virtTempDevicePath, "virt-temp control device")
 	cache := fs.String("cache", defaultHWMonCache, "persistent hwmon inventory cache")
 	socketPath := fs.String("socket", defaultSnapshotSocket, "local socket used by get")
@@ -55,9 +73,6 @@ func hwmon(args []string) error {
 	}
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
-	}
-	if *interval <= 0 {
-		return errors.New("interval must be greater than zero")
 	}
 	if strings.TrimSpace(*cache) == "" {
 		return errors.New("cache path must not be empty")
@@ -97,7 +112,7 @@ func hwmon(args []string) error {
 	snapshots := make(chan sensors.Response)
 	backgroundErrors := make(chan error, 2)
 	go func() {
-		backgroundErrors <- receiveSnapshots(ctx, listener, uint32(*cid), *interval, snapshots)
+		backgroundErrors <- receiveSnapshots(ctx, listener, uint32(*cid), snapshots)
 	}()
 	go func() {
 		backgroundErrors <- serveSnapshotSocket(ctx, localListener, store)
@@ -106,7 +121,8 @@ func hwmon(args []string) error {
 	lastError, restartPending := "", false
 	receivedGuestResponse := false
 	restartAfter := time.Time{}
-	ticker := time.NewTicker(*interval)
+	var diskFreshness, hbaFreshness freshnessDeadline
+	ticker := time.NewTicker(defaultHWMonInterval)
 	defer ticker.Stop()
 	for {
 		var err error
@@ -115,6 +131,13 @@ func hwmon(args []string) error {
 		case state := <-snapshots:
 			processedSnapshot = true
 			store.set(state)
+			now := time.Now()
+			if state.Error == "" {
+				diskFreshness.refresh(now, snapshotFreshnessTTL)
+			}
+			if state.HBAError == "" {
+				hbaFreshness.refresh(now, snapshotFreshnessTTL)
+			}
 			// Only a complete snapshot makes the guest-backed inventory
 			// authoritative and permits the initial consumer restart.
 			firstGuestResponse := !receivedGuestResponse
@@ -131,7 +154,23 @@ func hwmon(args []string) error {
 				return nil
 			}
 			return err
-		case <-ticker.C:
+		case now := <-ticker.C:
+			if diskFreshness.expire(now) {
+				store.expireDisks()
+				if expireErr := publisher.publishFailsafe(*device, "disk"); expireErr != nil {
+					log.Printf("disk snapshot TTL expiry warning: %s", expireErr)
+				} else {
+					log.Printf("disk snapshot TTL expired; published failsafe temperatures")
+				}
+			}
+			if hbaFreshness.expire(now) {
+				store.expireHBAs()
+				if expireErr := publisher.publishFailsafe(*device, "hba"); expireErr != nil {
+					log.Printf("HBA snapshot TTL expiry warning: %s", expireErr)
+				} else {
+					log.Printf("HBA snapshot TTL expired; published failsafe temperatures")
+				}
+			}
 		case <-ctx.Done():
 			return nil
 		}
@@ -161,10 +200,8 @@ func receiveSnapshots(
 	ctx context.Context,
 	listener net.Listener,
 	expectedCID uint32,
-	interval time.Duration,
 	out chan<- sensors.Response,
 ) error {
-	readTimeout := max(requestTimeout, 3*interval)
 	lastError := ""
 	for {
 		conn, err := listener.Accept()
@@ -180,7 +217,7 @@ func receiveSnapshots(
 			continue
 		}
 		for {
-			streamErr := conn.SetReadDeadline(time.Now().Add(readTimeout))
+			streamErr := conn.SetReadDeadline(time.Now().Add(snapshotFreshnessTTL))
 			if streamErr == nil {
 				var response sensors.Response
 				response, streamErr = sensors.ReadFrame(conn)
@@ -246,6 +283,27 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 		publisher.cacheDirty = false
 	}
 	return reconfigured, errors.Join(diskErr, hbaErr)
+}
+
+func (publisher *hwmonPublisher) publishFailsafe(device, family string) error {
+	var inventory *hwmonInventory
+	switch family {
+	case "disk":
+		inventory = &publisher.disks
+	case "hba":
+		inventory = &publisher.hbas
+	default:
+		return fmt.Errorf("unknown hwmon family %q", family)
+	}
+	if !inventory.initialized {
+		return nil
+	}
+	samples := make([]hwmonSample, 0, len(inventory.sensors))
+	for _, sensor := range inventory.sensors {
+		samples = append(samples, hwmonSample{sensor: sensor, temperature: hwmonFailsafeTemp})
+	}
+	_, err := publishHWMonFamily(device, family, inventory, samples, true)
+	return err
 }
 
 func parseRestartUnits(value string) ([]string, error) {
