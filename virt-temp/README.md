@@ -122,11 +122,11 @@ Le récepteur utilise `systemctl try-restart` : une unité absente ou inactive n
 pas démarrée. La valeur reste vide par défaut.
 
 Le récepteur suit un TTL distinct pour les familles disque et HBA. Chaque état
-transporte la durée de validité restante de sa collecte ; le heartbeat la
-retransmet sans la remettre à zéro. Un collecteur bloqué expire donc côté
-Proxmox. Une erreur explicite ramène son échéance à trois secondes ; trois
-secondes sans heartbeat font expirer les deux familles à `100000` millidegrés
-Celsius.
+transporte la durée de validité restante de sa collecte, que Proxmox mémorise
+jusqu'au prochain état de cette famille. Un collecteur bloqué expire donc même
+si la connexion reste active. Une erreur explicite ramène son échéance à trois
+secondes ; trois secondes sans heartbeat font expirer les deux familles à
+`100000` millidegrés Celsius.
 
 Chaque canal applique en plus le même failsafe après 10 secondes sans mise à
 jour. Ce second délai, géré dans le module, protège encore le système si le

@@ -27,7 +27,7 @@ func TestServerResponseMetadata(t *testing.T) {
 		t.Fatalf("unexpected message types: %q, %q, %q", diskMessage.Type, hbaMessage.Type, heartbeat.Type)
 	}
 	if heartbeat.Disks != nil || heartbeat.HBAs != nil || heartbeat.Error != "" ||
-		heartbeat.HBAError != "" || heartbeat.HBADisabled {
+		heartbeat.HBAError != "" || heartbeat.HBADisabled || heartbeat.ValidFor != 0 {
 		t.Fatalf("heartbeat contains sensor data: %#v", heartbeat)
 	}
 }

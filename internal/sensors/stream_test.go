@@ -10,8 +10,8 @@ import (
 func TestStreamFramesSuccessiveMessages(t *testing.T) {
 	var stream bytes.Buffer
 	want := []Message{
-		{Type: MessageDisks, DiskValidFor: 45, Response: Response{Version: "one", Disks: []Disk{{ID: "disk1", Temp: 35}}}},
-		{Type: MessageHBAs, HBAValidFor: 60, Response: Response{Version: "two", HBAs: []HBA{{ID: "sas:1234", Temp: 51}}}},
+		{Type: MessageDisks, ValidFor: 45, Response: Response{Version: "one", Disks: []Disk{{ID: "disk1", Temp: 35}}}},
+		{Type: MessageHBAs, ValidFor: 60, Response: Response{Version: "two", HBAs: []HBA{{ID: "sas:1234", Temp: 51}}}},
 	}
 	for _, response := range want {
 		if err := WriteFrame(&stream, response); err != nil {
@@ -25,7 +25,7 @@ func TestStreamFramesSuccessiveMessages(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got.Type != want[index].Type || got.Version != want[index].Version ||
-			got.DiskValidFor != want[index].DiskValidFor || got.HBAValidFor != want[index].HBAValidFor {
+			got.ValidFor != want[index].ValidFor {
 			t.Fatalf("frame %d version = %q, want %q", index, got.Version, want[index].Version)
 		}
 	}

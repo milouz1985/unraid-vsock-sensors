@@ -161,29 +161,18 @@ func hwmon(args []string) error {
 			}
 			now := time.Now()
 			transportFreshness.refresh(now, snapshotFreshnessTTL)
-			switch message.Type {
-			case sensors.MessageDisks:
-				receivedDisks = true
-			case sensors.MessageHBAs:
-				receivedHBAs = true
-			}
 			state := store.get()
-			hbaValidFor := message.HBAValidFor
-			if state.HBADisabled {
-				hbaValidFor = snapshotFreshnessTTL
-			}
 			disksExpired, hbasExpired := false, false
 			switch message.Type {
 			case sensors.MessageDisks:
-				disksExpired = updateFamilyFreshness(&diskFreshness, now, message.DiskValidFor, state.Error)
+				receivedDisks = true
+				disksExpired = updateFamilyFreshness(&diskFreshness, now, message.ValidFor, state.Error)
 			case sensors.MessageHBAs:
-				hbasExpired = updateFamilyFreshness(&hbaFreshness, now, hbaValidFor, state.HBAError)
-			case sensors.MessageHeartbeat:
-				if receivedDisks {
-					disksExpired = updateFamilyFreshness(&diskFreshness, now, message.DiskValidFor, state.Error)
-				}
-				if receivedHBAs {
-					hbasExpired = updateFamilyFreshness(&hbaFreshness, now, hbaValidFor, state.HBAError)
+				receivedHBAs = true
+				if state.HBADisabled {
+					hbaFreshness = freshnessDeadline{}
+				} else {
+					hbasExpired = updateFamilyFreshness(&hbaFreshness, now, message.ValidFor, state.HBAError)
 				}
 			}
 			publishExpiredFamilies(store, publisher, *device, disksExpired, hbasExpired)

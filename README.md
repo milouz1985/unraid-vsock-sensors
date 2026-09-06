@@ -311,10 +311,11 @@ Pendant l'exécution :
 
 Le récepteur Proxmox suit séparément la fraîcheur des familles disque et HBA.
 Chaque état transporte sa durée de validité restante, calculée à partir de
-l'intervalle de collecte et de son délai maximal. Le heartbeat retransmet cette
-durée décroissante sans la renouveler : un collecteur bloqué finit donc par
-expirer côté Proxmox. Une erreur explicite ramène son échéance à trois secondes ;
-trois secondes sans heartbeat font expirer les deux familles.
+l'intervalle de collecte et de son délai maximal. Proxmox mémorise cette
+échéance jusqu'au prochain état de la famille : un collecteur bloqué finit donc
+par expirer. Le heartbeat contrôle séparément la connexion ; trois secondes
+sans heartbeat font expirer les deux familles. Une erreur explicite ramène
+l'échéance de sa famille à trois secondes.
 Une erreur d'une famille n'interrompt pas l'autre.
 
 Le module `virt_temp` conserve son propre garde-fou : chaque canal non actualisé
@@ -324,8 +325,8 @@ récepteur Proxmox lui-même s'arrête et ne peut donc plus injecter le failsafe
 La température des disques vient d'une collecte SMART directe, exécutée en
 arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.
 Chaque nouvel état est poussé après sa collecte. Entre deux collectes, le
-heartbeat VSOCK confirme chaque seconde que le relevé reste valide et permet à
-Proxmox de continuer à alimenter le module `virt-temp`, dont le propre failsafe
+heartbeat VSOCK confirme chaque seconde que la connexion reste active et permet
+à Proxmox de continuer à alimenter le module `virt-temp`, dont le propre failsafe
 se déclenche après 10 secondes sans mise à jour. Pour une régulation thermique
 réactive, une
 valeur de 30 à 60 secondes est recommandée. Cinq minutes constitue une limite

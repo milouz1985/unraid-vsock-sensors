@@ -196,15 +196,13 @@ func collectorMessages(
 		hbaResponse.HBAError = hbaErr.Error()
 	}
 	heartbeat := sensors.Message{
-		Type:         sensors.MessageHeartbeat,
-		DiskValidFor: diskValidFor,
-		HBAValidFor:  hbaValidFor,
-		Response:     sensors.Response{Version: version, Timestamp: now},
+		Type:     sensors.MessageHeartbeat,
+		Response: sensors.Response{Version: version, Timestamp: now},
 	}
 	return sensors.Message{
-			Type: sensors.MessageDisks, DiskValidFor: diskValidFor, Response: diskResponse,
+			Type: sensors.MessageDisks, ValidFor: diskValidFor, Response: diskResponse,
 		}, diskRevision, sensors.Message{
-			Type: sensors.MessageHBAs, HBAValidFor: hbaValidFor, Response: hbaResponse,
+			Type: sensors.MessageHBAs, ValidFor: hbaValidFor, Response: hbaResponse,
 		}, hbaRevision, heartbeat
 }
 
