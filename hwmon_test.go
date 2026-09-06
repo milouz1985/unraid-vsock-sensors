@@ -247,10 +247,8 @@ func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := &hwmonPublisher{cachePath: cache}
-	if restoredCache, err := restored.restore(device); err != nil {
+	if err := restored.restore(device); err != nil {
 		t.Fatal(err)
-	} else if !restoredCache {
-		t.Fatal("cache was not reported as restored")
 	}
 	if info, err := os.Stat(cache); err != nil {
 		t.Fatal(err)
@@ -277,7 +275,7 @@ func TestPublisherRejectsTrailingCacheData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := (&hwmonPublisher{cachePath: cache}).restore(device); err == nil ||
+	if err := (&hwmonPublisher{cachePath: cache}).restore(device); err == nil ||
 		!strings.Contains(err.Error(), "unexpected data after inventory") {
 		t.Fatalf("restore error = %v, want trailing data error", err)
 	}
@@ -295,9 +293,9 @@ func TestPublisherReportsPartialCacheRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restored, err := (&hwmonPublisher{cachePath: cache}).restore(device)
-	if !restored || err == nil || !strings.Contains(err.Error(), "restore HBA") {
-		t.Fatalf("restored=%v err=%v", restored, err)
+	err := (&hwmonPublisher{cachePath: cache}).restore(device)
+	if err == nil || !strings.Contains(err.Error(), "restore HBA") {
+		t.Fatalf("err=%v", err)
 	}
 	contents, readErr := os.ReadFile(device)
 	if readErr != nil {

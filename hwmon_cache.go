@@ -40,48 +40,43 @@ type cachedHWMonSensor struct {
 // restore loads the last known topology and recreates its virtual hwmon
 // channels at the failsafe temperature. Families are applied in order, so a
 // family restored before a later validation failure remains usable.
-func (publisher *hwmonPublisher) restore(device string) (bool, error) {
+func (publisher *hwmonPublisher) restore(device string) error {
 	if err := os.Chmod(publisher.cachePath, 0600); errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return nil
 	} else if err != nil {
-		return false, err
+		return err
 	}
 	data, err := os.ReadFile(publisher.cachePath)
 	if err != nil {
-		return false, err
+		return err
 	}
 	var cached cachedHWMonInventory
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cached); err != nil {
-		return false, fmt.Errorf("decode %s: %w", publisher.cachePath, err)
+		return fmt.Errorf("decode %s: %w", publisher.cachePath, err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return false, fmt.Errorf("decode %s: unexpected data after inventory", publisher.cachePath)
+		return fmt.Errorf("decode %s: unexpected data after inventory", publisher.cachePath)
 	}
 	if cached.Version != 1 {
-		return false, fmt.Errorf("unsupported cache version %d", cached.Version)
+		return fmt.Errorf("unsupported cache version %d", cached.Version)
 	}
-	reconfigured := false
 	if cached.Disks != nil {
 		readings := samplesFromCache(cached.Disks.Sensors)
-		changed, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, false)
-		if err != nil {
-			return reconfigured, fmt.Errorf("restore disks: %w", err)
+		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, false); err != nil {
+			return fmt.Errorf("restore disks: %w", err)
 		}
-		reconfigured = reconfigured || changed
 	}
 	if cached.HBAs != nil {
 		readings := samplesFromCache(cached.HBAs.Sensors)
-		changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings, true)
-		if err != nil {
-			return reconfigured, fmt.Errorf("restore HBA: %w", err)
+		if _, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings, true); err != nil {
+			return fmt.Errorf("restore HBA: %w", err)
 		}
-		reconfigured = reconfigured || changed
 	}
 	log.Printf("restored cached hwmon inventory from %s", publisher.cachePath)
-	return reconfigured, nil
+	return nil
 }
 
 // saveCache atomically persists every initialized family. The temporary file,

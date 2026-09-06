@@ -76,7 +76,7 @@ func hwmon(args []string) error {
 
 	log.Printf("publishing fixed Unraid hwmon inventories through %s every %s", *device, *interval)
 	publisher := &hwmonPublisher{cachePath: *cache, restartUnits: restartUnits}
-	_, err = publisher.restore(*device)
+	err = publisher.restore(*device)
 	if err != nil {
 		log.Printf("hwmon inventory cache warning: %s", err)
 	}
