@@ -72,11 +72,11 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	collector := newHBACollector(time.Minute, hbaModeEnabled)
-	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
+	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
 		close(started)
 		<-release
 		return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
-	}
+	})
 	done := make(chan struct{})
 	go func() { collector.refresh(context.Background()); close(done) }()
 	<-started
@@ -93,9 +93,13 @@ func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 
 func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 	collector := newHBACollector(time.Minute, hbaModeEnabled)
-	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) { return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil }
+	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
+		return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
+	})
 	collector.refresh(context.Background())
-	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) { return nil, errors.New("failed") }
+	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
+		return nil, errors.New("failed")
+	})
 	collector.refresh(context.Background())
 	readings, err := collector.read()
 	if len(readings) != 0 || err == nil {
@@ -106,9 +110,9 @@ func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		collector := newHBACollector(time.Minute, hbaModeEnabled)
-		collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
+		collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
 			return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
-		}
+		})
 		collector.refresh(context.Background())
 		// The normal interval between collections must not expire the cache.
 		time.Sleep(collector.interval)
@@ -118,10 +122,10 @@ func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
 
 		release := make(chan struct{})
 		defer close(release)
-		collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
+		collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
 			<-release // A synchronous ioctl can keep waiting after its context expires.
 			return []sensors.HBA{{ID: "sas:1234", Temp: 43}}, nil
-		}
+		})
 		go collector.refresh(context.Background())
 		synctest.Wait()
 		if readings, err := collector.read(); err != nil || len(readings) != 1 || readings[0].Temp != 42 {
@@ -140,9 +144,9 @@ func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
 			t.Fatalf("late successful collection: readings=%v err=%v", readings, err)
 		}
 
-		collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
+		collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
 			return []sensors.HBA{{ID: "sas:1234", Temp: 44}}, nil
-		}
+		})
 		collector.refresh(context.Background())
 		if readings, err := collector.read(); err != nil || len(readings) != 1 || readings[0].Temp != 44 {
 			t.Fatalf("after recovery: readings=%v err=%v", readings, err)
@@ -152,10 +156,10 @@ func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
 
 func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {
 	collector := newHBACollector(time.Millisecond, hbaModeDisabled)
-	collector.collectSnapshot = func(context.Context) ([]sensors.HBA, error) {
+	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
 		t.Fatal("disabled collector performed collection")
 		return nil, nil
-	}
+	})
 	collector.run(context.Background())
 	readings, err := collector.read()
 	if len(readings) != 0 || err != nil {

@@ -22,7 +22,7 @@ type hbaCollector struct {
 	readings        []sensors.HBA
 	err             error
 	refreshDeadline time.Time
-	collectSnapshot func(context.Context) ([]sensors.HBA, error)
+	reader          hbaSnapshotReader
 }
 
 type hbaMetadata struct {
@@ -176,8 +176,12 @@ var (
 )
 
 func newConfiguredHBACollector(interval time.Duration, mode hbaMode, backend hbaBackendMode) *hbaCollector {
-	reader := newHBAReaderForBackend(backend)
-	c := &hbaCollector{interval: interval, mode: mode, err: errors.New("HBA temperatures have not been collected yet"), collectSnapshot: reader.collect}
+	c := &hbaCollector{
+		interval: interval,
+		mode:     mode,
+		err:      errors.New("HBA temperatures have not been collected yet"),
+		reader:   newHBAReaderForBackend(backend),
+	}
 	if mode == hbaModeDisabled {
 		c.err = nil
 	}
@@ -212,7 +216,7 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	c.refreshDeadline = deadline
 	c.mu.Unlock()
 
-	readings, err := c.collectSnapshot(ctx)
+	readings, err := c.reader.collect(ctx)
 	if !time.Now().Before(deadline) {
 		err = context.DeadlineExceeded
 	} else if err == nil {

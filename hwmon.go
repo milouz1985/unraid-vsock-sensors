@@ -88,7 +88,15 @@ func hwmon(args []string) error {
 	lastError, restartPending := "", false
 	restartAfter := time.Time{}
 	for {
-		result, err := publisher.publish(ctx, uint32(*cid), uint32(*port), *device, sensors.Fetch)
+		requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+		state, err := sensors.Fetch(requestCtx, uint32(*cid), uint32(*port))
+		cancel()
+		result := publishResult{}
+		if err == nil {
+			// Only a completed VSOCK request makes the guest-backed inventory
+			// authoritative and permits the initial consumer restart.
+			result, err = publisher.publish(*device, state)
+		}
 		// The first response makes the guest-backed inventory authoritative even
 		// when it matches the cache, so consumers must discard stale disk entries.
 		if result.Reconfigured || result.BecameAvailable {
@@ -124,21 +132,7 @@ func hwmon(args []string) error {
 	}
 }
 
-func (publisher *hwmonPublisher) publish(
-	parent context.Context,
-	cid uint32,
-	port uint32,
-	device string,
-	fetch func(context.Context, uint32, uint32) (sensors.Response, error),
-) (publishResult, error) {
-	ctx, cancel := context.WithTimeout(parent, requestTimeout)
-	defer cancel()
-	state, err := fetch(ctx, cid, port)
-	if err != nil {
-		return publishResult{}, err
-	}
-	// Only a completed VSOCK request proves that the guest is ready. Connection
-	// failures must leave the initial consumer restart pending.
+func (publisher *hwmonPublisher) publish(device string, state sensors.Response) (publishResult, error) {
 	result := publishResult{BecameAvailable: !publisher.guestAvailable}
 	publisher.guestAvailable = true
 	disks, hbas := makeHWMonSamples(state)

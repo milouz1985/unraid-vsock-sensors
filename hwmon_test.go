@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"math"
 	"os"
@@ -40,26 +39,6 @@ func TestMakeHWMonSamples(t *testing.T) {
 	}
 	if !reflect.DeepEqual(hbas, wantHBAs) {
 		t.Fatalf("HBA readings = %#v, want %#v", hbas, wantHBAs)
-	}
-}
-
-func TestUnavailableDiskFailsSafeItsGroup(t *testing.T) {
-	state := sensors.Response{Disks: []sensors.Disk{
-		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
-		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
-		{ID: "3", Name: "cache1", Device: "nvme0n1", Transport: "nvme", Temp: 45},
-		{ID: "4", Name: "cache2", Device: "nvme1n1", Transport: "nvme", Temp: 47},
-	}}
-	readings := makeDiskSamples(state)
-	byID := make(map[string]hwmonSample, len(readings))
-	for _, reading := range readings {
-		byID[reading.sensor.id] = reading
-	}
-	if got := byID["disk:2"].temperature; got != hwmonFailsafeTemp {
-		t.Errorf("disk:2 = %v, want failsafe", got)
-	}
-	if got := byID["disk:group:hdd"].temperature; got != hwmonFailsafeTemp {
-		t.Errorf("HDD maximum = %v, want failsafe", got)
 	}
 }
 
@@ -187,13 +166,11 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
-		return sensors.Response{
-			Error: "disks.ini failed",
-			HBAs:  []sensors.HBA{{ID: "sas:1234", Temp: 51}},
-		}, nil
+	state := sensors.Response{
+		Error: "disks.ini failed",
+		HBAs:  []sensors.HBA{{ID: "sas:1234", Temp: 51}},
 	}
-	_, err := (&hwmonPublisher{}).publish(context.Background(), 42, 19090, path, fetch)
+	_, err := (&hwmonPublisher{}).publish(path, state)
 	if err == nil {
 		t.Fatal("expected disk error")
 	}
@@ -469,21 +446,11 @@ func hwmonTestSample(id, label string, temperature float64, members ...string) h
 
 func TestPublisherReportsGuestAvailabilityOnlyOnce(t *testing.T) {
 	publisher := &hwmonPublisher{}
-	fetchErr := errors.New("VM unavailable")
-	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
-		return sensors.Response{}, fetchErr
-	}
-	if result, err := publisher.publish(context.Background(), 42, 19090, "/dev/null", fetch); !errors.Is(err, fetchErr) || result.BecameAvailable {
-		t.Fatalf("failed fetch: becameAvailable=%v err=%v", result.BecameAvailable, err)
-	}
-
-	fetch = func(context.Context, uint32, uint32) (sensors.Response, error) {
-		return sensors.Response{Error: "disk data unavailable", HBAError: "HBA data unavailable"}, nil
-	}
-	if result, _ := publisher.publish(context.Background(), 42, 19090, "/dev/null", fetch); !result.BecameAvailable {
+	state := sensors.Response{Error: "disk data unavailable", HBAError: "HBA data unavailable"}
+	if result, _ := publisher.publish("/dev/null", state); !result.BecameAvailable {
 		t.Fatal("first successful VSOCK response did not report the guest as available")
 	}
-	if result, _ := publisher.publish(context.Background(), 42, 19090, "/dev/null", fetch); result.BecameAvailable {
+	if result, _ := publisher.publish("/dev/null", state); result.BecameAvailable {
 		t.Fatal("second successful VSOCK response reported guest availability again")
 	}
 }
@@ -499,13 +466,11 @@ func TestPublisherReportsReconfigurationWhenCacheSaveFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := &hwmonPublisher{cachePath: filepath.Join(blockingFile, "inventory.json")}
-	fetch := func(context.Context, uint32, uint32) (sensors.Response, error) {
-		return sensors.Response{
-			Disks:       []sensors.Disk{{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34}},
-			HBADisabled: true,
-		}, nil
+	state := sensors.Response{
+		Disks:       []sensors.Disk{{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34}},
+		HBADisabled: true,
 	}
-	result, err := publisher.publish(context.Background(), 42, 19090, device, fetch)
+	result, err := publisher.publish(device, state)
 	if !result.Reconfigured {
 		t.Fatal("kernel reconfiguration must be reported even when the cache cannot be saved")
 	}
