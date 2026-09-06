@@ -64,7 +64,7 @@ _(Actions)_:
 _(VSOCK port)_:
 : <input type="number" name="PORT" value="<?=$port?>" min="1" max="4294967294" required>
 
-> The Proxmox client and the CoolerControl plugin must use the same port.
+> The Proxmox receiver and the Unraid publisher must use the same port.
 
 _(Disk SMART refresh interval)_:
 : <select name="DISK_INTERVAL">
@@ -74,7 +74,7 @@ _(Disk SMART refresh interval)_:
 <option value="5m" <?=$diskInterval === '5m' ? 'selected' : ''?>>5 minutes</option>
 </select>
 
-> Active disks are collected in the background. Sleeping disks are not queried. VSOCK requests always use the cached value.
+> Active disks are collected in the background. Sleeping disks are not queried. Intermediate VSOCK snapshots reuse the latest collected value.
 
 _(HBA monitoring)_:
 : <select name="HBA_MODE">
@@ -98,7 +98,7 @@ _(HBA refresh interval)_:
 : <select id="hba-interval" name="HBA_INTERVAL" data-current="<?=htmlspecialchars($hbaInterval, ENT_QUOTES)?>">
 </select>
 
-> Native access offers shorter intervals than StorCLI. VSOCK requests always use the cached value.
+> Native access offers shorter intervals than StorCLI. Intermediate VSOCK snapshots reuse the latest collected value.
 
 &nbsp;
 

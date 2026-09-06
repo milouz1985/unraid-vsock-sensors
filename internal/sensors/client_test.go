@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func TestFetchProtocol(t *testing.T) {
+func TestSnapshotQueryProtocol(t *testing.T) {
 	server, client := net.Pipe()
 	serverDone := make(chan error, 1)
 	go func() {
@@ -43,7 +43,7 @@ func TestFetchProtocol(t *testing.T) {
 	}
 }
 
-func TestFetchLimitsResponseSize(t *testing.T) {
+func TestSnapshotQueryLimitsResponseSize(t *testing.T) {
 	server, client := net.Pipe()
 	serverDone := make(chan struct{})
 	go func() {
@@ -60,7 +60,7 @@ func TestFetchLimitsResponseSize(t *testing.T) {
 	<-serverDone
 }
 
-func TestFetchRejectsTrailingData(t *testing.T) {
+func TestSnapshotQueryRejectsTrailingData(t *testing.T) {
 	server, client := net.Pipe()
 	serverDone := make(chan struct{})
 	go func() {
@@ -77,7 +77,7 @@ func TestFetchRejectsTrailingData(t *testing.T) {
 	<-serverDone
 }
 
-func TestFetchStopsWaitingWhenContextEnds(t *testing.T) {
+func TestSnapshotQueryStopsWaitingWhenContextEnds(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		newContext func() (context.Context, context.CancelFunc)

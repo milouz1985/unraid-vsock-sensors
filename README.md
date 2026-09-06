@@ -10,10 +10,12 @@ Sur Proxmox, ces températures peuvent être :
 - interrogées directement en ligne de commande ;
 - utilisées sans réseau IP entre la VM et l'hôte.
 
-Le serveur lit l'inventaire et l'état de rotation d'Unraid, puis relève en
+L'agent Unraid lit l'inventaire et l'état de rotation, puis relève en
 arrière-plan la température des disques actifs avec le helper
 `smartctl_type`. Il ne consulte pas les disques déjà signalés en veille et
 utilise `smartctl -n standby` pour couvrir un changement d'état concurrent.
+Il maintient une connexion VSOCK vers Proxmox et y pousse un snapshot complet
+chaque seconde, indépendamment de la cadence des collectes matérielles.
 
 ## Architecture
 
@@ -36,7 +38,8 @@ Deux composants utilisent le même binaire :
 - le paquet Debian Proxmox lance la commande `hwmon` sur l'hôte et installe le
   module noyau DKMS `virt-temp`.
 
-Le CID VSOCK et le port doivent être identiques des deux côtés. Les exemples
+Le port doit être identique des deux côtés. Le récepteur Proxmox vérifie aussi
+que les snapshots viennent du CID configuré pour la VM Unraid. Les exemples
 ci-dessous utilisent le CID `3` et le port `990`, qui sont aussi les valeurs
 par défaut.
 
@@ -63,7 +66,7 @@ parmi les VM exécutées sur le même hôte.
 Arrêter puis redémarrer complètement la VM pour créer le périphérique. Un
 simple redémarrage de service dans Unraid ne suffit pas.
 
-### 2. Installer le serveur dans Unraid
+### 2. Installer l'agent dans Unraid
 
 Dans **Plugins → Install Plugin**, fournir l'URL du descripteur `.plg` publié :
 
@@ -82,12 +85,12 @@ Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 - **HBA refresh interval** : `15 seconds` avec `mpt3ctl` ou `30 seconds` avec
   StorCLI.
 
-Le plugin transmet ces deux intervalles au serveur. La collecte disque vaut
+Le plugin transmet ces deux intervalles à l'agent. La collecte disque vaut
 `30s` par défaut dans les deux cas. Pour le HBA, le plugin choisit `15s` avec
 `mpt3ctl` et `30s` avec StorCLI ; lancé manuellement sans option, le binaire
 utilise le défaut générique de `30s`, quel que soit le backend.
 
-Le serveur lit directement `/dev/mpt3ctl` pour les contrôleurs gérés par
+L'agent lit directement `/dev/mpt3ctl` pour les contrôleurs gérés par
 `mpt3sas` : aucun utilitaire supplémentaire n'est nécessaire. Le backend
 StorCLI exige que la commande `storcli` soit installée, directement avec son
 paquet ou avec le plugin Unraid
@@ -155,14 +158,16 @@ UNRAID_VSOCK_CID=3
 UNRAID_VSOCK_PORT=990
 UNRAID_VSOCK_INTERVAL=1s
 UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
+UNRAID_VSOCK_SOCKET=/run/unraid-vsock-sensors/sensors.sock
 # UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
 ```
 
 - `UNRAID_VSOCK_CID` désigne la VM Unraid configurée dans Proxmox ;
 - `UNRAID_VSOCK_PORT` doit correspondre au port du plugin Unraid ;
-- `UNRAID_VSOCK_INTERVAL` définit la fréquence de lecture du cache par l'agent
-  Proxmox. Il ne détermine pas la fréquence SMART d'Unraid ;
+- `UNRAID_VSOCK_INTERVAL` indique la cadence attendue des snapshots poussés par
+  Unraid. Il ne détermine pas la fréquence SMART d'Unraid ;
 - `UNRAID_VSOCK_CACHE` conserve la structure des canaux entre deux démarrages ;
+- `UNRAID_VSOCK_SOCKET` expose le dernier snapshot au client local `get` ;
 - `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
   des virgules. Les unités actives sont redémarrées après la restauration du
   cache ou un changement de topologie, afin qu'elles rescannent les hwmon.
@@ -212,7 +217,7 @@ Résultats attendus :
 Pour afficher directement l'inventaire reçu sans passer par le module :
 
 ```sh
-unraid-vsock-sensors get --cid 3 --port 990 --json
+unraid-vsock-sensors get --json
 ```
 
 ## Sondes publiées
@@ -238,7 +243,7 @@ avec une température de `0 °C`, sans exécuter de commande SMART. Cette valeur
 signifie que la sonde est inactive et évite de déclencher le failsafe pendant
 un spindown normal.
 
-Pour chaque disque actif, le serveur appelle le helper Unraid
+Pour chaque disque actif, l'agent appelle le helper Unraid
 `/usr/local/sbin/smartctl_type` avec `--json -n standby,3 -A`. Unraid résout
 ainsi le périphérique et les éventuels paramètres particuliers du contrôleur.
 Le second paramètre de `-n` demande explicitement à `smartctl` de retourner
@@ -307,18 +312,18 @@ Pendant l'exécution :
 ## Failsafe et fraîcheur des mesures
 
 Chaque canal non actualisé pendant 10 secondes retourne `100 °C`. Cela couvre
-l'arrêt du serveur ou de l'agent, une perte VSOCK, une erreur de lecture et la
-disparition d'une sonde attendue.
+l'arrêt de l'agent Unraid ou du récepteur Proxmox, une perte VSOCK, une erreur
+de lecture et la disparition d'une sonde attendue.
 
 La température des disques vient d'une collecte SMART directe, exécutée en
 arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.
-Les requêtes VSOCK intermédiaires réutilisent ce relevé et n'attendent jamais
+Les snapshots VSOCK intermédiaires réutilisent ce relevé et n'attendent jamais
 une commande disque. Leur cadence d'une seconde reste indépendante : elle
 alimente le heartbeat du module `virt-temp`, dont le failsafe se déclenche après
 10 secondes sans mise à jour. Pour une régulation thermique réactive, une
 valeur de 30 à 60 secondes est recommandée. Cinq minutes constitue une limite
 haute raisonnable ; au-delà, une température peut rester ancienne trop
-longtemps pour piloter efficacement les ventilateurs. Le serveur accepte une
+longtemps pour piloter efficacement les ventilateurs. L'agent accepte une
 valeur plus longue passée en ligne de commande, mais écrit alors un
 avertissement dans son journal.
 
@@ -326,12 +331,12 @@ La température HBA vient de IO Unit Page 7, lue avec des commandes MPI CONFIG
 strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
 Fahrenheit sont converties puis validées dans la plage `0..150 °C`. Chaque
 collecte native lit aussi les pages de fabrication pour associer la température
-à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC. Le
-serveur actualise ce relevé en arrière-plan ; les requêtes VSOCK n'attendent
+à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC.
+L'agent actualise ce relevé en arrière-plan ; les snapshots VSOCK n'attendent
 jamais une commande du contrôleur. Lorsque le backend StorCLI est sélectionné,
 la température ROC fournie par sa sortie JSON est utilisée à la place.
 
-Une collecte HBA dispose de 15 secondes. Au-delà, le serveur signale une erreur
+Une collecte HBA dispose de 15 secondes. Au-delà, l'agent signale une erreur
 HBA même si l'ioctl reste bloqué : l'ancien relevé cesse d'être publié et les
 canaux hwmon atteignent leur failsafe après leur délai de 10 secondes sans
 actualisation. Un résultat arrivé après l'échéance est rejeté ; une nouvelle
@@ -343,18 +348,18 @@ normal entre deux collectes.
 Les sélecteurs de groupe retournent la température maximale :
 
 ```sh
-unraid-vsock-sensors get --cid 3 --port 990 disk hdd
-unraid-vsock-sensors get --cid 3 --port 990 disk ssd
-unraid-vsock-sensors get --cid 3 --port 990 disk nvme
-unraid-vsock-sensors get --cid 3 --port 990 hba all
+unraid-vsock-sensors get disk hdd
+unraid-vsock-sensors get disk ssd
+unraid-vsock-sensors get disk nvme
+unraid-vsock-sensors get hba all
 ```
 
 Un disque ou un HBA peut être interrogé explicitement :
 
 ```sh
-unraid-vsock-sensors get --cid 3 --port 990 disk disk1
-unraid-vsock-sensors get --cid 3 --port 990 disk sdb
-unraid-vsock-sensors get --cid 3 --port 990 hba sas:500605b00abc1234
+unraid-vsock-sensors get disk disk1
+unraid-vsock-sensors get disk sdb
+unraid-vsock-sensors get hba sas:500605b00abc1234
 ```
 
 Ces commandes écrivent uniquement un nombre en degrés Celsius et conviennent à
@@ -483,9 +488,11 @@ make hwmon-package VERSION=X.Y.Z DEBIAN_REVISION=2
 
 ## Sécurité du transport
 
-AF_VSOCK n'est pas un mécanisme d'authentification général. Le serveur accepte
-uniquement le CID hôte standard `2`, une commande fixe `GET`, une requête limitée
-à 1 Kio et ne reçoit aucun chemin fourni par le client.
+AF_VSOCK n'est pas un mécanisme d'authentification général. L'agent Unraid se
+connecte uniquement au CID hôte standard `2`. Le récepteur Proxmox n'accepte
+que le CID de VM configuré et limite chaque snapshot encadré à 1 Mio. Le socket
+Unix local accepte uniquement la commande fixe `GET`, limitée à 1 Kio, et ne
+reçoit aucun chemin fourni par le client.
 
 ## Références techniques et remerciements
 

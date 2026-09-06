@@ -13,21 +13,10 @@ import (
 )
 
 func TestServerResponseMetadata(t *testing.T) {
-	server, client := net.Pipe()
-	done := make(chan struct{})
-	go func() {
-		handle(server, newDiskCollector("unused", time.Minute), newHBACollector(time.Minute, hbaModeDisabled))
-		close(done)
-	}()
-	if _, err := io.WriteString(client, "GET\n"); err != nil {
-		t.Fatal(err)
-	}
-	var response sensors.Response
-	if err := json.NewDecoder(client).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	client.Close()
-	<-done
+	response := currentResponse(
+		newDiskCollector("unused", time.Minute),
+		newHBACollector(time.Minute, hbaModeDisabled),
+	)
 
 	if response.Version != version {
 		t.Fatalf("got version %q, want %q", response.Version, version)
@@ -46,10 +35,9 @@ func TestHandleRejectsInvalidRequest(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			server, client := net.Pipe()
-			disks := newDiskCollector("unused", time.Minute)
 			done := make(chan struct{})
 			go func() {
-				handle(server, disks, newHBACollector(time.Minute, hbaModeEnabled))
+				handleSnapshotRequest(server, &snapshotStore{})
 				close(done)
 			}()
 
@@ -75,10 +63,9 @@ func TestHandleRejectsInvalidRequest(t *testing.T) {
 
 func TestHandleReadTimeout(t *testing.T) {
 	server, client := net.Pipe()
-	disks := newDiskCollector("unused", time.Minute)
 	done := make(chan struct{})
 	go func() {
-		handleWithTimeout(server, disks, newHBACollector(time.Minute, hbaModeEnabled), 20*time.Millisecond)
+		handleSnapshotRequestWithTimeout(server, &snapshotStore{}, 20*time.Millisecond)
 		close(done)
 	}()
 
@@ -89,6 +76,33 @@ func TestHandleReadTimeout(t *testing.T) {
 		t.Fatal("silent client was not disconnected after the read timeout")
 	}
 	client.Close()
+}
+
+func TestHandleReturnsLatestSnapshot(t *testing.T) {
+	store := &snapshotStore{}
+	store.set(sensors.Response{
+		Version: "test-version",
+		Disks:   []sensors.Disk{{ID: "serial", Name: "disk1", Temp: 37}},
+	})
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		handleSnapshotRequest(server, store)
+		close(done)
+	}()
+
+	if _, err := io.WriteString(client, "GET\n"); err != nil {
+		t.Fatal(err)
+	}
+	var response sensors.Response
+	if err := json.NewDecoder(client).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	<-done
+	if response.Version != "test-version" || len(response.Disks) != 1 || response.Disks[0].Temp != 37 {
+		t.Fatalf("unexpected response: %#v", response)
+	}
 }
 
 func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {

@@ -8,7 +8,7 @@ consulter le [README principal](../README.md).
 
 Le paquet Debian `unraid-vsock-sensors-hwmon` installe :
 
-- `/usr/bin/unraid-vsock-sensors`, l'agent VSOCK ;
+- `/usr/bin/unraid-vsock-sensors`, le récepteur VSOCK et agent hwmon ;
 - `/usr/src/virt-temp-X.Y.Z`, les sources du module DKMS ;
 - `/usr/lib/systemd/system/unraid-vsock-hwmon.service` ;
 - `/usr/lib/modules-load.d/virt-temp.conf` ;
@@ -20,9 +20,15 @@ n'existe pas. Une configuration existante n'est jamais remplacée.
 L'inventaire persistant est stocké par défaut dans
 `/var/lib/unraid-vsock-sensors/hwmon-inventory.json`.
 
+L'agent Unraid ouvre une connexion VSOCK persistante vers ce récepteur et
+pousse un snapshot complet chaque seconde. Le récepteur refuse les connexions
+qui ne viennent pas du CID configuré, maintient `/dev/virt-temp` à jour et
+expose le dernier snapshot sur
+`/run/unraid-vsock-sensors/sensors.sock` pour la commande locale `get`.
+
 ## Fonctionnement du pilote
 
-Le module crée `/dev/virt-temp`. L'agent y envoie séparément les familles
+Le module crée `/dev/virt-temp`. Le récepteur y envoie séparément les familles
 `disk` et `hba` :
 
 1. `configure` crée l'inventaire et les canaux d'une famille ;
@@ -68,30 +74,31 @@ ne font pas partie de l'identité publiée.
 
 ## Inventaire persistant et failsafe
 
-Après un premier relevé valide, l'agent met en cache les ID, labels et groupes,
-mais jamais les températures. Au démarrage suivant, ce cache recrée les canaux
-à `100 °C` avant que la VM réponde. Un logiciel de ventilation peut donc les
-découvrir dès le boot de Proxmox.
+Après un premier relevé valide, le récepteur met en cache les ID, labels et
+groupes, mais jamais les températures. Au démarrage suivant, ce cache recrée
+les canaux à `100 °C` avant que la VM réponde. Un logiciel de ventilation peut
+donc les découvrir dès le boot de Proxmox.
 
-Une réponse valide dont les ID diffèrent remplace automatiquement la famille
+Un snapshot valide dont les ID diffèrent remplace automatiquement la famille
 concernée et le cache. Une erreur globale de lecture ne constitue pas une
 nouvelle topologie : les anciens canaux restent alors en place et atteignent le
 failsafe. Une température de disque indisponible n'interrompt pas les autres
 mises à jour : ce disque et le maximum de sa catégorie reçoivent explicitement
-la température failsafe, tandis que les autres canaux restent actualisés. Le
-serveur Unraid collecte les températures SMART en arrière-plan et masque une
+la température failsafe, tandis que les autres canaux restent actualisés.
+L'agent Unraid collecte les températures SMART en arrière-plan et masque une
 erreur transitoire pendant l'intervalle SMART configuré augmenté de cinq
 secondes, sans déclarer la sonde en panne avant le prochain relevé configuré.
 Un changement de label seul n'affecte pas l'identité.
 
 Si l'enregistrement d'une nouvelle topologie échoue, le pilote réenregistre
 l'inventaire précédent au lieu de laisser disparaître les sondes. L'erreur est
-retournée à l'agent, qui retente la nouvelle configuration, tandis que les
+retournée au récepteur, qui retente la nouvelle configuration, tandis que les
 anciens canaux non actualisés atteignent naturellement le failsafe.
 
-Si le module `virt_temp` est déchargé puis rechargé sans redémarrer l'agent, le
-premier `commit` retourne `ESTALE` parce que le noyau a perdu son inventaire.
-L'agent répond par une unique opération `configure`, restaure les canaux et
+Si le module `virt_temp` est déchargé puis rechargé sans redémarrer le
+récepteur, le premier `commit` retourne `ESTALE` parce que le noyau a perdu son
+inventaire.
+Le récepteur répond par une unique opération `configure`, restaure les canaux et
 notifie les consommateurs comme lors de tout changement de topologie.
 
 Une erreur HBA invalide le relevé complet. L'inventaire précédent reste en
@@ -110,7 +117,7 @@ UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
 UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
 ```
 
-L'agent utilise `systemctl try-restart` : une unité absente ou inactive n'est
+Le récepteur utilise `systemctl try-restart` : une unité absente ou inactive n'est
 pas démarrée. La valeur reste vide par défaut.
 
 Chaque canal retourne `100000` millidegrés Celsius après 10 secondes sans mise

@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
+	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
@@ -14,6 +16,8 @@ import (
 
 	"unraid-vsock-sensors/internal/sensors"
 	"unraid-vsock-sensors/internal/vsockaddr"
+
+	"github.com/mdlayher/vsock"
 )
 
 const (
@@ -35,9 +39,10 @@ func hwmon(args []string) error {
 	fs := flag.NewFlagSet("hwmon", flag.ContinueOnError)
 	cid := fs.Uint("cid", 3, "guest vsock CID")
 	port := fs.Uint("port", defaultPort, "vsock port")
-	interval := fs.Duration("interval", defaultHWMonInterval, "temperature update interval")
+	interval := fs.Duration("interval", defaultHWMonInterval, "expected delay between pushed snapshots")
 	device := fs.String("device", virtTempDevicePath, "virt-temp control device")
 	cache := fs.String("cache", defaultHWMonCache, "persistent hwmon inventory cache")
+	socketPath := fs.String("socket", defaultSnapshotSocket, "local socket used by get")
 	restartUnitsFlag := fs.String("restart-units", "", "comma-separated systemd units restarted after a topology change")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -65,7 +70,19 @@ func hwmon(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("publishing fixed Unraid hwmon inventories through %s every %s", *device, *interval)
+	listener, err := vsock.Listen(uint32(*port), nil)
+	if err != nil {
+		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
+	}
+	defer listener.Close()
+	localListener, err := listenSnapshotSocket(*socketPath)
+	if err != nil {
+		return err
+	}
+	defer localListener.Close()
+	defer os.Remove(*socketPath)
+
+	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through %s", *port, *device)
 	publisher := &hwmonPublisher{cachePath: *cache}
 	err = publisher.restore(*device)
 	if err != nil {
@@ -74,27 +91,49 @@ func hwmon(args []string) error {
 	// Restoring the cache creates the expected virtual sensors before the guest is
 	// reachable, but it is too early to restart consumers: CoolerControl could
 	// still retain disks discovered through drivetemp before the host released the
-	// HBA to the VM. Wait for the first successful VSOCK response, then restart the
+	// HBA to the VM. Wait for the first successful VSOCK snapshot, then restart the
 	// consumer so it drops those stale disks and discovers the virtual sensors.
+	store := &snapshotStore{}
+	snapshots := make(chan sensors.Response)
+	backgroundErrors := make(chan error, 2)
+	go func() {
+		backgroundErrors <- receiveSnapshots(ctx, listener, uint32(*cid), *interval, snapshots)
+	}()
+	go func() {
+		backgroundErrors <- serveSnapshotSocket(ctx, localListener, store)
+	}()
+
 	lastError, restartPending := "", false
 	receivedGuestResponse := false
 	restartAfter := time.Time{}
+	ticker := time.NewTicker(*interval)
+	defer ticker.Stop()
 	for {
-		requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-		state, err := sensors.Fetch(requestCtx, uint32(*cid), uint32(*port))
-		cancel()
-		if err == nil {
-			// Only a completed VSOCK request makes the guest-backed inventory
+		var err error
+		processedSnapshot := false
+		select {
+		case state := <-snapshots:
+			processedSnapshot = true
+			store.set(state)
+			// Only a complete snapshot makes the guest-backed inventory
 			// authoritative and permits the initial consumer restart.
 			firstGuestResponse := !receivedGuestResponse
 			receivedGuestResponse = true
 			reconfigured, publishErr := publisher.publish(*device, state)
 			err = publishErr
-			// The first response makes the guest-backed inventory authoritative even
+			// The first snapshot makes the guest-backed inventory authoritative even
 			// when it matches the cache, so consumers must discard stale disk entries.
 			if reconfigured || firstGuestResponse {
 				restartPending = true
 			}
+		case err = <-backgroundErrors:
+			if err == nil && ctx.Err() != nil {
+				return nil
+			}
+			return err
+		case <-ticker.C:
+		case <-ctx.Done():
+			return nil
 		}
 		if restartPending && !time.Now().Before(restartAfter) {
 			if restartErr := restartSystemdUnits(ctx, restartUnits); restartErr != nil {
@@ -108,20 +147,67 @@ func hwmon(args []string) error {
 				}
 			}
 		}
-		if err != nil && err.Error() != lastError {
+		if processedSnapshot && err != nil && err.Error() != lastError {
 			lastError = err.Error()
 			log.Printf("hwmon update warning; unavailable sensors will apply their failsafe: %s", lastError)
-		} else if err == nil && lastError != "" {
+		} else if processedSnapshot && err == nil && lastError != "" {
 			log.Printf("hwmon updates recovered")
 			lastError = ""
 		}
+	}
+}
 
-		timer := time.NewTimer(*interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil
-		case <-timer.C:
+func receiveSnapshots(
+	ctx context.Context,
+	listener net.Listener,
+	expectedCID uint32,
+	interval time.Duration,
+	out chan<- sensors.Response,
+) error {
+	readTimeout := max(requestTimeout, 3*interval)
+	lastError := ""
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("accept VSOCK publisher: %w", err)
+		}
+		peer, ok := conn.RemoteAddr().(*vsock.Addr)
+		if !ok || peer.ContextID != expectedCID {
+			_ = conn.Close()
+			continue
+		}
+		for {
+			streamErr := conn.SetReadDeadline(time.Now().Add(readTimeout))
+			if streamErr == nil {
+				var response sensors.Response
+				response, streamErr = sensors.ReadFrame(conn)
+				if streamErr == nil {
+					if lastError != "" {
+						log.Printf("VSOCK snapshot stream recovered")
+						lastError = ""
+					}
+					select {
+					case out <- response:
+					case <-ctx.Done():
+						_ = conn.Close()
+						return nil
+					}
+					continue
+				}
+			}
+			_ = conn.Close()
+			if ctx.Err() != nil {
+				return nil
+			}
+			message := streamErr.Error()
+			if message != lastError {
+				log.Printf("VSOCK snapshot stream warning: %s", message)
+				lastError = message
+			}
+			break
 		}
 	}
 }

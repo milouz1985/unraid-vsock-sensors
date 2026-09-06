@@ -1,4 +1,4 @@
-// Package sensors defines the shared sensor model and VSOCK client.
+// Package sensors defines the shared sensor model and transport protocol.
 package sensors
 
 import (
@@ -58,7 +58,7 @@ type HBA struct {
 	Temp       float64 `json:"temp_c"`
 }
 
-// Response contains a snapshot of every sensor exposed by the server.
+// Response contains a snapshot of every sensor exposed by the Unraid agent.
 type Response struct {
 	Version     string    `json:"version"`
 	Timestamp   time.Time `json:"timestamp"`

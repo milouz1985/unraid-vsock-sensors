@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,12 +10,9 @@ import (
 	"io"
 	"log"
 	"log/syslog"
-	"net"
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -27,10 +23,10 @@ import (
 )
 
 const (
-	defaultPort          = 990
-	requestTimeout       = 3 * time.Second
-	maxRequestSize       = 1024
-	maxConcurrentClients = 32
+	defaultPort            = 990
+	defaultPublishInterval = time.Second
+	requestTimeout         = 3 * time.Second
+	maxRequestSize         = 1024
 )
 
 var version = "dev"
@@ -77,8 +73,8 @@ func usage() {
   %[1]s version
 
 Commands:
-  serve                     Serve sensor data over AF_VSOCK
-  get                       Read sensor data from an AF_VSOCK server
+  serve                     Push sensor data to the Proxmox host over AF_VSOCK
+  get                       Read the latest snapshot from the host daemon
   hwmon                     Publish fixed storage and HBA hwmon inventories
   version                   Print the build version
 
@@ -86,14 +82,15 @@ Serve options:
   --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
   --disk-interval DURATION  Delay between disk SMART refreshes (default: 30s)
   --port PORT               AF_VSOCK port (default: 990)
+  --publish-interval DUR.   Delay between pushed snapshots (default: 1s)
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
   --hba-interval DURATION   Delay between HBA temperature refreshes (default: 30s)
   --syslog                  Send service logs to the system logger
 
 Get options:
-  --cid CID                 Guest AF_VSOCK CID (default: 3)
-  --port PORT               AF_VSOCK port (default: 990)
+  --socket PATH             Host daemon socket
+                            (default: /run/unraid-vsock-sensors/sensors.sock)
   --json                    Print the complete JSON response
 
 Hwmon options:
@@ -103,6 +100,8 @@ Hwmon options:
   --device PATH             virt-temp control device (default: /dev/virt-temp)
   --cache PATH              Persistent hwmon inventory cache
                             (default: /var/lib/unraid-vsock-sensors/hwmon-inventory.json)
+  --socket PATH             Local socket served to get
+                            (default: /run/unraid-vsock-sensors/sensors.sock)
   --restart-units UNITS     Comma-separated systemd units restarted after a
                             topology change
 
@@ -116,9 +115,9 @@ Selectors:
 
 Examples:
   %[1]s serve --port 990
-  %[1]s get --cid 42 disk hdd
-  %[1]s get --cid 42 hba all
-  %[1]s get --cid 42 --json
+  %[1]s get disk hdd
+  %[1]s get hba all
+  %[1]s get --json
 `, os.Args[0])
 	os.Exit(2)
 }
@@ -128,6 +127,7 @@ func serve(args []string) error {
 	disksINIPath := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
 	diskInterval := fs.Duration("disk-interval", defaultDiskInterval, "delay between disk SMART refreshes")
 	port := fs.Uint("port", defaultPort, "vsock port")
+	publishInterval := fs.Duration("publish-interval", defaultPublishInterval, "delay between pushed snapshots")
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
 	hbaInterval := fs.Duration("hba-interval", 30*time.Second, "delay between HBA temperature refreshes")
@@ -153,6 +153,9 @@ func serve(args []string) error {
 	if *diskInterval <= 0 {
 		return errors.New("disk-interval must be greater than zero")
 	}
+	if *publishInterval <= 0 {
+		return errors.New("publish-interval must be greater than zero")
+	}
 	hbaMode := hbaMode(*hbaModeValue)
 	if hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
 		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
@@ -165,84 +168,22 @@ func serve(args []string) error {
 		return err
 	}
 	disks := newDiskCollector(*disksINIPath, *diskInterval)
-	listener, err := vsock.Listen(uint32(*port), nil)
-	if err != nil {
-		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
-	}
-	defer listener.Close()
-	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
+	log.Printf("starting unraid-vsock-sensors v%s; pushing to host VSOCK port %d", version, *port)
 	log.Printf("disk SMART refresh interval is %s; failure grace is %s", disks.interval, disks.grace)
 	if *diskInterval > maximumRecommendedDiskInterval {
 		log.Printf("warning: disk-interval=%s exceeds the recommended maximum of %s; disk temperatures may be too stale for reliable fan control", *diskInterval, maximumRecommendedDiskInterval)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	// Closing the listener is what releases a blocked Accept during shutdown.
-	go func() {
-		<-ctx.Done()
-		_ = listener.Close()
-	}()
 	hbas := newConfiguredHBACollector(*hbaInterval, hbaMode, hbaBackend)
-	// Storage temperatures are refreshed independently so VSOCK requests never
-	// wait for a disk or controller command.
+	// Collection remains independent from publication so a disk or controller
+	// command can never block the VSOCK heartbeat.
 	go disks.run(ctx)
 	go hbas.run(ctx)
-	var clients sync.WaitGroup
-	clientSlots := make(chan struct{}, maxConcurrentClients)
-	defer clients.Wait()
-	for {
-		client, err := listener.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return fmt.Errorf("accept: %w", err)
-		}
-
-		// Only the Proxmox host (the well-known vsock CID 2) may query the server.
-		// RemoteAddr returns the generic net.Addr interface; this type assertion
-		// verifies that it contains the concrete *vsock.Addr needed to read the CID.
-		peer, ok := client.RemoteAddr().(*vsock.Addr)
-		if !ok || peer.ContextID != vsock.Host {
-			_ = client.Close()
-			continue
-		}
-		select {
-		case clientSlots <- struct{}{}:
-		default:
-			_ = client.Close()
-			continue
-		}
-
-		// Isolate each client so one blocked connection cannot delay sensor data
-		// requested by another host-side consumer.
-		clients.Add(1)
-		go func() {
-			defer clients.Done()
-			defer func() { <-clientSlots }()
-			handle(client, disks, hbas)
-		}()
-	}
+	return publishSnapshots(ctx, uint32(*port), *publishInterval, disks, hbas)
 }
 
-func handle(conn net.Conn, disks *diskCollector, collector *hbaCollector) {
-	handleWithTimeout(conn, disks, collector, requestTimeout)
-}
-
-func handleWithTimeout(conn net.Conn, disks *diskCollector, collector *hbaCollector, timeout time.Duration) {
-	defer conn.Close()
-	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		return
-	}
-	// The protocol accepts one fixed command and caps input so an idle or
-	// malformed host connection cannot retain unbounded resources.
-	line, err := bufio.NewReader(io.LimitReader(conn, maxRequestSize+1)).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return
-	}
-	if len(line) > maxRequestSize || strings.TrimSpace(line) != "GET" {
-		return
-	}
+func currentResponse(disks *diskCollector, collector *hbaCollector) sensors.Response {
 	diskReadings, err := disks.read()
 	response := sensors.Response{
 		Version: version, Timestamp: time.Now().UTC(), Disks: diskReadings,
@@ -255,18 +196,75 @@ func handleWithTimeout(conn net.Conn, disks *diskCollector, collector *hbaCollec
 	if err != nil {
 		response.HBAError = err.Error()
 	}
-	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-		return
+	return response
+}
+
+func publishSnapshots(
+	ctx context.Context,
+	port uint32,
+	interval time.Duration,
+	disks *diskCollector,
+	collector *hbaCollector,
+) error {
+	lastError := ""
+	for ctx.Err() == nil {
+		connectCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+		conn, err := sensors.DialVSOCK(connectCtx, vsock.Host, port)
+		cancel()
+		if err != nil {
+			message := err.Error()
+			if message != lastError {
+				log.Printf("VSOCK publish warning: %s", message)
+				lastError = message
+			}
+			if !waitFor(ctx, interval) {
+				break
+			}
+			continue
+		}
+		if lastError != "" {
+			log.Printf("VSOCK publishing recovered")
+			lastError = ""
+		}
+		for ctx.Err() == nil {
+			if err := conn.SetWriteDeadline(time.Now().Add(requestTimeout)); err == nil {
+				err = sensors.WriteFrame(conn, currentResponse(disks, collector))
+			}
+			if err != nil {
+				_ = conn.Close()
+				message := err.Error()
+				if message != lastError {
+					log.Printf("VSOCK publish warning: %s", message)
+					lastError = message
+				}
+				break
+			}
+			if !waitFor(ctx, interval) {
+				_ = conn.Close()
+				return nil
+			}
+		}
+		if ctx.Err() == nil && !waitFor(ctx, interval) {
+			break
+		}
 	}
-	if err := json.NewEncoder(conn).Encode(response); err != nil {
-		log.Printf("write response: %v", err)
+	return nil
+}
+
+func waitFor(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
 func get(args []string) error {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
-	cid := fs.Uint("cid", 3, "guest vsock CID")
-	port := fs.Uint("port", defaultPort, "vsock port")
+	socketPath := fs.String("socket", defaultSnapshotSocket, "host daemon socket")
 	printJSON := fs.Bool("json", false, "print the complete JSON response")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -282,15 +280,9 @@ func get(args []string) error {
 	if !*printJSON && kind != sensorTypeDisk && kind != sensorTypeHBA {
 		return fmt.Errorf("unknown sensor type %q (expected disk or hba)", kind)
 	}
-	if err := vsockaddr.ValidateCID(uint64(*cid)); err != nil {
-		return err
-	}
-	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
-	response, err := sensors.Fetch(ctx, uint32(*cid), uint32(*port))
+	response, err := sensors.FetchUnix(ctx, *socketPath)
 	if err != nil {
 		return err
 	}
