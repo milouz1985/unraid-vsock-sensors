@@ -13,16 +13,23 @@ import (
 )
 
 func TestServerResponseMetadata(t *testing.T) {
-	response := currentResponse(
+	diskMessage, _, hbaMessage, _, heartbeat := collectorMessages(
 		newDiskCollector("unused", time.Minute),
 		newHBACollector(time.Minute, hbaModeDisabled),
 	)
 
-	if response.Version != version {
-		t.Fatalf("got version %q, want %q", response.Version, version)
+	if heartbeat.Version != version {
+		t.Fatalf("got version %q, want %q", heartbeat.Version, version)
 	}
-	if !response.HBADisabled {
+	if !hbaMessage.HBADisabled || !heartbeat.HBADisabled {
 		t.Fatal("disabled HBA collection was not reported")
+	}
+	if diskMessage.Type != sensors.MessageDisks || hbaMessage.Type != sensors.MessageHBAs ||
+		heartbeat.Type != sensors.MessageHeartbeat {
+		t.Fatalf("unexpected message types: %q, %q, %q", diskMessage.Type, hbaMessage.Type, heartbeat.Type)
+	}
+	if heartbeat.Disks != nil || heartbeat.HBAs != nil {
+		t.Fatalf("heartbeat contains sensor data: %#v", heartbeat)
 	}
 }
 
@@ -80,10 +87,15 @@ func TestHandleReadTimeout(t *testing.T) {
 
 func TestHandleReturnsLatestSnapshot(t *testing.T) {
 	store := &snapshotStore{}
-	store.set(sensors.Response{
-		Version: "test-version",
-		Disks:   []sensors.Disk{{ID: "serial", Name: "disk1", Temp: 37}},
-	})
+	if err := store.apply(sensors.Message{
+		Type: sensors.MessageDisks,
+		Response: sensors.Response{
+			Version: "test-version",
+			Disks:   []sensors.Disk{{ID: "serial", Name: "disk1", Temp: 37}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	server, client := net.Pipe()
 	done := make(chan struct{})
 	go func() {
@@ -107,13 +119,21 @@ func TestHandleReturnsLatestSnapshot(t *testing.T) {
 
 func TestSnapshotStoreExpiresFamiliesIndependently(t *testing.T) {
 	store := &snapshotStore{}
-	store.set(sensors.Response{
-		Disks: []sensors.Disk{{ID: "disk", Temp: 37}},
-		HBAs:  []sensors.HBA{{ID: "hba", Temp: 48}},
-	})
+	if err := store.apply(sensors.Message{
+		Type:     sensors.MessageDisks,
+		Response: sensors.Response{Disks: []sensors.Disk{{ID: "disk", Temp: 37}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.apply(sensors.Message{
+		Type:     sensors.MessageHBAs,
+		Response: sensors.Response{HBAs: []sensors.HBA{{ID: "hba", Temp: 48}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	store.expireDisks()
 	response := store.get()
-	if response.Error == "" || len(response.Disks) != 0 {
+	if response.Error == "" || len(response.Disks) != 1 {
 		t.Fatalf("disk family did not expire: %#v", response)
 	}
 	if response.HBAError != "" || len(response.HBAs) != 1 {
@@ -122,8 +142,28 @@ func TestSnapshotStoreExpiresFamiliesIndependently(t *testing.T) {
 
 	store.expireHBAs()
 	response = store.get()
-	if response.HBAError == "" || len(response.HBAs) != 0 {
+	if response.HBAError == "" || len(response.HBAs) != 1 {
 		t.Fatalf("HBA family did not expire: %#v", response)
+	}
+}
+
+func TestSnapshotStoreHeartbeatPreservesFamilyData(t *testing.T) {
+	store := &snapshotStore{}
+	for _, message := range []sensors.Message{
+		{Type: sensors.MessageDisks, Response: sensors.Response{Disks: []sensors.Disk{{ID: "disk", Temp: 37}}}},
+		{Type: sensors.MessageHBAs, Response: sensors.Response{HBAs: []sensors.HBA{{ID: "hba", Temp: 48}}}},
+		{Type: sensors.MessageHeartbeat, Response: sensors.Response{Version: "test", Error: "disk failed"}},
+	} {
+		if err := store.apply(message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := store.get()
+	if response.Version != "test" || response.Error != "disk failed" {
+		t.Fatalf("heartbeat metadata was not applied: %#v", response)
+	}
+	if len(response.Disks) != 1 || len(response.HBAs) != 1 {
+		t.Fatalf("heartbeat replaced family data: %#v", response)
 	}
 }
 
@@ -142,6 +182,17 @@ func TestDiskSelectorStillReturnsDiskError(t *testing.T) {
 	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{ID: "sas:1234", Temp: 46}}}
 	if err := writeResponse(&bytes.Buffer{}, r, sensorTypeDisk, "hdd"); err == nil || err.Error() != r.Error {
 		t.Fatalf("got %v, want disk error", err)
+	}
+}
+
+func TestHBASelectorRejectsCachedDataAfterAnError(t *testing.T) {
+	r := sensors.Response{
+		HBAs:     []sensors.HBA{{ID: "sas:1234", Temp: 46}},
+		HBAError: "HBA snapshot TTL expired",
+	}
+	if err := writeResponse(&bytes.Buffer{}, r, sensorTypeHBA, "sas:1234"); err == nil ||
+		err.Error() != "HBA temperature unavailable: HBA snapshot TTL expired" {
+		t.Fatalf("got %v, want HBA expiry error", err)
 	}
 }
 

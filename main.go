@@ -12,6 +12,7 @@ import (
 	"log/syslog"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -177,20 +178,33 @@ func serve(args []string) error {
 	return publishSnapshots(ctx, uint32(*port), disks, hbas)
 }
 
-func currentResponse(disks *diskCollector, collector *hbaCollector) sensors.Response {
-	diskReadings, err := disks.read()
-	response := sensors.Response{
-		Version: version, Timestamp: time.Now().UTC(), Disks: diskReadings,
+func collectorMessages(
+	disks *diskCollector,
+	collector *hbaCollector,
+) (sensors.Message, uint64, sensors.Message, uint64, sensors.Message) {
+	now := time.Now().UTC()
+	diskReadings, diskErr, diskRevision := disks.snapshot()
+	hbaReadings, hbaErr, hbaRevision := collector.snapshot()
+	diskResponse := sensors.Response{Version: version, Timestamp: now, Disks: diskReadings}
+	if diskErr != nil {
+		diskResponse.Error = diskErr.Error()
+	}
+	hbaResponse := sensors.Response{
+		Version: version, Timestamp: now, HBAs: hbaReadings,
 		HBADisabled: collector.mode == hbaModeDisabled,
 	}
-	if err != nil {
-		response.Error = err.Error()
+	if hbaErr != nil {
+		hbaResponse.HBAError = hbaErr.Error()
 	}
-	response.HBAs, err = collector.read()
-	if err != nil {
-		response.HBAError = err.Error()
+	heartbeat := sensors.Message{
+		Type: sensors.MessageHeartbeat,
+		Response: sensors.Response{
+			Version: version, Timestamp: now, Error: diskResponse.Error,
+			HBAError: hbaResponse.HBAError, HBADisabled: hbaResponse.HBADisabled,
+		},
 	}
-	return response
+	return sensors.Message{Type: sensors.MessageDisks, Response: diskResponse}, diskRevision,
+		sensors.Message{Type: sensors.MessageHBAs, Response: hbaResponse}, hbaRevision, heartbeat
 }
 
 func publishSnapshots(
@@ -219,9 +233,26 @@ func publishSnapshots(
 			log.Printf("VSOCK publishing recovered")
 			lastError = ""
 		}
+		var lastDisks, lastHBAs sensors.Message
+		var diskRevision, hbaRevision uint64
+		disksSent, hbasSent := false, false
 		for ctx.Err() == nil {
-			if err := conn.SetWriteDeadline(time.Now().Add(requestTimeout)); err == nil {
-				err = sensors.WriteFrame(conn, currentResponse(disks, collector))
+			diskMessage, nextDiskRevision, hbaMessage, nextHBARevision, heartbeat :=
+				collectorMessages(disks, collector)
+			if !disksSent || nextDiskRevision != diskRevision || !sameDiskMessage(lastDisks, diskMessage) {
+				err = writeStreamMessage(conn, diskMessage)
+				if err == nil {
+					lastDisks, diskRevision, disksSent = diskMessage, nextDiskRevision, true
+				}
+			}
+			if err == nil && (!hbasSent || nextHBARevision != hbaRevision || !sameHBAMessage(lastHBAs, hbaMessage)) {
+				err = writeStreamMessage(conn, hbaMessage)
+				if err == nil {
+					lastHBAs, hbaRevision, hbasSent = hbaMessage, nextHBARevision, true
+				}
+			}
+			if err == nil {
+				err = writeStreamMessage(conn, heartbeat)
 			}
 			if err != nil {
 				_ = conn.Close()
@@ -242,6 +273,25 @@ func publishSnapshots(
 		}
 	}
 	return nil
+}
+
+func writeStreamMessage(conn interface {
+	SetWriteDeadline(time.Time) error
+	io.Writer
+}, message sensors.Message) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(requestTimeout)); err != nil {
+		return err
+	}
+	return sensors.WriteFrame(conn, message)
+}
+
+func sameDiskMessage(left, right sensors.Message) bool {
+	return left.Error == right.Error && slices.Equal(left.Disks, right.Disks)
+}
+
+func sameHBAMessage(left, right sensors.Message) bool {
+	return left.HBAError == right.HBAError && left.HBADisabled == right.HBADisabled &&
+		slices.Equal(left.HBAs, right.HBAs)
 }
 
 func waitFor(ctx context.Context, delay time.Duration) bool {
@@ -288,11 +338,10 @@ func get(args []string) error {
 func writeResponse(out io.Writer, response sensors.Response, kind sensorType, selector string) error {
 	switch kind {
 	case sensorTypeHBA:
-		var unavailable error
 		if response.HBAError != "" {
-			unavailable = fmt.Errorf("HBA temperature unavailable: %s", response.HBAError)
+			return fmt.Errorf("HBA temperature unavailable: %s", response.HBAError)
 		}
-		return writeMaxTemperature(out, selectHBAs(response.HBAs, selector), selector, unavailable, func(hba sensors.HBA) float64 {
+		return writeMaxTemperature(out, selectHBAs(response.HBAs, selector), selector, nil, func(hba sensors.HBA) float64 {
 			return hba.Temp
 		})
 	case sensorTypeDisk:

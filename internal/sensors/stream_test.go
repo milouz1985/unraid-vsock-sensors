@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
+func TestStreamFramesSuccessiveMessages(t *testing.T) {
 	var stream bytes.Buffer
-	want := []Response{
-		{Version: "one", Disks: []Disk{{ID: "disk1", Temp: 35}}},
-		{Version: "two", HBAs: []HBA{{ID: "sas:1234", Temp: 51}}},
+	want := []Message{
+		{Type: MessageDisks, Response: Response{Version: "one", Disks: []Disk{{ID: "disk1", Temp: 35}}}},
+		{Type: MessageHBAs, Response: Response{Version: "two", HBAs: []HBA{{ID: "sas:1234", Temp: 51}}}},
 	}
 	for _, response := range want {
 		if err := WriteFrame(&stream, response); err != nil {
@@ -24,7 +24,7 @@ func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Version != want[index].Version {
+		if got.Type != want[index].Type || got.Version != want[index].Version {
 			t.Fatalf("frame %d version = %q, want %q", index, got.Version, want[index].Version)
 		}
 	}
@@ -39,7 +39,7 @@ func TestStreamRejectsInvalidFrameSize(t *testing.T) {
 		if err := binary.Write(&stream, binary.BigEndian, size); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ReadFrame(&stream); err == nil || !strings.Contains(err.Error(), "invalid sensor snapshot size") {
+		if _, err := ReadFrame(&stream); err == nil || !strings.Contains(err.Error(), "invalid stream message size") {
 			t.Fatalf("size %d returned %v", size, err)
 		}
 	}
@@ -58,7 +58,7 @@ func (w *shortWriter) Write(data []byte) (int, error) {
 
 func TestWriteFrameHandlesShortWrites(t *testing.T) {
 	var stream shortWriter
-	if err := WriteFrame(&stream, Response{Version: "test"}); err != nil {
+	if err := WriteFrame(&stream, Message{Type: MessageHeartbeat, Response: Response{Version: "test"}}); err != nil {
 		t.Fatal(err)
 	}
 	response, err := ReadFrame(&stream.Buffer)

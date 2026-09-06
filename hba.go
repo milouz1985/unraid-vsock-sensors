@@ -22,6 +22,7 @@ type hbaCollector struct {
 	readings        []sensors.HBA
 	err             error
 	refreshDeadline time.Time
+	revision        uint64
 	reader          hbaSnapshotReader
 }
 
@@ -225,6 +226,7 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.refreshDeadline = time.Time{}
+	c.revision++
 	c.err = err
 	if err != nil {
 		c.readings = nil
@@ -234,12 +236,17 @@ func (c *hbaCollector) refresh(parent context.Context) {
 }
 
 func (c *hbaCollector) read() ([]sensors.HBA, error) {
+	readings, err, _ := c.snapshot()
+	return readings, err
+}
+
+func (c *hbaCollector) snapshot() ([]sensors.HBA, error, uint64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if !c.refreshDeadline.IsZero() && !time.Now().Before(c.refreshDeadline) {
-		return nil, context.DeadlineExceeded
+		return nil, context.DeadlineExceeded, c.revision
 	}
-	return slices.Clone(c.readings), c.err
+	return slices.Clone(c.readings), c.err, c.revision
 }
 
 func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {

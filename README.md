@@ -14,8 +14,9 @@ L'agent Unraid lit l'inventaire et l'état de rotation, puis relève en
 arrière-plan la température des disques actifs avec le helper
 `smartctl_type`. Il ne consulte pas les disques déjà signalés en veille et
 utilise `smartctl -n standby` pour couvrir un changement d'état concurrent.
-Il maintient une connexion VSOCK vers Proxmox et y pousse un snapshot complet
-chaque seconde, indépendamment de la cadence des collectes matérielles.
+Il maintient une connexion VSOCK vers Proxmox, y pousse séparément les familles
+disque et HBA après leurs collectes, puis confirme leur validité avec un
+heartbeat léger chaque seconde.
 
 ## Architecture
 
@@ -309,7 +310,7 @@ Pendant l'exécution :
 ## Failsafe et fraîcheur des mesures
 
 Le récepteur Proxmox suit séparément la fraîcheur des familles disque et HBA.
-Une famille qui ne reçoit plus de snapshot valide pendant trois secondes est
+Une famille dont la validité n'est plus confirmée pendant trois secondes est
 explicitement publiée à `100 °C`.
 Une erreur d'une famille n'interrompt pas l'autre.
 
@@ -319,10 +320,11 @@ récepteur Proxmox lui-même s'arrête et ne peut donc plus injecter le failsafe
 
 La température des disques vient d'une collecte SMART directe, exécutée en
 arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.
-Les snapshots VSOCK intermédiaires réutilisent ce relevé et n'attendent jamais
-une commande disque. Leur cadence d'une seconde reste indépendante : elle
-alimente le heartbeat du module `virt-temp`, dont le failsafe se déclenche après
-10 secondes sans mise à jour. Pour une régulation thermique réactive, une
+Chaque nouvel état est poussé après sa collecte. Entre deux collectes, le
+heartbeat VSOCK confirme chaque seconde que le relevé reste valide et permet à
+Proxmox de continuer à alimenter le module `virt-temp`, dont le propre failsafe
+se déclenche après 10 secondes sans mise à jour. Pour une régulation thermique
+réactive, une
 valeur de 30 à 60 secondes est recommandée. Cinq minutes constitue une limite
 haute raisonnable ; au-delà, une température peut rester ancienne trop
 longtemps pour piloter efficacement les ventilateurs. L'agent accepte une
@@ -334,8 +336,8 @@ strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
 Fahrenheit sont converties puis validées dans la plage `0..150 °C`. Chaque
 collecte native lit aussi les pages de fabrication pour associer la température
 à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC.
-L'agent actualise ce relevé en arrière-plan ; les snapshots VSOCK n'attendent
-jamais une commande du contrôleur. Lorsque le backend StorCLI est sélectionné,
+L'agent actualise ce relevé en arrière-plan puis le pousse sans bloquer le
+heartbeat VSOCK. Lorsque le backend StorCLI est sélectionné,
 la température ROC fournie par sa sortie JSON est utilisée à la place.
 
 Une collecte HBA dispose de 15 secondes. Au-delà, l'agent signale une erreur
@@ -492,7 +494,7 @@ make hwmon-package VERSION=X.Y.Z DEBIAN_REVISION=2
 
 AF_VSOCK n'est pas un mécanisme d'authentification général. L'agent Unraid se
 connecte uniquement au CID hôte standard `2`. Le récepteur Proxmox n'accepte
-que le CID de VM configuré et limite chaque snapshot encadré à 1 Mio. Le socket
+que le CID de VM configuré et limite chaque message encadré à 1 Mio. Le socket
 Unix local accepte uniquement la commande fixe `GET`, limitée à 1 Kio, et ne
 reçoit aucun chemin fourni par le client.
 

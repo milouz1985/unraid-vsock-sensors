@@ -25,11 +25,32 @@ type snapshotStore struct {
 	available bool
 }
 
-func (s *snapshotStore) set(response sensors.Response) {
+func (s *snapshotStore) apply(message sensors.Message) error {
 	s.mu.Lock()
-	s.response = response
+	defer s.mu.Unlock()
+	if !s.available {
+		s.response.Error = "no disk snapshot received yet"
+		s.response.HBAError = "no HBA snapshot received yet"
+	}
+	s.response.Version = message.Version
+	s.response.Timestamp = message.Timestamp
+	switch message.Type {
+	case sensors.MessageDisks:
+		s.response.Disks = append([]sensors.Disk(nil), message.Disks...)
+		s.response.Error = message.Error
+	case sensors.MessageHBAs:
+		s.response.HBAs = append([]sensors.HBA(nil), message.HBAs...)
+		s.response.HBADisabled = message.HBADisabled
+		s.response.HBAError = message.HBAError
+	case sensors.MessageHeartbeat:
+		s.response.Error = message.Error
+		s.response.HBAError = message.HBAError
+		s.response.HBADisabled = message.HBADisabled
+	default:
+		return fmt.Errorf("unknown stream message type %q", message.Type)
+	}
 	s.available = true
-	s.mu.Unlock()
+	return nil
 }
 
 func (s *snapshotStore) get() sensors.Response {
@@ -47,14 +68,12 @@ func (s *snapshotStore) get() sensors.Response {
 
 func (s *snapshotStore) expireDisks() {
 	s.mu.Lock()
-	s.response.Disks = nil
 	s.response.Error = "disk snapshot TTL expired"
 	s.mu.Unlock()
 }
 
 func (s *snapshotStore) expireHBAs() {
 	s.mu.Lock()
-	s.response.HBAs = nil
 	s.response.HBAError = "HBA snapshot TTL expired"
 	s.mu.Unlock()
 }

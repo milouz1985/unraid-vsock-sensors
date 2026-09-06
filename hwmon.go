@@ -109,44 +109,53 @@ func hwmon(args []string) error {
 	// HBA to the VM. Wait for the first successful VSOCK snapshot, then restart the
 	// consumer so it drops those stale disks and discovers the virtual sensors.
 	store := &snapshotStore{}
-	snapshots := make(chan sensors.Response)
+	messages := make(chan sensors.Message)
 	backgroundErrors := make(chan error, 2)
 	go func() {
-		backgroundErrors <- receiveSnapshots(ctx, listener, uint32(*cid), snapshots)
+		backgroundErrors <- receiveSnapshots(ctx, listener, uint32(*cid), messages)
 	}()
 	go func() {
 		backgroundErrors <- serveSnapshotSocket(ctx, localListener, store)
 	}()
 
 	lastError, restartPending := "", false
-	receivedGuestResponse := false
+	receivedDisks, receivedHBAs, receivedCompleteSnapshot := false, false, false
 	restartAfter := time.Time{}
-	var diskFreshness, hbaFreshness freshnessDeadline
+	var transportFreshness, diskFreshness, hbaFreshness freshnessDeadline
 	ticker := time.NewTicker(defaultHWMonInterval)
 	defer ticker.Stop()
 	for {
 		var err error
-		processedSnapshot := false
+		processedMessage := false
 		select {
-		case state := <-snapshots:
-			processedSnapshot = true
-			store.set(state)
+		case message := <-messages:
+			processedMessage = true
+			if applyErr := store.apply(message); applyErr != nil {
+				return applyErr
+			}
 			now := time.Now()
-			if state.Error == "" {
+			transportFreshness.refresh(now, snapshotFreshnessTTL)
+			switch message.Type {
+			case sensors.MessageDisks:
+				receivedDisks = true
+			case sensors.MessageHBAs:
+				receivedHBAs = true
+			}
+			state := store.get()
+			if receivedDisks && state.Error == "" {
 				diskFreshness.refresh(now, snapshotFreshnessTTL)
 			}
-			if state.HBAError == "" {
+			if receivedHBAs && state.HBAError == "" {
 				hbaFreshness.refresh(now, snapshotFreshnessTTL)
 			}
-			// Only a complete snapshot makes the guest-backed inventory
-			// authoritative and permits the initial consumer restart.
-			firstGuestResponse := !receivedGuestResponse
-			receivedGuestResponse = true
 			reconfigured, publishErr := publisher.publish(*device, state)
 			err = publishErr
-			// The first snapshot makes the guest-backed inventory authoritative even
-			// when it matches the cache, so consumers must discard stale disk entries.
-			if reconfigured || firstGuestResponse {
+			completeSnapshot := receivedDisks && receivedHBAs
+			firstCompleteSnapshot := completeSnapshot && !receivedCompleteSnapshot
+			receivedCompleteSnapshot = receivedCompleteSnapshot || completeSnapshot
+			// A complete guest-backed snapshot is authoritative even when it
+			// matches the cache, so consumers must discard stale disk entries.
+			if completeSnapshot && (reconfigured || firstCompleteSnapshot) {
 				restartPending = true
 			}
 		case err = <-backgroundErrors:
@@ -155,7 +164,13 @@ func hwmon(args []string) error {
 			}
 			return err
 		case now := <-ticker.C:
-			if diskFreshness.expire(now) {
+			disksExpired := diskFreshness.expire(now)
+			hbasExpired := hbaFreshness.expire(now)
+			if transportFreshness.expire(now) {
+				disksExpired = true
+				hbasExpired = true
+			}
+			if disksExpired {
 				store.expireDisks()
 				if expireErr := publisher.publishFailsafe(*device, "disk"); expireErr != nil {
 					log.Printf("disk snapshot TTL expiry warning: %s", expireErr)
@@ -163,7 +178,7 @@ func hwmon(args []string) error {
 					log.Printf("disk snapshot TTL expired; published failsafe temperatures")
 				}
 			}
-			if hbaFreshness.expire(now) {
+			if hbasExpired {
 				store.expireHBAs()
 				if expireErr := publisher.publishFailsafe(*device, "hba"); expireErr != nil {
 					log.Printf("HBA snapshot TTL expiry warning: %s", expireErr)
@@ -186,10 +201,10 @@ func hwmon(args []string) error {
 				}
 			}
 		}
-		if processedSnapshot && err != nil && err.Error() != lastError {
+		if processedMessage && err != nil && err.Error() != lastError {
 			lastError = err.Error()
 			log.Printf("hwmon update warning; unavailable sensors will apply their failsafe: %s", lastError)
-		} else if processedSnapshot && err == nil && lastError != "" {
+		} else if processedMessage && err == nil && lastError != "" {
 			log.Printf("hwmon updates recovered")
 			lastError = ""
 		}
@@ -200,7 +215,7 @@ func receiveSnapshots(
 	ctx context.Context,
 	listener net.Listener,
 	expectedCID uint32,
-	out chan<- sensors.Response,
+	out chan<- sensors.Message,
 ) error {
 	lastError := ""
 	for {
@@ -219,15 +234,22 @@ func receiveSnapshots(
 		for {
 			streamErr := conn.SetReadDeadline(time.Now().Add(snapshotFreshnessTTL))
 			if streamErr == nil {
-				var response sensors.Response
-				response, streamErr = sensors.ReadFrame(conn)
+				var message sensors.Message
+				message, streamErr = sensors.ReadFrame(conn)
+				if streamErr == nil {
+					switch message.Type {
+					case sensors.MessageHeartbeat, sensors.MessageDisks, sensors.MessageHBAs:
+					default:
+						streamErr = fmt.Errorf("unknown stream message type %q", message.Type)
+					}
+				}
 				if streamErr == nil {
 					if lastError != "" {
 						log.Printf("VSOCK snapshot stream recovered")
 						lastError = ""
 					}
 					select {
-					case out <- response:
+					case out <- message:
 					case <-ctx.Done():
 						_ = conn.Close()
 						return nil

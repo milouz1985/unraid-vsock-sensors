@@ -20,11 +20,12 @@ n'existe pas. Une configuration existante n'est jamais remplacée.
 L'inventaire persistant est stocké par défaut dans
 `/var/lib/unraid-vsock-sensors/hwmon-inventory.json`.
 
-L'agent Unraid ouvre une connexion VSOCK persistante vers ce récepteur et
-pousse un snapshot complet chaque seconde. Le récepteur refuse les connexions
-qui ne viennent pas du CID configuré, maintient `/dev/virt-temp` à jour et
-expose le dernier snapshot sur
-`/run/unraid-vsock-sensors/sensors.sock` pour la commande locale `get`.
+L'agent Unraid ouvre une connexion VSOCK persistante vers ce récepteur. Il
+pousse séparément les familles disque et HBA après leurs collectes, puis envoie
+un heartbeat léger chaque seconde. Le récepteur refuse les connexions qui ne
+viennent pas du CID configuré, maintient `/dev/virt-temp` à jour et expose le
+dernier snapshot sur `/run/unraid-vsock-sensors/sensors.sock` pour la commande
+locale `get`.
 
 ## Fonctionnement du pilote
 
@@ -121,8 +122,8 @@ Le récepteur utilise `systemctl try-restart` : une unité absente ou inactive n
 pas démarrée. La valeur reste vide par défaut.
 
 Le récepteur suit un TTL distinct pour les familles disque et HBA. Après trois
-secondes sans snapshot valide, il écrit explicitement `100000` millidegrés
-Celsius pour la famille expirée.
+secondes sans confirmation de validité, il écrit explicitement `100000`
+millidegrés Celsius pour la famille expirée.
 
 Chaque canal applique en plus le même failsafe après 10 secondes sans mise à
 jour. Ce second délai, géré dans le module, protège encore le système si le
