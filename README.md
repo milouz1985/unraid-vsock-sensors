@@ -498,8 +498,8 @@ make hwmon-package VERSION=X.Y.Z DEBIAN_REVISION=2
 AF_VSOCK n'est pas un mécanisme d'authentification général. L'agent Unraid se
 connecte uniquement au CID hôte standard `2`. Le récepteur Proxmox n'accepte
 que le CID de VM configuré et limite chaque message encadré à 1 Mio. Le socket
-Unix local accepte uniquement la commande fixe `GET`, limitée à 1 Kio, et ne
-reçoit aucun chemin fourni par le client.
+Unix local renvoie un unique snapshot dès la connexion et ne reçoit aucune
+commande ni aucun chemin fourni par le client.
 
 ## Références techniques et remerciements
 

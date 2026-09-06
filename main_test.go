@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net"
-	"strings"
 	"testing"
 	"time"
 
@@ -34,58 +32,6 @@ func TestServerResponseMetadata(t *testing.T) {
 	}
 }
 
-func TestHandleRejectsInvalidRequest(t *testing.T) {
-	for name, request := range map[string]string{
-		"invalid command": "POST\n",
-		// The first 1024 bytes trim to GET. Reading only 1024 bytes would
-		// therefore accept this request without noticing the final byte.
-		"oversized": "GET" + strings.Repeat(" ", maxRequestSize-len("GET")) + "X",
-	} {
-		t.Run(name, func(t *testing.T) {
-			server, client := net.Pipe()
-			done := make(chan struct{})
-			go func() {
-				handleSnapshotRequest(server, &snapshotStore{})
-				close(done)
-			}()
-
-			writeDone := make(chan error, 1)
-			go func() {
-				_, err := io.WriteString(client, request)
-				writeDone <- err
-			}()
-			response, err := io.ReadAll(client)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := <-writeDone; err != nil {
-				t.Fatal(err)
-			}
-			<-done
-			if len(response) != 0 {
-				t.Fatalf("invalid request returned %q", response)
-			}
-		})
-	}
-}
-
-func TestHandleReadTimeout(t *testing.T) {
-	server, client := net.Pipe()
-	done := make(chan struct{})
-	go func() {
-		handleSnapshotRequestWithTimeout(server, &snapshotStore{}, 20*time.Millisecond)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		client.Close()
-		t.Fatal("silent client was not disconnected after the read timeout")
-	}
-	client.Close()
-}
-
 func TestHandleReturnsLatestSnapshot(t *testing.T) {
 	store := &snapshotStore{}
 	if err := store.apply(sensors.Message{
@@ -104,9 +50,6 @@ func TestHandleReturnsLatestSnapshot(t *testing.T) {
 		close(done)
 	}()
 
-	if _, err := io.WriteString(client, "GET\n"); err != nil {
-		t.Fatal(err)
-	}
 	var response sensors.Response
 	if err := json.NewDecoder(client).Decode(&response); err != nil {
 		t.Fatal(err)

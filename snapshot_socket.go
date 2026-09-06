@@ -1,16 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -130,17 +127,8 @@ func serveSnapshotSocket(ctx context.Context, listener net.Listener, store *snap
 }
 
 func handleSnapshotRequest(conn net.Conn, store *snapshotStore) {
-	handleSnapshotRequestWithTimeout(conn, store, requestTimeout)
-}
-
-func handleSnapshotRequestWithTimeout(conn net.Conn, store *snapshotStore, timeout time.Duration) {
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(timeout))
-	line, err := bufio.NewReader(io.LimitReader(conn, maxRequestSize+1)).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return
-	}
-	if len(line) > maxRequestSize || strings.TrimSpace(line) != "GET" {
+	if err := conn.SetWriteDeadline(time.Now().Add(requestTimeout)); err != nil {
 		return
 	}
 	_ = json.NewEncoder(conn).Encode(store.get())

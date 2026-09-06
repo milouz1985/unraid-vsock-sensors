@@ -27,7 +27,6 @@ const (
 	defaultPort            = 990
 	defaultPublishInterval = time.Second
 	requestTimeout         = 3 * time.Second
-	maxRequestSize         = 1024
 )
 
 var version = "dev"
