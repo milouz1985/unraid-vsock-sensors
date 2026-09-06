@@ -247,7 +247,7 @@ func TestParseSMARTTemperature(t *testing.T) {
 }
 
 func TestDiskCollectorRejectsExpiredSnapshot(t *testing.T) {
-	collector := newDiskCollector("unused", time.Minute, time.Minute)
+	collector := newDiskCollector("unused", time.Minute)
 	collector.err = nil
 	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
 	collector.validUntil = time.Now().Add(-time.Second)
@@ -257,7 +257,7 @@ func TestDiskCollectorRejectsExpiredSnapshot(t *testing.T) {
 }
 
 func TestDiskCollectorExpiresFailedReadingAtGraceDeadline(t *testing.T) {
-	collector := newDiskCollector("unused", time.Minute, time.Minute)
+	collector := newDiskCollector("unused", time.Minute)
 	collector.err = nil
 	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
 	collector.validUntil = time.Now().Add(time.Minute)

@@ -16,7 +16,7 @@ func TestServerResponseMetadata(t *testing.T) {
 	server, client := net.Pipe()
 	done := make(chan struct{})
 	go func() {
-		handle(server, newDiskCollector("unused", time.Minute, time.Minute), newHBACollector(time.Minute, hbaModeDisabled))
+		handle(server, newDiskCollector("unused", time.Minute), newHBACollector(time.Minute, hbaModeDisabled))
 		close(done)
 	}()
 	if _, err := io.WriteString(client, "GET\n"); err != nil {
@@ -46,7 +46,7 @@ func TestHandleRejectsInvalidRequest(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			server, client := net.Pipe()
-			disks := newDiskCollector("unused", time.Minute, time.Minute)
+			disks := newDiskCollector("unused", time.Minute)
 			done := make(chan struct{})
 			go func() {
 				handle(server, disks, newHBACollector(time.Minute, hbaModeEnabled))
@@ -75,7 +75,7 @@ func TestHandleRejectsInvalidRequest(t *testing.T) {
 
 func TestHandleReadTimeout(t *testing.T) {
 	server, client := net.Pipe()
-	disks := newDiskCollector("unused", time.Minute, time.Minute)
+	disks := newDiskCollector("unused", time.Minute)
 	done := make(chan struct{})
 	go func() {
 		handleWithTimeout(server, disks, newHBACollector(time.Minute, hbaModeEnabled), 20*time.Millisecond)

@@ -167,15 +167,14 @@ func serve(args []string) error {
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
-	diskFailureGrace := *diskInterval + diskFailureMargin
-	disks := newDiskCollector(*disksINIPath, *diskInterval, diskFailureGrace)
+	disks := newDiskCollector(*disksINIPath, *diskInterval)
 	listener, err := vsock.Listen(uint32(*port), nil)
 	if err != nil {
 		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
 	}
 	defer listener.Close()
 	log.Printf("starting unraid-vsock-sensors v%s on vsock port %d", version, *port)
-	log.Printf("disk SMART refresh interval is %s; failure grace is %s", *diskInterval, diskFailureGrace)
+	log.Printf("disk SMART refresh interval is %s; failure grace is %s", disks.interval, disks.grace)
 	if *diskInterval > maximumRecommendedDiskInterval {
 		log.Printf("warning: disk-interval=%s exceeds the recommended maximum of %s; disk temperatures may be too stale for reliable fan control", *diskInterval, maximumRecommendedDiskInterval)
 	}

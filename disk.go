@@ -60,9 +60,9 @@ func (d unraidDisk) sensor(temp float64, unavailable bool) sensors.Disk {
 	}
 }
 
-func newDiskCollector(path string, interval, grace time.Duration) *diskCollector {
+func newDiskCollector(path string, interval time.Duration) *diskCollector {
 	return &diskCollector{
-		path: path, interval: interval, grace: grace,
+		path: path, interval: interval, grace: interval + diskFailureMargin,
 		err: errors.New("disk temperatures have not been collected yet"),
 		state: diskStateTracker{
 			lastValid: make(map[string]float64), failedSince: make(map[string]time.Time),
