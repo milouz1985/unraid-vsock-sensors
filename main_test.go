@@ -21,14 +21,15 @@ func TestServerResponseMetadata(t *testing.T) {
 	if heartbeat.Version != version {
 		t.Fatalf("got version %q, want %q", heartbeat.Version, version)
 	}
-	if !hbaMessage.HBADisabled || !heartbeat.HBADisabled {
+	if !hbaMessage.HBADisabled {
 		t.Fatal("disabled HBA collection was not reported")
 	}
 	if diskMessage.Type != sensors.MessageDisks || hbaMessage.Type != sensors.MessageHBAs ||
 		heartbeat.Type != sensors.MessageHeartbeat {
 		t.Fatalf("unexpected message types: %q, %q, %q", diskMessage.Type, hbaMessage.Type, heartbeat.Type)
 	}
-	if heartbeat.Disks != nil || heartbeat.HBAs != nil {
+	if heartbeat.Disks != nil || heartbeat.HBAs != nil || heartbeat.Error != "" ||
+		heartbeat.HBAError != "" || heartbeat.HBADisabled {
 		t.Fatalf("heartbeat contains sensor data: %#v", heartbeat)
 	}
 }
@@ -147,20 +148,25 @@ func TestSnapshotStoreExpiresFamiliesIndependently(t *testing.T) {
 	}
 }
 
-func TestSnapshotStoreHeartbeatPreservesFamilyData(t *testing.T) {
+func TestSnapshotStoreHeartbeatPreservesFamilyState(t *testing.T) {
 	store := &snapshotStore{}
 	for _, message := range []sensors.Message{
-		{Type: sensors.MessageDisks, Response: sensors.Response{Disks: []sensors.Disk{{ID: "disk", Temp: 37}}}},
-		{Type: sensors.MessageHBAs, Response: sensors.Response{HBAs: []sensors.HBA{{ID: "hba", Temp: 48}}}},
-		{Type: sensors.MessageHeartbeat, Response: sensors.Response{Version: "test", Error: "disk failed"}},
+		{Type: sensors.MessageDisks, Response: sensors.Response{
+			Disks: []sensors.Disk{{ID: "disk", Temp: 37}}, Error: "disk failed",
+		}},
+		{Type: sensors.MessageHBAs, Response: sensors.Response{
+			HBAs: []sensors.HBA{{ID: "hba", Temp: 48}}, HBADisabled: true, HBAError: "HBA failed",
+		}},
+		{Type: sensors.MessageHeartbeat, Response: sensors.Response{Version: "test"}},
 	} {
 		if err := store.apply(message); err != nil {
 			t.Fatal(err)
 		}
 	}
 	response := store.get()
-	if response.Version != "test" || response.Error != "disk failed" {
-		t.Fatalf("heartbeat metadata was not applied: %#v", response)
+	if response.Version != "test" || response.Error != "disk failed" ||
+		response.HBAError != "HBA failed" || !response.HBADisabled {
+		t.Fatalf("heartbeat changed family state: %#v", response)
 	}
 	if len(response.Disks) != 1 || len(response.HBAs) != 1 {
 		t.Fatalf("heartbeat replaced family data: %#v", response)

@@ -14,9 +14,7 @@ import (
 )
 
 func newDiskStateTracker() diskStateTracker {
-	return diskStateTracker{
-		lastValid: make(map[string]float64), failedSince: make(map[string]time.Time),
-	}
+	return make(diskStateTracker)
 }
 
 func TestDiskStateAllowsTransientSMARTFailure(t *testing.T) {
@@ -112,8 +110,8 @@ func TestDiskStatePurgesDisappearedDisks(t *testing.T) {
 	tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, time.Minute)
 	tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("missing")}}, now, time.Minute)
 	tracker.apply(nil, nil, now, time.Minute)
-	if len(tracker.lastValid) != 0 || len(tracker.failedSince) != 0 {
-		t.Fatalf("state was not purged: lastValid=%v failedSince=%v", tracker.lastValid, tracker.failedSince)
+	if len(tracker) != 0 {
+		t.Fatalf("state was not purged: %v", tracker)
 	}
 
 	readings := tracker.apply(
@@ -262,7 +260,7 @@ func TestDiskCollectorExpiresFailedReadingAtGraceDeadline(t *testing.T) {
 	collector.err = nil
 	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
 	collector.updatedAt = time.Now()
-	collector.failAfter = map[string]time.Time{"serial": time.Now().Add(-time.Second)}
+	collector.state["serial"] = diskState{failedSince: time.Now().Add(-collector.grace - time.Second)}
 	readings, err, _, _ := collector.snapshot()
 	if err != nil || len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
 		t.Fatalf("expired failed reading = %#v, %v", readings, err)

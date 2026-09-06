@@ -43,9 +43,6 @@ func (s *snapshotStore) apply(message sensors.Message) error {
 		s.response.HBADisabled = message.HBADisabled
 		s.response.HBAError = message.HBAError
 	case sensors.MessageHeartbeat:
-		s.response.Error = message.Error
-		s.response.HBAError = message.HBAError
-		s.response.HBADisabled = message.HBADisabled
 	default:
 		return fmt.Errorf("unknown stream message type %q", message.Type)
 	}

@@ -200,10 +200,7 @@ func collectorMessages(
 		Type:         sensors.MessageHeartbeat,
 		DiskValidFor: diskValidFor,
 		HBAValidFor:  hbaValidFor,
-		Response: sensors.Response{
-			Version: version, Timestamp: now, Error: diskResponse.Error,
-			HBAError: hbaResponse.HBAError, HBADisabled: hbaResponse.HBADisabled,
-		},
+		Response:     sensors.Response{Version: version, Timestamp: now},
 	}
 	return sensors.Message{
 			Type: sensors.MessageDisks, DiskValidFor: diskValidFor, Response: diskResponse,
@@ -238,7 +235,7 @@ func publishSnapshots(
 			log.Printf("VSOCK publishing recovered")
 			lastError = ""
 		}
-		var lastDisks, lastHBAs sensors.Message
+		var lastDisks sensors.Message
 		var diskRevision, hbaRevision uint64
 		disksSent, hbasSent := false, false
 		for ctx.Err() == nil {
@@ -250,10 +247,10 @@ func publishSnapshots(
 					lastDisks, diskRevision, disksSent = diskMessage, nextDiskRevision, true
 				}
 			}
-			if err == nil && (!hbasSent || nextHBARevision != hbaRevision || !sameHBAMessage(lastHBAs, hbaMessage)) {
+			if err == nil && (!hbasSent || nextHBARevision != hbaRevision) {
 				err = writeStreamMessage(conn, hbaMessage)
 				if err == nil {
-					lastHBAs, hbaRevision, hbasSent = hbaMessage, nextHBARevision, true
+					hbaRevision, hbasSent = nextHBARevision, true
 				}
 			}
 			if err == nil {
@@ -292,11 +289,6 @@ func writeStreamMessage(conn interface {
 
 func sameDiskMessage(left, right sensors.Message) bool {
 	return left.Error == right.Error && slices.Equal(left.Disks, right.Disks)
-}
-
-func sameHBAMessage(left, right sensors.Message) bool {
-	return left.HBAError == right.HBAError && left.HBADisabled == right.HBADisabled &&
-		slices.Equal(left.HBAs, right.HBAs)
 }
 
 func waitFor(ctx context.Context, delay time.Duration) bool {

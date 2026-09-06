@@ -30,15 +30,16 @@ type diskCollector struct {
 	readings  []sensors.Disk
 	err       error
 	updatedAt time.Time
-	failAfter map[string]time.Time
 	revision  uint64
 	state     diskStateTracker
 }
 
-type diskStateTracker struct {
-	lastValid   map[string]float64
-	failedSince map[string]time.Time
+type diskState struct {
+	lastValid   float64
+	failedSince time.Time
 }
+
+type diskStateTracker map[string]diskState
 
 // unraidDisk is the inventory and power state read from Unraid's disks.ini.
 // Temperature is collected separately through Unraid's smartctl_type helper.
@@ -64,10 +65,8 @@ func (d unraidDisk) sensor(temp float64, unavailable bool) sensors.Disk {
 func newDiskCollector(path string, interval time.Duration) *diskCollector {
 	return &diskCollector{
 		path: path, interval: interval, grace: interval + diskFailureMargin,
-		err: errors.New("disk temperatures have not been collected yet"),
-		state: diskStateTracker{
-			lastValid: make(map[string]float64), failedSince: make(map[string]time.Time),
-		},
+		err:   errors.New("disk temperatures have not been collected yet"),
+		state: make(diskStateTracker),
 	}
 }
 
@@ -91,15 +90,12 @@ func (c *diskCollector) refresh(parent context.Context) {
 	defer cancel()
 
 	rawDisks, err := readDisks(c.path)
-	var readings []sensors.Disk
+	var probes []diskProbe
 	if err == nil {
-		probes := collectDiskProbes(ctx, rawDisks)
-		// A collection timeout belongs to each probe which did not finish.
-		// Successful probes remain usable and failed probes follow their own
-		// grace period instead of invalidating the complete disk snapshot.
-		readings = c.state.apply(rawDisks, probes, time.Now(), c.grace)
+		probes = collectDiskProbes(ctx, rawDisks)
 	}
 
+	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.revision++
@@ -107,12 +103,13 @@ func (c *diskCollector) refresh(parent context.Context) {
 	if err != nil {
 		c.readings = nil
 		c.updatedAt = time.Time{}
-		c.failAfter = nil
 		return
 	}
-	c.readings = readings
-	c.updatedAt = time.Now()
-	c.failAfter = c.state.failureDeadlines(c.grace)
+	// A collection timeout belongs to each probe which did not finish.
+	// Successful probes remain usable and failed probes follow their own grace
+	// period instead of invalidating the complete disk snapshot.
+	c.readings = c.state.apply(rawDisks, probes, now, c.grace)
+	c.updatedAt = now
 }
 
 func (c *diskCollector) snapshot() ([]sensors.Disk, error, uint64, time.Duration) {
@@ -124,7 +121,8 @@ func (c *diskCollector) snapshot() ([]sensors.Disk, error, uint64, time.Duration
 	readings := slices.Clone(c.readings)
 	now := time.Now()
 	for i := range readings {
-		if deadline, ok := c.failAfter[readings[i].ID]; ok && !now.Before(deadline) {
+		state := c.state[readings[i].ID]
+		if !state.failedSince.IsZero() && !now.Before(state.failedSince.Add(c.grace)) {
 			readings[i].Temp = 0
 			readings[i].Unavailable = true
 		}
@@ -159,56 +157,43 @@ func collectDiskProbes(ctx context.Context, disks []unraidDisk) []diskProbe {
 	return probes
 }
 
-func (s *diskStateTracker) apply(disks []unraidDisk, probes []diskProbe, now time.Time, grace time.Duration) []sensors.Disk {
+func (s diskStateTracker) apply(disks []unraidDisk, probes []diskProbe, now time.Time, grace time.Duration) []sensors.Disk {
 	present := make(map[string]struct{}, len(disks))
 	readings := make([]sensors.Disk, 0, len(disks))
 	for i, disk := range disks {
 		present[disk.id] = struct{}{}
 		probe := probes[i]
+		state := s[disk.id]
 		temperature, unavailable := probe.temperature, false
 		switch {
 		case probe.standby:
 			temperature = 0
-			delete(s.failedSince, disk.id)
+			state.failedSince = time.Time{}
 		case probe.err == nil:
-			s.lastValid[disk.id] = probe.temperature
-			delete(s.failedSince, disk.id)
+			state.lastValid = probe.temperature
+			state.failedSince = time.Time{}
 		default:
-			started, ok := s.failedSince[disk.id]
-			if !ok {
-				started = now
-				s.failedSince[disk.id] = started
+			if state.failedSince.IsZero() {
+				state.failedSince = now
 			}
-			if now.Sub(started) < grace {
+			if now.Sub(state.failedSince) < grace {
 				// Avoid the hwmon failsafe during a normal spin-up or one missed
 				// SMART read. A persistent failure expires this grace explicitly.
-				temperature = s.lastValid[disk.id]
+				temperature = state.lastValid
 			} else {
 				temperature = 0
 				unavailable = true
 			}
 		}
+		s[disk.id] = state
 		readings = append(readings, disk.sensor(temperature, unavailable))
 	}
-	for id := range s.lastValid {
+	for id := range s {
 		if _, ok := present[id]; !ok {
-			delete(s.lastValid, id)
-		}
-	}
-	for id := range s.failedSince {
-		if _, ok := present[id]; !ok {
-			delete(s.failedSince, id)
+			delete(s, id)
 		}
 	}
 	return readings
-}
-
-func (s *diskStateTracker) failureDeadlines(grace time.Duration) map[string]time.Time {
-	deadlines := make(map[string]time.Time, len(s.failedSince))
-	for id, started := range s.failedSince {
-		deadlines[id] = started.Add(grace)
-	}
-	return deadlines
 }
 
 // readDisks reads inventory and power state from Unraid. smartctl_type uses the
