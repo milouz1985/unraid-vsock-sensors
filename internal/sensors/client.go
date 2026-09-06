@@ -18,24 +18,21 @@ type connection interface {
 	SetDeadline(time.Time) error
 }
 
-type dialer func(context.Context, uint32, uint32) (connection, error)
-
 const maxResponseSize = 1 << 20
 
 // Fetch retrieves one sensor snapshot from the VSOCK server at cid and port.
 // The context controls connection establishment and all subsequent I/O.
 func Fetch(ctx context.Context, cid, port uint32) (Response, error) {
-	return fetchWithDialer(ctx, cid, port, func(ctx context.Context, cid, port uint32) (connection, error) {
-		return dialContext(ctx, cid, port)
-	})
-}
-
-func fetchWithDialer(ctx context.Context, cid, port uint32, dial dialer) (Response, error) {
 	var response Response
-	conn, err := dial(ctx, cid, port)
+	conn, err := dialContext(ctx, cid, port)
 	if err != nil {
 		return response, fmt.Errorf("connect to vsock %d:%d: %w", cid, port, err)
 	}
+	return fetchResponse(ctx, conn)
+}
+
+func fetchResponse(ctx context.Context, conn connection) (Response, error) {
+	var response Response
 	defer conn.Close()
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := conn.SetDeadline(deadline); err != nil {

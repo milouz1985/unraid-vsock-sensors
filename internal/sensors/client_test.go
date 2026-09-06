@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -32,32 +31,15 @@ func TestFetchProtocol(t *testing.T) {
 		serverDone <- err
 	}()
 
-	var gotCID, gotPort uint32
-	response, err := fetchWithDialer(context.Background(), 42, 990, func(_ context.Context, cid, port uint32) (connection, error) {
-		gotCID, gotPort = cid, port
-		return client, nil
-	})
+	response, err := fetchResponse(context.Background(), client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
 	}
-	if gotCID != 42 || gotPort != 990 {
-		t.Fatalf("dialed vsock %d:%d", gotCID, gotPort)
-	}
 	if response.Version != "test-version" || len(response.Disks) != 1 || response.Disks[0].Temp != 35 {
 		t.Fatalf("unexpected response: %#v", response)
-	}
-}
-
-func TestFetchReportsDialError(t *testing.T) {
-	want := errors.New("dial failed")
-	_, err := fetchWithDialer(context.Background(), 42, 990, func(context.Context, uint32, uint32) (connection, error) {
-		return nil, want
-	})
-	if !errors.Is(err, want) || !strings.Contains(err.Error(), "42:990") {
-		t.Fatalf("got %v, want wrapped dial error with address", err)
 	}
 }
 
@@ -71,7 +53,7 @@ func TestFetchLimitsResponseSize(t *testing.T) {
 		_, _ = server.Write(append(bytes.Repeat([]byte(" "), maxResponseSize), []byte(`{}`)...))
 	}()
 
-	_, err := fetchWithDialer(context.Background(), 42, 990, pipeDialer(client))
+	_, err := fetchResponse(context.Background(), client)
 	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
 		t.Fatalf("oversized response should fail decoding, got %v", err)
 	}
@@ -88,7 +70,7 @@ func TestFetchRejectsTrailingData(t *testing.T) {
 		_, _ = io.WriteString(server, `{"version":"test"} {}`)
 	}()
 
-	_, err := fetchWithDialer(context.Background(), 42, 990, pipeDialer(client))
+	_, err := fetchResponse(context.Background(), client)
 	if err == nil || !strings.Contains(err.Error(), "unexpected trailing data") {
 		t.Fatalf("trailing response data should fail decoding, got %v", err)
 	}
@@ -131,7 +113,7 @@ func TestFetchStopsWaitingWhenContextEnds(t *testing.T) {
 			defer cancel()
 			fetchDone := make(chan error, 1)
 			go func() {
-				_, err := fetchWithDialer(ctx, 42, 990, pipeDialer(client))
+				_, err := fetchResponse(ctx, client)
 				fetchDone <- err
 			}()
 			<-requestRead
@@ -150,11 +132,5 @@ func TestFetchStopsWaitingWhenContextEnds(t *testing.T) {
 			}
 			<-serverDone
 		})
-	}
-}
-
-func pipeDialer(conn net.Conn) dialer {
-	return func(context.Context, uint32, uint32) (connection, error) {
-		return conn, nil
 	}
 }
