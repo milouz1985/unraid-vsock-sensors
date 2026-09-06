@@ -127,7 +127,8 @@ Cette commande :
 - installe DKMS et les outils de compilation nécessaires ;
 - installe le méta-paquet `proxmox-default-headers`, afin que les headers suivent
   automatiquement les mises à jour du noyau Proxmox par défaut ;
-- compile `virt-temp` pour le noyau Proxmox actif ;
+- compile `virt-temp` pour le noyau Proxmox actif et pour chaque autre noyau
+  déjà présent dont les en-têtes sont installés ;
 - installe le binaire dans `/usr/bin` ;
 - active et démarre `unraid-vsock-hwmon.service`, qui charge explicitement le
   module avant de lancer l'agent.

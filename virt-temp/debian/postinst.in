@@ -27,8 +27,13 @@ fi
 if ! dkms status -m "$module" -v "$version" 2>/dev/null | grep -Fq "$module/$version"; then
     dkms add -m "$module" -v "$version"
 fi
-dkms build --force -m "$module" -v "$version"
-dkms install --force -m "$module" -v "$version"
+for kernel_build in /lib/modules/*/build; do
+    [ -d "$kernel_build" ] || continue
+    target_kernel="${kernel_build#/lib/modules/}"
+    target_kernel="${target_kernel%/build}"
+    dkms build --force -m "$module" -v "$version" -k "$target_kernel"
+    dkms install --force -m "$module" -v "$version" -k "$target_kernel"
+done
 
 # Migrate installations made by the former tarball installer only after the
 # replacement module has built successfully. Its unit in /etc would otherwise

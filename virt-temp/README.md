@@ -172,7 +172,8 @@ apt install "proxmox-headers-$(uname -r)" \
 
 Lors d'une mise à jour, le `prerm` retire l'enregistrement DKMS de la version
 installée avant que `dpkg` supprime ses sources versionnées. Le `postinst`
-enregistre ensuite les nouvelles sources, compile le module, le signe lorsque
+enregistre ensuite les nouvelles sources, compile et installe le module pour
+chaque noyau déjà présent dont les en-têtes sont disponibles, le signe lorsque
 DKMS est configuré pour le faire, charge `virt_temp` et démarre le service.
 L'unité exécute également `modprobe virt_temp` avant chaque démarrage : elle ne
 peut donc plus rester active sans `/dev/virt-temp` après un reboot.
