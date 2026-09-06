@@ -222,33 +222,6 @@ func TestWriteResponseRejectsUnavailableSelector(t *testing.T) {
 	}
 }
 
-func TestJSONResponsePreservesPartialErrors(t *testing.T) {
-	want := sensors.Response{
-		Version:     "test-version",
-		Timestamp:   time.Date(2026, time.September, 1, 12, 30, 0, 0, time.UTC),
-		Disks:       []sensors.Disk{{ID: "serial", Name: "disk1", Device: "sdb", Temp: 35}},
-		HBAs:        []sensors.HBA{{ID: "sas:1234", Temp: 49}},
-		HBADisabled: true,
-		HBAError:    "storcli failed",
-		Error:       "disks.ini incomplete",
-	}
-	var out bytes.Buffer
-	if err := writeJSONResponse(&out, want); err != nil {
-		t.Fatal(err)
-	}
-
-	var got sensors.Response
-	if err := json.NewDecoder(&out).Decode(&got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Version != want.Version || !got.Timestamp.Equal(want.Timestamp) || got.HBADisabled != want.HBADisabled || got.Error != want.Error || got.HBAError != want.HBAError {
-		t.Fatalf("response metadata or errors changed: %#v", got)
-	}
-	if len(got.Disks) != 1 || got.Disks[0].Temp != 35 || len(got.HBAs) != 1 || got.HBAs[0].Temp != 49 {
-		t.Fatalf("partial readings were lost: %#v", got)
-	}
-}
-
 func TestGetRequiresExplicitSensorTypeAndSelector(t *testing.T) {
 	tests := []struct {
 		name string

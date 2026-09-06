@@ -299,13 +299,9 @@ func get(args []string) error {
 		return err
 	}
 	if *printJSON {
-		return writeJSONResponse(os.Stdout, response)
+		return json.NewEncoder(os.Stdout).Encode(response)
 	}
 	return writeResponse(os.Stdout, response, kind, fs.Arg(1))
-}
-
-func writeJSONResponse(out io.Writer, response sensors.Response) error {
-	return json.NewEncoder(out).Encode(response)
 }
 
 func writeResponse(out io.Writer, response sensors.Response, kind sensorType, selector string) error {
