@@ -25,19 +25,10 @@ const (
 )
 
 type hwmonPublisher struct {
-	disks        hwmonInventory
-	hbas         hwmonInventory
-	cachePath    string
-	restartUnits []string
-	cacheDirty   bool
-	// guestAvailable prevents repeated consumer restarts after the first
-	// successful VSOCK response. A restart is still requested on topology changes.
-	guestAvailable bool
-}
-
-type publishResult struct {
-	Reconfigured    bool
-	BecameAvailable bool
+	disks      hwmonInventory
+	hbas       hwmonInventory
+	cachePath  string
+	cacheDirty bool
 }
 
 func hwmon(args []string) error {
@@ -75,7 +66,7 @@ func hwmon(args []string) error {
 	defer stop()
 
 	log.Printf("publishing fixed Unraid hwmon inventories through %s every %s", *device, *interval)
-	publisher := &hwmonPublisher{cachePath: *cache, restartUnits: restartUnits}
+	publisher := &hwmonPublisher{cachePath: *cache}
 	err = publisher.restore(*device)
 	if err != nil {
 		log.Printf("hwmon inventory cache warning: %s", err)
@@ -86,31 +77,34 @@ func hwmon(args []string) error {
 	// HBA to the VM. Wait for the first successful VSOCK response, then restart the
 	// consumer so it drops those stale disks and discovers the virtual sensors.
 	lastError, restartPending := "", false
+	receivedGuestResponse := false
 	restartAfter := time.Time{}
 	for {
 		requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 		state, err := sensors.Fetch(requestCtx, uint32(*cid), uint32(*port))
 		cancel()
-		result := publishResult{}
 		if err == nil {
 			// Only a completed VSOCK request makes the guest-backed inventory
 			// authoritative and permits the initial consumer restart.
-			result, err = publisher.publish(*device, state)
-		}
-		// The first response makes the guest-backed inventory authoritative even
-		// when it matches the cache, so consumers must discard stale disk entries.
-		if result.Reconfigured || result.BecameAvailable {
-			restartPending = true
+			firstGuestResponse := !receivedGuestResponse
+			receivedGuestResponse = true
+			reconfigured, publishErr := publisher.publish(*device, state)
+			err = publishErr
+			// The first response makes the guest-backed inventory authoritative even
+			// when it matches the cache, so consumers must discard stale disk entries.
+			if reconfigured || firstGuestResponse {
+				restartPending = true
+			}
 		}
 		if restartPending && !time.Now().Before(restartAfter) {
-			if restartErr := restartSystemdUnits(ctx, publisher.restartUnits); restartErr != nil {
+			if restartErr := restartSystemdUnits(ctx, restartUnits); restartErr != nil {
 				restartAfter = time.Now().Add(restartRetryDelay)
 				log.Printf("topology consumer restart warning: %s", restartErr)
 			} else {
 				restartPending = false
 				restartAfter = time.Time{}
-				if len(publisher.restartUnits) != 0 {
-					log.Printf("restarted topology consumers: %s", strings.Join(publisher.restartUnits, ", "))
+				if len(restartUnits) != 0 {
+					log.Printf("restarted topology consumers: %s", strings.Join(restartUnits, ", "))
 				}
 			}
 		}
@@ -132,17 +126,16 @@ func hwmon(args []string) error {
 	}
 }
 
-func (publisher *hwmonPublisher) publish(device string, state sensors.Response) (publishResult, error) {
-	result := publishResult{BecameAvailable: !publisher.guestAvailable}
-	publisher.guestAvailable = true
+func (publisher *hwmonPublisher) publish(device string, state sensors.Response) (bool, error) {
 	disks, hbas := makeHWMonSamples(state)
 	var diskErr, hbaErr error
+	reconfigured := false
 	if state.Error != "" {
 		diskErr = fmt.Errorf("disks: %s", state.Error)
 	} else if changed, err := publishHWMonFamily(device, "disk", &publisher.disks, disks, false); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
 	} else {
-		result.Reconfigured = result.Reconfigured || changed
+		reconfigured = reconfigured || changed
 		if changed {
 			log.Printf("configured storage hwmon inventory with %d channels", len(disks))
 		}
@@ -152,21 +145,21 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 	} else if changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas, state.HBADisabled); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
 	} else {
-		result.Reconfigured = result.Reconfigured || changed
+		reconfigured = reconfigured || changed
 		if changed {
 			log.Printf("configured HBA hwmon inventory with %d channels", len(hbas))
 		}
 	}
-	if result.Reconfigured {
+	if reconfigured {
 		publisher.cacheDirty = true
 	}
 	if publisher.cacheDirty {
 		if err := publisher.saveCache(); err != nil {
-			return result, errors.Join(diskErr, hbaErr, fmt.Errorf("save hwmon inventory cache: %w", err))
+			return reconfigured, errors.Join(diskErr, hbaErr, fmt.Errorf("save hwmon inventory cache: %w", err))
 		}
 		publisher.cacheDirty = false
 	}
-	return result, errors.Join(diskErr, hbaErr)
+	return reconfigured, errors.Join(diskErr, hbaErr)
 }
 
 func parseRestartUnits(value string) ([]string, error) {

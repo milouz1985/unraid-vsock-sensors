@@ -442,17 +442,6 @@ func hwmonTestSample(id, label string, temperature float64, members ...string) h
 	}
 }
 
-func TestPublisherReportsGuestAvailabilityOnlyOnce(t *testing.T) {
-	publisher := &hwmonPublisher{}
-	state := sensors.Response{Error: "disk data unavailable", HBAError: "HBA data unavailable"}
-	if result, _ := publisher.publish("/dev/null", state); !result.BecameAvailable {
-		t.Fatal("first successful VSOCK response did not report the guest as available")
-	}
-	if result, _ := publisher.publish("/dev/null", state); result.BecameAvailable {
-		t.Fatal("second successful VSOCK response reported guest availability again")
-	}
-}
-
 func TestPublisherReportsReconfigurationWhenCacheSaveFails(t *testing.T) {
 	directory := t.TempDir()
 	device := filepath.Join(directory, "virt-temp")
@@ -468,8 +457,8 @@ func TestPublisherReportsReconfigurationWhenCacheSaveFails(t *testing.T) {
 		Disks:       []sensors.Disk{{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34}},
 		HBADisabled: true,
 	}
-	result, err := publisher.publish(device, state)
-	if !result.Reconfigured {
+	reconfigured, err := publisher.publish(device, state)
+	if !reconfigured {
 		t.Fatal("kernel reconfiguration must be reported even when the cache cannot be saved")
 	}
 	if err == nil || !strings.Contains(err.Error(), "save hwmon inventory cache") {
