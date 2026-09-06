@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "unraid-vsock-sensors">
 <!ENTITY author "François HOYEZ">
-<!ENTITY version "1.5.0">
+<!ENTITY version "1.6.0">
 <!ENTITY pluginURL "https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg">
-<!ENTITY package "unraid-vsock-sensors-1.5.0-x86_64-1.txz">
-<!ENTITY packageURL "https://git.lan.home/francois/unraid-vsock-sensors/releases/download/v1.5.0/unraid-vsock-sensors-1.5.0-x86_64-1.txz">
-<!ENTITY packageMD5 "5e7dbe2e4adaa9807d4903f9e99020c7">
-<!ENTITY packageSHA256 "fc7c8f8f022b7a4f6ae7df2f6329cd8ce92593200f529ed5ede4020e360a4ff4">
+<!ENTITY package "unraid-vsock-sensors-1.6.0-x86_64-1.txz">
+<!ENTITY packageURL "https://git.lan.home/francois/unraid-vsock-sensors/releases/download/v1.6.0/unraid-vsock-sensors-1.6.0-x86_64-1.txz">
+<!ENTITY packageMD5 "d6080aa8f8dce21faf399cac3b5327d9">
+<!ENTITY packageSHA256 "a799eaef0ac963cbdbc8ab114924dc9c70d7ac51501c010238c6d95313e6ce28">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
 ]>
 
@@ -15,8 +15,8 @@
         pluginURL="&pluginURL;" launch="Settings/UnraidVsockSensors"
         min="6.12.0" icon="icon.png">
 <DESCRIPTION>
-Exposes cached Unraid disk and HBA temperatures over AF_VSOCK to Proxmox
-guests and the CoolerControl plugin without waking sleeping disks.
+Exposes Unraid disk and HBA temperatures over AF_VSOCK to Proxmox guests and
+the CoolerControl plugin without querying sleeping disks.
 </DESCRIPTION>
 <CHANGES>
 ### &version;
@@ -37,7 +37,7 @@ set -e
 name="unraid-vsock-sensors"
 cfgdir="/boot/config/plugins/$name"
 mkdir -p "$cfgdir"
-find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-1.5.0-x86_64-1.txz" -delete 2>/dev/null || true
+find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-1.6.0-x86_64-1.txz" -delete 2>/dev/null || true
 if [[ ! -f "$cfgdir/$name.cfg" ]]; then
     install -m 0644 "/usr/local/emhttp/plugins/$name/default.cfg" "$cfgdir/$name.cfg"
 fi
