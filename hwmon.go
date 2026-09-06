@@ -280,11 +280,12 @@ func receiveSnapshots(
 			_ = conn.Close()
 			continue
 		}
+		reader := sensors.NewFrameReader(conn)
 		for {
 			streamErr := conn.SetReadDeadline(time.Now().Add(snapshotFreshnessTTL))
 			if streamErr == nil {
 				var message sensors.Message
-				message, streamErr = sensors.ReadFrame(conn)
+				message, streamErr = reader.Read()
 				if streamErr == nil {
 					switch message.Type {
 					case sensors.MessageHeartbeat, sensors.MessageDisks, sensors.MessageHBAs:
