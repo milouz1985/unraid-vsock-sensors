@@ -82,6 +82,8 @@ const (
 // embedded response keeps the public snapshot and stream representations
 // aligned without duplicating their JSON fields.
 type Message struct {
-	Type MessageType `json:"type"`
+	Type         MessageType   `json:"type"`
+	DiskValidFor time.Duration `json:"disk_valid_for,omitempty"`
+	HBAValidFor  time.Duration `json:"hba_valid_for,omitempty"`
 	Response
 }

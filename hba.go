@@ -16,14 +16,14 @@ import (
 )
 
 type hbaCollector struct {
-	interval        time.Duration
-	mode            hbaMode
-	mu              sync.RWMutex
-	readings        []sensors.HBA
-	err             error
-	refreshDeadline time.Time
-	revision        uint64
-	reader          hbaSnapshotReader
+	interval  time.Duration
+	mode      hbaMode
+	mu        sync.RWMutex
+	readings  []sensors.HBA
+	err       error
+	updatedAt time.Time
+	revision  uint64
+	reader    hbaSnapshotReader
 }
 
 type hbaMetadata struct {
@@ -211,11 +211,6 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, hbaCollectionTimeout)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
-	// A native ioctl may outlive its context. Readers enforce the deadline
-	// independently, while the previous snapshot remains usable until then.
-	c.mu.Lock()
-	c.refreshDeadline = deadline
-	c.mu.Unlock()
 
 	readings, err := c.reader.collect(ctx)
 	if !time.Now().Before(deadline) {
@@ -225,28 +220,25 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.refreshDeadline = time.Time{}
 	c.revision++
 	c.err = err
 	if err != nil {
 		c.readings = nil
+		c.updatedAt = time.Time{}
 		return
 	}
 	c.readings = readings
+	c.updatedAt = time.Now()
 }
 
-func (c *hbaCollector) read() ([]sensors.HBA, error) {
-	readings, err, _ := c.snapshot()
-	return readings, err
-}
-
-func (c *hbaCollector) snapshot() ([]sensors.HBA, error, uint64) {
+func (c *hbaCollector) snapshot() ([]sensors.HBA, error, uint64, time.Duration) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if !c.refreshDeadline.IsZero() && !time.Now().Before(c.refreshDeadline) {
-		return nil, context.DeadlineExceeded, c.revision
+	if c.err != nil {
+		return nil, c.err, c.revision, 0
 	}
-	return slices.Clone(c.readings), c.err, c.revision
+	validFor := max(c.updatedAt.Add(c.interval+hbaCollectionTimeout).Sub(time.Now()), 0)
+	return slices.Clone(c.readings), nil, c.revision, validFor
 }
 
 func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {

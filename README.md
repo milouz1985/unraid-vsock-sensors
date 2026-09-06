@@ -310,8 +310,11 @@ Pendant l'exécution :
 ## Failsafe et fraîcheur des mesures
 
 Le récepteur Proxmox suit séparément la fraîcheur des familles disque et HBA.
-Une famille dont la validité n'est plus confirmée pendant trois secondes est
-explicitement publiée à `100 °C`.
+Chaque état transporte sa durée de validité restante, calculée à partir de
+l'intervalle de collecte et de son délai maximal. Le heartbeat retransmet cette
+durée décroissante sans la renouveler : un collecteur bloqué finit donc par
+expirer côté Proxmox. Une erreur explicite ramène son échéance à trois secondes ;
+trois secondes sans heartbeat font expirer les deux familles.
 Une erreur d'une famille n'interrompt pas l'autre.
 
 Le module `virt_temp` conserve son propre garde-fou : chaque canal non actualisé

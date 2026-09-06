@@ -183,8 +183,8 @@ func collectorMessages(
 	collector *hbaCollector,
 ) (sensors.Message, uint64, sensors.Message, uint64, sensors.Message) {
 	now := time.Now().UTC()
-	diskReadings, diskErr, diskRevision := disks.snapshot()
-	hbaReadings, hbaErr, hbaRevision := collector.snapshot()
+	diskReadings, diskErr, diskRevision, diskValidFor := disks.snapshot()
+	hbaReadings, hbaErr, hbaRevision, hbaValidFor := collector.snapshot()
 	diskResponse := sensors.Response{Version: version, Timestamp: now, Disks: diskReadings}
 	if diskErr != nil {
 		diskResponse.Error = diskErr.Error()
@@ -197,14 +197,19 @@ func collectorMessages(
 		hbaResponse.HBAError = hbaErr.Error()
 	}
 	heartbeat := sensors.Message{
-		Type: sensors.MessageHeartbeat,
+		Type:         sensors.MessageHeartbeat,
+		DiskValidFor: diskValidFor,
+		HBAValidFor:  hbaValidFor,
 		Response: sensors.Response{
 			Version: version, Timestamp: now, Error: diskResponse.Error,
 			HBAError: hbaResponse.HBAError, HBADisabled: hbaResponse.HBADisabled,
 		},
 	}
-	return sensors.Message{Type: sensors.MessageDisks, Response: diskResponse}, diskRevision,
-		sensors.Message{Type: sensors.MessageHBAs, Response: hbaResponse}, hbaRevision, heartbeat
+	return sensors.Message{
+			Type: sensors.MessageDisks, DiskValidFor: diskValidFor, Response: diskResponse,
+		}, diskRevision, sensors.Message{
+			Type: sensors.MessageHBAs, HBAValidFor: hbaValidFor, Response: hbaResponse,
+		}, hbaRevision, heartbeat
 }
 
 func publishSnapshots(

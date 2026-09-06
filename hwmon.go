@@ -54,6 +54,32 @@ func (f *freshnessDeadline) expire(now time.Time) bool {
 	return true
 }
 
+func (f *freshnessDeadline) fail(now time.Time) {
+	if f.expired {
+		return
+	}
+	until := now.Add(snapshotFreshnessTTL)
+	if f.until.IsZero() || until.Before(f.until) {
+		f.until = until
+	}
+}
+
+func updateFamilyFreshness(freshness *freshnessDeadline, now time.Time, validFor time.Duration, sourceError string) bool {
+	if sourceError != "" {
+		freshness.fail(now)
+		return freshness.expire(now)
+	}
+	if validFor <= 0 {
+		if freshness.expired {
+			return false
+		}
+		freshness.until = now
+		return freshness.expire(now)
+	}
+	freshness.refresh(now, validFor)
+	return freshness.expire(now)
+}
+
 func hwmon(args []string) error {
 	fs := flag.NewFlagSet("hwmon", flag.ContinueOnError)
 	cid := fs.Uint("cid", 3, "guest vsock CID")
@@ -142,12 +168,26 @@ func hwmon(args []string) error {
 				receivedHBAs = true
 			}
 			state := store.get()
-			if receivedDisks && state.Error == "" {
-				diskFreshness.refresh(now, snapshotFreshnessTTL)
+			hbaValidFor := message.HBAValidFor
+			if state.HBADisabled {
+				hbaValidFor = snapshotFreshnessTTL
 			}
-			if receivedHBAs && state.HBAError == "" {
-				hbaFreshness.refresh(now, snapshotFreshnessTTL)
+			disksExpired, hbasExpired := false, false
+			switch message.Type {
+			case sensors.MessageDisks:
+				disksExpired = updateFamilyFreshness(&diskFreshness, now, message.DiskValidFor, state.Error)
+			case sensors.MessageHBAs:
+				hbasExpired = updateFamilyFreshness(&hbaFreshness, now, hbaValidFor, state.HBAError)
+			case sensors.MessageHeartbeat:
+				if receivedDisks {
+					disksExpired = updateFamilyFreshness(&diskFreshness, now, message.DiskValidFor, state.Error)
+				}
+				if receivedHBAs {
+					hbasExpired = updateFamilyFreshness(&hbaFreshness, now, hbaValidFor, state.HBAError)
+				}
 			}
+			publishExpiredFamilies(store, publisher, *device, disksExpired, hbasExpired)
+			state = store.get()
 			reconfigured, publishErr := publisher.publish(*device, state)
 			err = publishErr
 			completeSnapshot := receivedDisks && receivedHBAs
@@ -170,22 +210,7 @@ func hwmon(args []string) error {
 				disksExpired = true
 				hbasExpired = true
 			}
-			if disksExpired {
-				store.expireDisks()
-				if expireErr := publisher.publishFailsafe(*device, "disk"); expireErr != nil {
-					log.Printf("disk snapshot TTL expiry warning: %s", expireErr)
-				} else {
-					log.Printf("disk snapshot TTL expired; published failsafe temperatures")
-				}
-			}
-			if hbasExpired {
-				store.expireHBAs()
-				if expireErr := publisher.publishFailsafe(*device, "hba"); expireErr != nil {
-					log.Printf("HBA snapshot TTL expiry warning: %s", expireErr)
-				} else {
-					log.Printf("HBA snapshot TTL expired; published failsafe temperatures")
-				}
-			}
+			publishExpiredFamilies(store, publisher, *device, disksExpired, hbasExpired)
 		case <-ctx.Done():
 			return nil
 		}
@@ -207,6 +232,30 @@ func hwmon(args []string) error {
 		} else if processedMessage && err == nil && lastError != "" {
 			log.Printf("hwmon updates recovered")
 			lastError = ""
+		}
+	}
+}
+
+func publishExpiredFamilies(
+	store *snapshotStore,
+	publisher *hwmonPublisher,
+	device string,
+	disksExpired, hbasExpired bool,
+) {
+	if disksExpired {
+		store.expireDisks()
+		if err := publisher.publishFailsafe(device, "disk"); err != nil {
+			log.Printf("disk snapshot TTL expiry warning: %s", err)
+		} else {
+			log.Printf("disk snapshot TTL expired; published failsafe temperatures")
+		}
+	}
+	if hbasExpired {
+		store.expireHBAs()
+		if err := publisher.publishFailsafe(device, "hba"); err != nil {
+			log.Printf("HBA snapshot TTL expiry warning: %s", err)
+		} else {
+			log.Printf("HBA snapshot TTL expired; published failsafe temperatures")
 		}
 	}
 }

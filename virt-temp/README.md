@@ -121,9 +121,12 @@ UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
 Le récepteur utilise `systemctl try-restart` : une unité absente ou inactive n'est
 pas démarrée. La valeur reste vide par défaut.
 
-Le récepteur suit un TTL distinct pour les familles disque et HBA. Après trois
-secondes sans confirmation de validité, il écrit explicitement `100000`
-millidegrés Celsius pour la famille expirée.
+Le récepteur suit un TTL distinct pour les familles disque et HBA. Chaque état
+transporte la durée de validité restante de sa collecte ; le heartbeat la
+retransmet sans la remettre à zéro. Un collecteur bloqué expire donc côté
+Proxmox. Une erreur explicite ramène son échéance à trois secondes ; trois
+secondes sans heartbeat font expirer les deux familles à `100000` millidegrés
+Celsius.
 
 Chaque canal applique en plus le même failsafe après 10 secondes sans mise à
 jour. Ce second délai, géré dans le module, protège encore le système si le

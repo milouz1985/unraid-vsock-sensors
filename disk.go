@@ -26,13 +26,13 @@ type diskCollector struct {
 	interval time.Duration
 	grace    time.Duration
 
-	mu         sync.RWMutex
-	readings   []sensors.Disk
-	err        error
-	validUntil time.Time
-	failAfter  map[string]time.Time
-	revision   uint64
-	state      diskStateTracker
+	mu        sync.RWMutex
+	readings  []sensors.Disk
+	err       error
+	updatedAt time.Time
+	failAfter map[string]time.Time
+	revision  uint64
+	state     diskStateTracker
 }
 
 type diskStateTracker struct {
@@ -106,28 +106,20 @@ func (c *diskCollector) refresh(parent context.Context) {
 	c.err = err
 	if err != nil {
 		c.readings = nil
-		c.validUntil = time.Time{}
+		c.updatedAt = time.Time{}
 		c.failAfter = nil
 		return
 	}
 	c.readings = readings
-	c.validUntil = time.Now().Add(c.interval + diskCollectionTimeout)
+	c.updatedAt = time.Now()
 	c.failAfter = c.state.failureDeadlines(c.grace)
 }
 
-func (c *diskCollector) read() ([]sensors.Disk, error) {
-	readings, err, _ := c.snapshot()
-	return readings, err
-}
-
-func (c *diskCollector) snapshot() ([]sensors.Disk, error, uint64) {
+func (c *diskCollector) snapshot() ([]sensors.Disk, error, uint64, time.Duration) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.err != nil {
-		return nil, c.err, c.revision
-	}
-	if time.Now().After(c.validUntil) {
-		return nil, errors.New("disk temperature snapshot expired"), c.revision
+		return nil, c.err, c.revision, 0
 	}
 	readings := slices.Clone(c.readings)
 	now := time.Now()
@@ -137,7 +129,8 @@ func (c *diskCollector) snapshot() ([]sensors.Disk, error, uint64) {
 			readings[i].Unavailable = true
 		}
 	}
-	return readings, nil, c.revision
+	validFor := max(c.updatedAt.Add(c.interval+diskCollectionTimeout).Sub(now), 0)
+	return readings, nil, c.revision, validFor
 }
 
 func collectDiskProbes(ctx context.Context, disks []unraidDisk) []diskProbe {

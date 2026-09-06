@@ -147,6 +147,39 @@ func TestFreshnessDeadlineExpiresOnceUntilRefreshed(t *testing.T) {
 	}
 }
 
+func TestFamilyErrorShortensButDoesNotExtendFreshness(t *testing.T) {
+	now := time.Unix(100, 0)
+	var freshness freshnessDeadline
+	freshness.refresh(now, time.Minute)
+	if updateFamilyFreshness(&freshness, now, 0, "collection failed") {
+		t.Fatal("family error expired without its transport grace")
+	}
+	deadline := freshness.until
+	if updateFamilyFreshness(&freshness, now.Add(time.Second), 0, "collection failed") {
+		t.Fatal("repeated family error expired too early")
+	}
+	if !freshness.until.Equal(deadline) {
+		t.Fatalf("repeated error extended deadline from %s to %s", deadline, freshness.until)
+	}
+	if !freshness.expire(deadline) {
+		t.Fatal("family did not expire after its error grace")
+	}
+}
+
+func TestZeroSourceValidityExpiresImmediately(t *testing.T) {
+	now := time.Unix(100, 0)
+	var freshness freshnessDeadline
+	if !updateFamilyFreshness(&freshness, now, 0, "") {
+		t.Fatal("zero source validity did not expire")
+	}
+	if updateFamilyFreshness(&freshness, now.Add(time.Second), 0, "") {
+		t.Fatal("repeated zero source validity emitted another expiry")
+	}
+	if updateFamilyFreshness(&freshness, now.Add(time.Second), time.Minute, "") {
+		t.Fatal("valid source remained expired after recovery")
+	}
+}
+
 func TestEncodeHWMonSamples(t *testing.T) {
 	readings := []hwmonSample{
 		hwmonTestSample("disk:1", "disk1 (sda)", 34.125),
