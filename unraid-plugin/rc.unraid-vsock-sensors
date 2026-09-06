@@ -52,7 +52,6 @@ load_config() {
     esac
     case "$HBA_MODE" in
         enabled|disabled) ;;
-        auto) HBA_MODE="enabled" ;;
         *) echo "Invalid HBA mode: $HBA_MODE" >&2; return 1 ;;
     esac
     case "$HBA_BACKEND" in

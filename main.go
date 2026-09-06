@@ -132,9 +132,6 @@ func serve(args []string) error {
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
 	hbaInterval := fs.Duration("hba-interval", 30*time.Second, "delay between HBA temperature refreshes")
 	useSyslog := fs.Bool("syslog", false, "send service logs to syslog")
-	// Keep the former option for upgrades whose service script has not yet been
-	// replaced. Both flags update the same value.
-	fs.DurationVar(hbaInterval, "storcli-interval", 30*time.Second, "deprecated alias for --hba-interval")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

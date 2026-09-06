@@ -93,8 +93,8 @@ StorCLI exige que la commande `storcli` soit installée, directement avec son
 paquet ou avec le plugin Unraid
 [`storcli64`](https://forums.unraid.net/topic/192112-plugin-storcli64/). Aucun
 repli automatique n'est effectué : une erreur du backend sélectionné est
-signalée telle quelle. Le mode `disabled` ne consulte aucun contrôleur. Une
-ancienne valeur `auto` de `HBA_MODE` est interprétée comme `enabled`.
+signalée telle quelle. Le mode `disabled` ne consulte aucun contrôleur. Le
+réglage `HBA_MODE` accepte uniquement les valeurs `enabled` et `disabled`.
 
 Le backend `/dev/mpt3ctl` doit être considéré comme **expérimental**. Son
 implémentation suit l'ABI et les structures du pilote `mpt3sas` du noyau Linux

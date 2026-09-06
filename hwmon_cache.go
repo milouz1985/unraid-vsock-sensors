@@ -41,12 +41,10 @@ type cachedHWMonSensor struct {
 // channels at the failsafe temperature. Families are applied in order, so a
 // family restored before a later validation failure remains usable.
 func (publisher *hwmonPublisher) restore(device string) error {
-	if err := os.Chmod(publisher.cachePath, 0600); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return err
-	}
 	data, err := os.ReadFile(publisher.cachePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
