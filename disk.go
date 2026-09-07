@@ -35,6 +35,7 @@ type diskCollector struct {
 
 type diskState struct {
 	lastValid   float64
+	hasValid    bool
 	failedSince time.Time
 }
 
@@ -171,12 +172,16 @@ func (s diskStateTracker) apply(disks []unraidDisk, probes []diskProbe, now time
 			state.failedSince = time.Time{}
 		case probe.err == nil:
 			state.lastValid = probe.temperature
+			state.hasValid = true
 			state.failedSince = time.Time{}
 		default:
 			if state.failedSince.IsZero() {
 				state.failedSince = now
 			}
-			if now.Sub(state.failedSince) < grace {
+			if !state.hasValid {
+				temperature = 0
+				unavailable = true
+			} else if now.Sub(state.failedSince) < grace {
 				// Avoid the hwmon failsafe during a normal spin-up or one missed
 				// SMART read. A persistent failure expires this grace explicitly.
 				temperature = state.lastValid

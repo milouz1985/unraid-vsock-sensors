@@ -244,11 +244,12 @@ d'identification du périphérique. Le code `3` accompagné du mode `STANDBY` ou
 l'option `-n standby`.
 
 Une erreur SMART transitoire conserve la dernière température valide pendant
-l'intervalle de collecte augmenté de cinq secondes, ou publie la sentinelle
-`0 °C` si aucune mesure précédente n'existe. Si l'erreur persiste à
-l'expiration, le disque et le maximum de sa catégorie passent explicitement au
-failsafe de `100 °C`. Cet intervalle appartient au service, vaut `30s` par
-défaut et ne dépend plus du réglage Unraid **Tunable (poll_attributes)**.
+l'intervalle de collecte augmenté de cinq secondes. Si aucune mesure valide
+n'existe encore, le disque est immédiatement déclaré indisponible. Si l'erreur
+persiste après la grâce, il l'est également. Dans les deux cas, le disque et le
+maximum de sa catégorie passent explicitement au failsafe de `100 °C`. Cet
+intervalle appartient au service, vaut `30s` par défaut et ne dépend plus du
+réglage Unraid **Tunable (poll_attributes)**.
 
 Le récepteur ferme une connexion qui ne fournit aucun snapshot pendant environ
 trois secondes afin de permettre une reconnexion propre. Ce délai de transport

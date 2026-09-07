@@ -84,10 +84,11 @@ nouvelle topologie : les anciens canaux restent alors en place et atteignent le
 failsafe. Une température de disque indisponible n'interrompt pas les autres
 mises à jour : ce disque et le maximum de sa catégorie reçoivent explicitement
 la température failsafe, tandis que les autres canaux restent actualisés.
-L'agent Unraid collecte les températures SMART en arrière-plan et masque une
+L'agent Unraid collecte les températures SMART en arrière-plan. Il masque une
 erreur transitoire pendant l'intervalle SMART configuré augmenté de cinq
-secondes, sans déclarer la sonde en panne avant le prochain relevé configuré.
-Un changement de label seul n'affecte pas l'identité.
+secondes seulement lorsqu'une mesure valide antérieure existe. Un premier échec
+déclare immédiatement le disque indisponible. Un changement de label seul
+n'affecte pas l'identité.
 
 Si l'enregistrement d'une nouvelle topologie échoue, le pilote réenregistre
 l'inventaire précédent au lieu de laisser disparaître les sondes. L'erreur est

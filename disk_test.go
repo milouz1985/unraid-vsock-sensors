@@ -74,17 +74,17 @@ func TestDiskStateIsolatesTimedOutSMARTProbe(t *testing.T) {
 	}
 }
 
-func TestDiskStateGraceWithoutPreviousTemperatureAvoidsFailsafe(t *testing.T) {
+func TestDiskStateReportsUnavailableWithoutPreviousTemperature(t *testing.T) {
 	tracker := newDiskStateTracker()
 	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true}
 	readings := tracker.apply(
 		[]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}}, time.Now(), time.Minute,
 	)
-	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
-		t.Fatalf("initial grace reading = %#v", readings)
+	if len(readings) != 1 || readings[0].Temp != 0 || !readings[0].Unavailable {
+		t.Fatalf("initial failed reading = %#v", readings)
 	}
-	if samples := makeDiskSamples(sensors.Response{Disks: readings}); len(samples) != 1 || samples[0].temperature == hwmonFailsafeTemp {
-		t.Fatalf("initial grace triggered hwmon failsafe: %#v", samples)
+	if samples := makeDiskSamples(sensors.Response{Disks: readings}); len(samples) != 1 || samples[0].temperature != hwmonFailsafeTemp {
+		t.Fatalf("initial failure did not trigger hwmon failsafe: %#v", samples)
 	}
 }
 
@@ -118,7 +118,7 @@ func TestDiskStatePurgesDisappearedDisks(t *testing.T) {
 	readings := tracker.apply(
 		[]unraidDisk{disk}, []diskProbe{{err: errors.New("missing")}}, now.Add(2*time.Minute), time.Minute,
 	)
-	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
+	if len(readings) != 1 || readings[0].Temp != 0 || !readings[0].Unavailable {
 		t.Fatalf("reappeared disk reused stale state: %#v", readings)
 	}
 }
