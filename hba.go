@@ -165,10 +165,11 @@ func buildHBAReadings(temperatures map[int]float64, metadata map[int]hbaMetadata
 type hbaMode string
 
 const (
-	hbaModeEnabled       hbaMode = "enabled"
-	hbaModeDisabled      hbaMode = "disabled"
-	hbaCollectionTimeout         = 15 * time.Second
+	hbaModeEnabled  hbaMode = "enabled"
+	hbaModeDisabled hbaMode = "disabled"
 )
+
+const hbaCollectionTimeout = 15 * time.Second
 
 var (
 	errNoHBA                 = errors.New("no HBA controllers found")
