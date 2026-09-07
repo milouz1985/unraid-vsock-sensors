@@ -180,12 +180,11 @@ func publishSnapshots(
 	dial := func(ctx context.Context) (snapshotConnection, error) {
 		return sensors.DialVSOCK(ctx, vsock.Host, port)
 	}
-	return publishSnapshotsWithDialer(ctx, defaultPublishInterval, disks, collector, dial)
+	return publishSnapshotsWithDialer(ctx, disks, collector, dial)
 }
 
 func publishSnapshotsWithDialer(
 	ctx context.Context,
-	interval time.Duration,
 	disks *diskCollector,
 	collector *hbaCollector,
 	dial snapshotDialer,
@@ -201,7 +200,7 @@ func publishSnapshotsWithDialer(
 				log.Printf("VSOCK publish warning: %s", message)
 				lastError = message
 			}
-			if !waitFor(ctx, interval) {
+			if !waitFor(ctx, defaultPublishInterval) {
 				break
 			}
 			continue
@@ -223,12 +222,12 @@ func publishSnapshotsWithDialer(
 				log.Printf("VSOCK publishing recovered")
 				lastError = ""
 			}
-			if !waitFor(ctx, interval) {
+			if !waitFor(ctx, defaultPublishInterval) {
 				_ = conn.Close()
 				return nil
 			}
 		}
-		if ctx.Err() == nil && !waitFor(ctx, interval) {
+		if ctx.Err() == nil && !waitFor(ctx, defaultPublishInterval) {
 			break
 		}
 	}
