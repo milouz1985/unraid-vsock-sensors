@@ -286,7 +286,7 @@ func TestBlockedDiskCollectionDoesNotStopSnapshotPublication(t *testing.T) {
 	}
 	collector := newDiskCollector(fifo, time.Minute)
 	collector.err = nil
-	collector.readings = []sensors.Disk{{ID: "serial", Name: "disk1", Temp: 35}}
+	collector.readings = []sensors.Disk{{ID: "serial", Name: "disk1", Device: "sda", Temp: 35}}
 	collector.updatedAt = time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
