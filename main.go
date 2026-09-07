@@ -26,6 +26,27 @@ const (
 	vsockIOTimeout         = 3 * time.Second
 )
 
+type stickyErrorLog struct {
+	context string
+	last    string
+}
+
+func (state *stickyErrorLog) update(err error) {
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	if message == state.last {
+		return
+	}
+	state.last = message
+	if message == "" {
+		log.Printf("%s recovered", state.context)
+		return
+	}
+	log.Printf("%s warning: %s", state.context, message)
+}
+
 type snapshotConnection interface {
 	io.WriteCloser
 	SetWriteDeadline(time.Time) error
@@ -187,17 +208,13 @@ func publishSnapshotsWithDialer(
 	collector *hbaCollector,
 	dial snapshotDialer,
 ) error {
-	lastError := ""
+	publishLog := stickyErrorLog{context: "VSOCK publishing"}
 	for ctx.Err() == nil {
 		connectCtx, cancel := context.WithTimeout(ctx, vsockIOTimeout)
 		conn, err := dial(connectCtx)
 		cancel()
 		if err != nil {
-			message := err.Error()
-			if message != lastError {
-				log.Printf("VSOCK publish warning: %s", message)
-				lastError = message
-			}
+			publishLog.update(err)
 			if !waitFor(ctx, defaultPublishInterval) {
 				break
 			}
@@ -209,17 +226,10 @@ func publishSnapshotsWithDialer(
 			}
 			if err != nil {
 				_ = conn.Close()
-				message := err.Error()
-				if message != lastError {
-					log.Printf("VSOCK publish warning: %s", message)
-					lastError = message
-				}
+				publishLog.update(err)
 				break
 			}
-			if lastError != "" {
-				log.Printf("VSOCK publishing recovered")
-				lastError = ""
-			}
+			publishLog.update(nil)
 			if !waitFor(ctx, defaultPublishInterval) {
 				_ = conn.Close()
 				return nil

@@ -100,7 +100,8 @@ func hwmon(args []string) error {
 		backgroundErrors <- receiveSnapshots(ctx, listener, uint32(*cid), snapshots)
 	}()
 
-	lastError, restartPending := "", false
+	updateLog := stickyErrorLog{context: "hwmon update"}
+	restartPending := false
 	seenGuestSnapshot := false
 	restartAfter := time.Time{}
 	for {
@@ -140,13 +141,7 @@ func hwmon(args []string) error {
 				}
 			}
 		}
-		if err != nil && err.Error() != lastError {
-			lastError = err.Error()
-			log.Printf("hwmon update warning; unavailable sensors will apply their failsafe: %s", lastError)
-		} else if err == nil && lastError != "" {
-			log.Printf("hwmon updates recovered")
-			lastError = ""
-		}
+		updateLog.update(err)
 	}
 }
 
@@ -156,7 +151,7 @@ func receiveSnapshots(
 	expectedCID uint32,
 	out chan receivedSnapshot,
 ) error {
-	lastError := ""
+	streamLog := stickyErrorLog{context: "VSOCK snapshot stream"}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -177,10 +172,7 @@ func receiveSnapshots(
 				var snapshot sensors.Response
 				snapshot, streamErr = reader.Read()
 				if streamErr == nil {
-					if lastError != "" {
-						log.Printf("VSOCK snapshot stream recovered")
-						lastError = ""
-					}
+					streamLog.update(nil)
 					received := receivedSnapshot{response: snapshot, receivedAt: time.Now()}
 					if !sendLatestSnapshot(ctx, out, received) {
 						_ = conn.Close()
@@ -193,11 +185,7 @@ func receiveSnapshots(
 			if ctx.Err() != nil {
 				return nil
 			}
-			message := streamErr.Error()
-			if message != lastError {
-				log.Printf("VSOCK snapshot stream warning: %s", message)
-				lastError = message
-			}
+			streamLog.update(streamErr)
 			break
 		}
 	}
