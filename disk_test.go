@@ -314,3 +314,44 @@ func TestDiskCollectorExpiresFailedReadingAtGraceDeadline(t *testing.T) {
 		t.Fatalf("expired failed reading = %#v, %v", readings, err)
 	}
 }
+
+func TestDiskCollectorConcurrentRefreshAndSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	data := "[disk1]\nid=serial\ndevice=sda\nrotational=1\ntransport=ata\nspundown=1\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	collector := newDiskCollector(path, time.Minute)
+	collector.refresh(context.Background())
+
+	start := make(chan struct{})
+	done := make(chan error, 2)
+	go func() {
+		<-start
+		for range 100 {
+			collector.refresh(context.Background())
+		}
+		done <- nil
+	}()
+	go func() {
+		<-start
+		for range 100 {
+			readings, err := collector.snapshot()
+			if err != nil {
+				done <- err
+				return
+			}
+			if len(readings) != 1 || readings[0].ID != "serial" {
+				done <- errors.New("concurrent snapshot lost the disk reading")
+				return
+			}
+		}
+		done <- nil
+	}()
+	close(start)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
