@@ -5,22 +5,30 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
-	"unsafe"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
 
 func TestMPT3CommandABI(t *testing.T) {
-	var command mpt3Command
-	if got, want := unsafe.Offsetof(command.Request), uintptr(68); got != want {
-		t.Fatalf("MPI request offset = %d, want %d", got, want)
-	}
-	if got, want := unsafe.Sizeof(command), uintptr(96); got != want {
-		t.Fatalf("command buffer size = %d, want %d", got, want)
+	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, nil)
+	got := makeMPT3Command(3, request, 256, 0x11223344, 0x55667788)
+	var want [96]byte
+	binary.LittleEndian.PutUint32(want[0:4], 3)
+	binary.LittleEndian.PutUint32(want[8:12], 256)
+	binary.LittleEndian.PutUint32(want[12:16], mpt3FirmwareTimeout)
+	binary.LittleEndian.PutUint64(want[16:24], 0x11223344)
+	binary.LittleEndian.PutUint64(want[24:32], 0x55667788)
+	binary.LittleEndian.PutUint32(want[48:52], mpt3ReplyBufferSize)
+	binary.LittleEndian.PutUint32(want[52:56], 256)
+	binary.LittleEndian.PutUint32(want[64:68], 7)
+	copy(want[68:96], request[:])
+	if !slices.Equal(got[:], want[:]) {
+		t.Fatalf("command buffer = %x, want %x", got, want)
 	}
 }
 
