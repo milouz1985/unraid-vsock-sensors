@@ -423,7 +423,7 @@ func TestPublisherReconfiguresChangedTopology(t *testing.T) {
 	}
 }
 
-func TestPublisherRemovesLastDisk(t *testing.T) {
+func TestPublisherDistinguishesMissingAndEmptyDiskInventory(t *testing.T) {
 	directory := t.TempDir()
 	device := filepath.Join(directory, "virt-temp")
 	if err := os.WriteFile(device, nil, 0600); err != nil {
@@ -437,7 +437,17 @@ func TestPublisherRemovesLastDisk(t *testing.T) {
 		hbas: hwmonInventory{initialized: true},
 	}
 
-	changed, err := publisher.publish(device, sensors.Response{HBADisabled: true})
+	_, err := publisher.publish(device, sensors.Response{HBADisabled: true})
+	if err == nil || !strings.Contains(err.Error(), "disks: inventory is missing") {
+		t.Fatalf("missing inventory error = %v", err)
+	}
+	if len(publisher.disks.sensors) != 1 {
+		t.Fatal("missing inventory changed the configured disk")
+	}
+
+	changed, err := publisher.publish(device, sensors.Response{
+		Disks: []sensors.Disk{}, HBADisabled: true,
+	})
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -647,7 +657,7 @@ func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
 		cachePath: filepath.Join(directory, "inventory.json"),
 		disks:     hwmonInventory{initialized: true},
 	}
-	changed, err := publisher.publish(path, sensors.Response{HBADisabled: true})
+	changed, err := publisher.publish(path, sensors.Response{Disks: []sensors.Disk{}, HBADisabled: true})
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -666,7 +676,7 @@ func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatal(err)
 	}
-	changed, err = publisher.publish(path, sensors.Response{HBADisabled: true})
+	changed, err = publisher.publish(path, sensors.Response{Disks: []sensors.Disk{}, HBADisabled: true})
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}

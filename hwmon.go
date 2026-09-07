@@ -230,10 +230,12 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 	disks, hbas := makeHWMonSamples(state)
 	var diskErr, hbaErr error
 	reconfigured := false
+	// A non-nil empty inventory is authoritative and removes the last cached
+	// disk instead of leaving a permanent failsafe device behind.
 	if state.Error != "" {
 		diskErr = fmt.Errorf("disks: %s", state.Error)
-		// An error-free empty snapshot is authoritative and removes the last cached
-		// disk instead of leaving a permanent failsafe device behind.
+	} else if state.Disks == nil {
+		diskErr = errors.New("disks: inventory is missing; waiting for sensors")
 	} else if changed, err := publishHWMonFamily(device, "disk", &publisher.disks, disks); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
 	} else {
