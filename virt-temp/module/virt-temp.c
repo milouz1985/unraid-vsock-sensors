@@ -431,7 +431,7 @@ static int update(struct virt_temp_session *session,
 	}
 	list_for_each_entry(record, &session->records, node) {
 		sensor = find_sensor(inventory, record->id);
-		if (!sensor || strcmp(sensor->label, record->label)) {
+		if (!sensor) {
 			mutex_unlock(family->lock);
 			return -ESTALE;
 		}

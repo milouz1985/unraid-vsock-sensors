@@ -569,8 +569,8 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "sample\tdisk:serial\t35000\tdisk1 (sda)\ncommit\tdisk\n"; got != want {
-		t.Fatalf("update = %q, want configured label %q", got, want)
+	if got, want := string(data), "sample\tdisk:serial\t35000\tdisk1 (sdb)\ncommit\tdisk\n"; got != want {
+		t.Fatalf("update = %q, want current label %q", got, want)
 	}
 }
 

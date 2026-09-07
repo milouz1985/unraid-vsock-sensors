@@ -329,7 +329,8 @@ Pendant l'exécution :
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
   automatiquement la famille hwmon concernée et met à jour le cache ;
 - un changement de `/dev/sdX`, de nom affiché ou d'index IOC ne modifie pas
-  l'identité si l'ID stable reste identique ;
+  l'identité si l'ID stable reste identique. Le label est fixé lors de la
+  configuration et les relevés suivants sont appliqués par ID ;
 - les consommateurs configurés dans `UNRAID_VSOCK_RESTART_UNITS` sont relancés
   une première fois dès que la VM répond, même si la topologie restaurée depuis
   le cache est inchangée, puis après chaque reconfiguration afin de découvrir

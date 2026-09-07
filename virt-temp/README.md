@@ -48,7 +48,8 @@ Un ID doit contenir entre 1 et 63 octets et commencer par le nom de sa famille
 suivi de `:`. Un label doit contenir entre 1 et 95 octets. Une température doit
 être un entier compris entre `0` et `150000` milli°C inclus. Les seules familles
 acceptées sont `disk` et `hba`, et les seules opérations finales sont
-`configure` et `commit`.
+`configure` et `commit`. `configure` enregistre le label ; `commit` identifie
+les sondes uniquement par leur ID et ignore le label transmis.
 
 Chaque session accepte au maximum 1 024 enregistrements. Cette limite borne les
 allocations contrôlées depuis l'espace utilisateur ; elle ne correspond pas à

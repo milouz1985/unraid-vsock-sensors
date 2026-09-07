@@ -38,18 +38,7 @@ func publishHWMonFamilyWithWriter(
 		return true, nil
 	}
 
-	currentByID := make(map[string]hwmonSample, len(current))
-	for _, sample := range current {
-		currentByID[sample.sensor.id] = sample
-	}
-	updates := make([]hwmonSample, 0, len(inventory.sensors))
-	for _, expected := range inventory.sensors {
-		reading := currentByID[expected.id]
-		// Labels describe the fixed inventory and may contain volatile names.
-		reading.sensor = expected
-		updates = append(updates, reading)
-	}
-	if err := write(path, namespace, "commit", updates); err != nil {
+	if err := write(path, namespace, "commit", current); err != nil {
 		if !errors.Is(err, syscall.ESTALE) {
 			return false, err
 		}
