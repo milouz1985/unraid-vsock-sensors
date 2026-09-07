@@ -92,8 +92,8 @@ func hwmon(args []string) error {
 	// Restoring the cache creates the expected virtual sensors before the guest is
 	// reachable, but it is too early to restart consumers: CoolerControl could
 	// still retain disks discovered through drivetemp before the host released the
-	// HBA to the VM. Wait for the first successful VSOCK snapshot, then restart the
-	// consumer so it drops those stale disks and discovers the virtual sensors.
+	// HBA to the VM. Wait for the first valid, decoded VSOCK snapshot, then restart
+	// the consumer so it drops those stale disks and discovers the virtual sensors.
 	snapshots := make(chan receivedSnapshot, 1)
 	backgroundErrors := make(chan error, 1)
 	go func() {
@@ -101,7 +101,7 @@ func hwmon(args []string) error {
 	}()
 
 	lastError, restartPending := "", false
-	receivedSnapshot := false
+	seenGuestSnapshot := false
 	restartAfter := time.Time{}
 	for {
 		var err error
@@ -113,11 +113,11 @@ func hwmon(args []string) error {
 			}
 			reconfigured, publishErr := publisher.publish(*device, snapshot.response)
 			err = publishErr
-			firstSnapshot := !receivedSnapshot
-			receivedSnapshot = true
+			firstGuestSnapshot := !seenGuestSnapshot
+			seenGuestSnapshot = true
 			// A guest-backed snapshot is authoritative even when it
 			// matches the cache, so consumers must discard stale disk entries.
-			if reconfigured || firstSnapshot {
+			if reconfigured || firstGuestSnapshot {
 				restartPending = true
 			}
 		case err = <-backgroundErrors:
