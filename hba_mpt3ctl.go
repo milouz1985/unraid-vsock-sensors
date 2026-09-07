@@ -114,8 +114,6 @@ func openMPT3() (*mpt3Device, error) {
 	return &mpt3Device{file: file}, nil
 }
 
-func (d *mpt3Device) close() { _ = d.file.Close() }
-
 func mpt3IOCTL(fd, request uintptr, argument unsafe.Pointer) error {
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, request, uintptr(argument))
 	if errno != 0 {
@@ -231,7 +229,7 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer device.close()
+	defer device.file.Close()
 	readings, identities := make([]sensors.HBA, 0), make(map[string]int)
 	// Deliberately rescan every possible IOC and its identity pages. This keeps
 	// topology handling simple and runs outside the VSOCK publication path; if systems

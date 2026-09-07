@@ -103,10 +103,6 @@ func (publisher *hwmonPublisher) saveCache() error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0600); err != nil {
-		temporary.Close()
-		return err
-	}
 	if _, err := temporary.Write(data); err != nil {
 		temporary.Close()
 		return err

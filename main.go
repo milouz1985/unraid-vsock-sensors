@@ -207,7 +207,9 @@ func publishSnapshotsWithDialer(
 			continue
 		}
 		for ctx.Err() == nil {
-			err = writeStreamMessage(conn, collectorSnapshot(disks, collector))
+			if err = conn.SetWriteDeadline(time.Now().Add(vsockIOTimeout)); err == nil {
+				err = sensors.WriteFrame(conn, collectorSnapshot(disks, collector))
+			}
 			if err != nil {
 				_ = conn.Close()
 				message := err.Error()
@@ -231,13 +233,6 @@ func publishSnapshotsWithDialer(
 		}
 	}
 	return nil
-}
-
-func writeStreamMessage(conn snapshotConnection, response sensors.Response) error {
-	if err := conn.SetWriteDeadline(time.Now().Add(vsockIOTimeout)); err != nil {
-		return err
-	}
-	return sensors.WriteFrame(conn, response)
 }
 
 func waitFor(ctx context.Context, delay time.Duration) bool {

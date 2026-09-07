@@ -56,13 +56,6 @@ type diskProbe struct {
 	err         error
 }
 
-func (d unraidDisk) sensor(temp float64, unavailable bool) sensors.Disk {
-	return sensors.Disk{
-		ID: d.id, Name: d.name, Device: d.device, Transport: d.transport,
-		Rotational: d.rotational, Temp: temp, Unavailable: unavailable,
-	}
-}
-
 func newDiskCollector(path string, interval time.Duration) *diskCollector {
 	return &diskCollector{
 		path: path, interval: interval, grace: interval + diskFailureMargin,
@@ -192,7 +185,11 @@ func (s diskStateTracker) apply(disks []unraidDisk, probes []diskProbe, now time
 			}
 		}
 		s[disk.id] = state
-		readings = append(readings, disk.sensor(temperature, unavailable))
+		readings = append(readings, sensors.Disk{
+			ID: disk.id, Name: disk.name, Device: disk.device,
+			Transport: disk.transport, Rotational: disk.rotational,
+			Temp: temperature, Unavailable: unavailable,
+		})
 	}
 	for id := range s {
 		if _, ok := present[id]; !ok {
