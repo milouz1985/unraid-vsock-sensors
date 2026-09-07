@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestStreamFramesSuccessiveMessages(t *testing.T) {
+func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 	var stream bytes.Buffer
 	want := []Response{
 		{Version: "one", Disks: []Disk{{ID: "disk1", Temp: 35}}},

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -246,6 +247,59 @@ func TestDiskCollectorExpiresStaleSnapshot(t *testing.T) {
 	readings, err := collector.snapshot()
 	if err == nil || len(readings) != 0 {
 		t.Fatalf("expired snapshot = %#v, %v", readings, err)
+	}
+}
+
+func TestBlockedDiskCollectionDoesNotStopSnapshotPublication(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "disks.ini")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	collector := newDiskCollector(fifo, time.Minute)
+	collector.err = nil
+	collector.readings = []sensors.Disk{{ID: "serial", Name: "disk1", Temp: 35}}
+	collector.updatedAt = time.Now()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	refreshDone := make(chan struct{})
+	go func() {
+		collector.refresh(ctx)
+		close(refreshDone)
+	}()
+
+	type openResult struct {
+		file *os.File
+		err  error
+	}
+	opened := make(chan openResult, 1)
+	go func() {
+		file, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+		opened <- openResult{file: file, err: err}
+	}()
+	writer := <-opened
+	if writer.err != nil {
+		t.Fatal(writer.err)
+	}
+
+	frames := capturePublishedSnapshots(
+		t,
+		collector,
+		newHBACollector(time.Minute, hbaModeDisabled),
+		2,
+	)
+	for index, frame := range frames {
+		if frame.Error != "" || len(frame.Disks) != 1 || frame.Disks[0].Temp != 35 {
+			t.Fatalf("frame %d was blocked or lost cached disk data: %#v", index, frame)
+		}
+	}
+
+	_, _ = writer.file.Write([]byte("[disk1]\nid=serial\ndevice=sda\n"))
+	_ = writer.file.Close()
+	select {
+	case <-refreshDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked disk collection did not finish after releasing the FIFO")
 	}
 }
 

@@ -20,6 +20,9 @@ import (
 )
 
 const (
+	// snapshotStreamTimeout detects a stopped publisher and releases the old
+	// connection so Unraid can reconnect. The kernel's stale_timeout remains
+	// the thermal failsafe when snapshots do not resume.
 	snapshotStreamTimeout = 3 * defaultPublishInterval
 	virtTempDevicePath    = "/dev/virt-temp"
 	defaultHWMonCache     = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"

@@ -126,8 +126,10 @@ récepteur cesse d'actualiser uniquement la famille concernée.
 Chaque canal applique un failsafe de `100000` millidegrés Celsius après
 10 secondes sans mise à jour. Ce délai, géré dans le module, couvre aussi une
 perte du flux VSOCK ou l'arrêt du récepteur. Il est configurable entre 1 et
-300 secondes. Par
-exemple, pour utiliser 15 secondes de manière persistante :
+300 secondes. Le délai de lecture VSOCK de trois secondes sert uniquement à
+détecter une connexion interrompue et à permettre sa reconnexion ; il ne
+remplace pas ce failsafe thermique. Par exemple, pour utiliser 15 secondes de
+manière persistante :
 
 ```sh
 printf 'options virt-temp stale_timeout=15\n' \

@@ -60,7 +60,9 @@ type HBA struct {
 
 // Response contains a snapshot of every sensor exposed by the Unraid agent.
 type Response struct {
-	Version     string    `json:"version"`
+	Version string `json:"version"`
+	// Timestamp is the snapshot publication time, not the physical collection
+	// time of the cached disk or HBA measurements.
 	Timestamp   time.Time `json:"timestamp"`
 	Disks       []Disk    `json:"disks"`
 	HBAs        []HBA     `json:"hbas,omitempty"`

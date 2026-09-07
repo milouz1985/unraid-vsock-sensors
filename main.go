@@ -23,8 +23,15 @@ import (
 const (
 	defaultPort            = 990
 	defaultPublishInterval = time.Second
-	requestTimeout         = 3 * time.Second
+	vsockIOTimeout         = 3 * time.Second
 )
+
+type snapshotConnection interface {
+	io.WriteCloser
+	SetWriteDeadline(time.Time) error
+}
+
+type snapshotDialer func(context.Context) (snapshotConnection, error)
 
 var version = "dev"
 
@@ -170,10 +177,23 @@ func publishSnapshots(
 	disks *diskCollector,
 	collector *hbaCollector,
 ) error {
+	dial := func(ctx context.Context) (snapshotConnection, error) {
+		return sensors.DialVSOCK(ctx, vsock.Host, port)
+	}
+	return publishSnapshotsWithDialer(ctx, defaultPublishInterval, disks, collector, dial)
+}
+
+func publishSnapshotsWithDialer(
+	ctx context.Context,
+	interval time.Duration,
+	disks *diskCollector,
+	collector *hbaCollector,
+	dial snapshotDialer,
+) error {
 	lastError := ""
 	for ctx.Err() == nil {
-		connectCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-		conn, err := sensors.DialVSOCK(connectCtx, vsock.Host, port)
+		connectCtx, cancel := context.WithTimeout(ctx, vsockIOTimeout)
+		conn, err := dial(connectCtx)
 		cancel()
 		if err != nil {
 			message := err.Error()
@@ -181,7 +201,7 @@ func publishSnapshots(
 				log.Printf("VSOCK publish warning: %s", message)
 				lastError = message
 			}
-			if !waitFor(ctx, defaultPublishInterval) {
+			if !waitFor(ctx, interval) {
 				break
 			}
 			continue
@@ -201,23 +221,20 @@ func publishSnapshots(
 				log.Printf("VSOCK publishing recovered")
 				lastError = ""
 			}
-			if !waitFor(ctx, defaultPublishInterval) {
+			if !waitFor(ctx, interval) {
 				_ = conn.Close()
 				return nil
 			}
 		}
-		if ctx.Err() == nil && !waitFor(ctx, defaultPublishInterval) {
+		if ctx.Err() == nil && !waitFor(ctx, interval) {
 			break
 		}
 	}
 	return nil
 }
 
-func writeStreamMessage(conn interface {
-	SetWriteDeadline(time.Time) error
-	io.Writer
-}, response sensors.Response) error {
-	if err := conn.SetWriteDeadline(time.Now().Add(requestTimeout)); err != nil {
+func writeStreamMessage(conn snapshotConnection, response sensors.Response) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(vsockIOTimeout)); err != nil {
 		return err
 	}
 	return sensors.WriteFrame(conn, response)

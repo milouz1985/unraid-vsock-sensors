@@ -15,6 +15,8 @@ arrière-plan la température des disques actifs avec le helper
 utilise `smartctl -n standby` pour couvrir un changement d'état concurrent.
 Il maintient une connexion VSOCK vers Proxmox et y pousse chaque seconde le
 dernier snapshot complet. Cette publication périodique sert aussi de heartbeat.
+Le champ `timestamp` indique l'heure de cette publication, pas celle de la
+dernière collecte SMART ou HBA dont les valeurs peuvent provenir du cache.
 
 ## Architecture
 
@@ -247,6 +249,11 @@ l'intervalle de collecte augmenté de cinq secondes, ou publie la sentinelle
 l'expiration, le disque et le maximum de sa catégorie passent explicitement au
 failsafe de `100 °C`. Cet intervalle appartient au service, vaut `30s` par
 défaut et ne dépend plus du réglage Unraid **Tunable (poll_attributes)**.
+
+Le récepteur ferme une connexion qui ne fournit aucun snapshot pendant environ
+trois secondes afin de permettre une reconnexion propre. Ce délai de transport
+ne déclenche pas lui-même le failsafe thermique : celui-ci reste le
+`stale_timeout` de 10 secondes appliqué indépendamment par `virt_temp`.
 
 ## Inventaire persistant et changement de topologie
 

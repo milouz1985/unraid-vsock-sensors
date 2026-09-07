@@ -154,6 +154,41 @@ func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
 	})
 }
 
+func TestBlockedHBACollectionDoesNotStopSnapshotPublication(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		collector := newHBACollector(time.Second, hbaModeEnabled)
+		collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
+			return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
+		})
+		collector.refresh(context.Background())
+
+		release := make(chan struct{})
+		collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
+			<-release // Simulate a synchronous ioctl ignoring its expired context.
+			return nil, context.DeadlineExceeded
+		})
+		go collector.refresh(context.Background())
+		synctest.Wait()
+		time.Sleep(collector.interval + hbaCollectionTimeout)
+		synctest.Wait()
+
+		frames := capturePublishedSnapshots(
+			t,
+			newDiskCollector("unused", time.Minute),
+			collector,
+			2,
+		)
+		for index, frame := range frames {
+			if frame.HBAError == "" {
+				t.Fatalf("frame %d did not publish the blocked HBA collection error: %#v", index, frame)
+			}
+		}
+
+		close(release)
+		synctest.Wait()
+	})
+}
+
 func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {
 	collector := newHBACollector(time.Millisecond, hbaModeDisabled)
 	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
