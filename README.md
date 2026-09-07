@@ -448,6 +448,17 @@ upgradepkg --install-new --reinstall \
 /etc/rc.d/rc.unraid-vsock-sensors start
 ```
 
+Ne pas exécuter `upgradepkg` seul : cette commande remplace le fichier binaire,
+mais ne redémarre pas le processus. Le service continuerait alors à exécuter
+l'ancien binaire, y compris son ancien protocole VSOCK, tandis que la commande
+`/usr/local/sbin/unraid-vsock-sensors version` afficherait déjà la nouvelle
+version. La version réellement exécutée peut être vérifiée après le redémarrage :
+
+```sh
+pid=$(cat /var/run/unraid-vsock-sensors.pid)
+/proc/$pid/exe version
+```
+
 Cette opération remplace le binaire, la page Web et les scripts du plugin sans
 effacer la configuration persistante située dans
 `/boot/config/plugins/unraid-vsock-sensors/`.
