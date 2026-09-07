@@ -87,11 +87,14 @@ groupes, mais jamais les températures. Au démarrage suivant, ce cache recrée
 les périphériques à `100 °C` avant que la VM réponde. Un logiciel de ventilation
 peut donc les découvrir dès le boot de Proxmox.
 
-Chaque ID stable possède son propre périphérique et reste toujours `temp1`. Un
-snapshot valide qui ne contient plus cet ID supprime uniquement ce périphérique
-et le retire du cache ; aucune autre sonde ne récupère son identité. Un ancien
-périphérique restauré depuis le cache reste temporairement au failsafe jusqu'au
-premier snapshot valide, qui le supprime si le matériel a réellement été retiré.
+Chaque ID stable possède son propre périphérique et reste toujours `temp1`.
+Lorsqu'un snapshot modifie l'inventaire, `configure` recrée tous les
+périphériques de la famille. Leurs noms platform et leurs identités restent
+stables, mais leurs numéros dynamiques `hwmonX` peuvent changer. Un ID absent du
+nouvel inventaire est retiré du cache et aucune autre sonde ne récupère son
+identité. Un ancien périphérique restauré depuis le cache reste temporairement
+au failsafe jusqu'au premier snapshot valide, qui le retire si le matériel a
+réellement été supprimé.
 Une erreur globale de lecture ne constitue pas une nouvelle topologie : les
 anciens périphériques restent alors en place et atteignent le failsafe. Une
 température de disque indisponible n'interrompt pas les autres

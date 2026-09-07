@@ -165,8 +165,9 @@ UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 - `UNRAID_VSOCK_PORT` doit correspondre au port du plugin Unraid ;
 - `UNRAID_VSOCK_CACHE` conserve les périphériques des sondes entre deux démarrages ;
 - `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
-  des virgules. Les unités actives sont redémarrées après la restauration du
-  cache ou un changement de topologie, afin qu'elles rescannent les hwmon.
+  des virgules. Les unités actives sont redémarrées après le premier snapshot
+  valide, puis après un changement de topologie, afin qu'elles rescannent les
+  hwmon.
 
 Pour CoolerControl :
 
@@ -308,9 +309,10 @@ stable comme repli, puis conservé tant que cet ID reste présent.
 Pendant l'exécution :
 
 - chaque ID stable possède son propre périphérique et reste donc `temp1` sans
-  dépendre de l'ordre des autres sondes. Un ID retiré supprime uniquement son
-  périphérique après le premier snapshot valide ; les autres identités ne sont
-  pas réaffectées ;
+  dépendre de l'ordre des autres sondes. Une modification d'inventaire recrée
+  tous les périphériques de la famille ; leurs noms platform et leurs identités
+  restent stables, mais leurs numéros dynamiques `hwmonX` peuvent changer. Un
+  ID retiré ne réaffecte jamais l'identité d'une autre sonde ;
 - une erreur globale de lecture, y compris une section active de `disks.ini`
   sans ID ou périphérique, ne modifie jamais le cache et laisse toute la famille
   disque atteindre le failsafe ; après une éventuelle grâce de spin-up, une

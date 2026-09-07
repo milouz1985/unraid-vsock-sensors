@@ -38,7 +38,9 @@ type hwmonPublisher struct {
 }
 
 type receivedSnapshot struct {
-	response   sensors.Response
+	response sensors.Response
+	// receivedAt is recorded after the complete frame has been read. It bounds
+	// only the time spent waiting in the local publication queue.
 	receivedAt time.Time
 }
 
