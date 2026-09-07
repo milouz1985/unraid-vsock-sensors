@@ -32,9 +32,8 @@ type cachedHWMonFamily struct {
 // virtual sensor. Temperatures are deliberately not persisted: restored sensors
 // start at the failsafe temperature until fresh data arrives from the guest.
 type cachedHWMonSensor struct {
-	ID      string   `json:"id"`
-	Label   string   `json:"label"`
-	Members []string `json:"members,omitempty"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 // restore loads the last known topology and recreates its virtual hwmon
@@ -50,7 +49,8 @@ func (publisher *hwmonPublisher) restore(device string) error {
 	}
 	var cached cachedHWMonInventory
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
+	// Ignore retired optional metadata so caches written by an older release
+	// remain usable when their semantic version is still supported.
 	if err := decoder.Decode(&cached); err != nil {
 		return fmt.Errorf("decode %s: %w", publisher.cachePath, err)
 	}
@@ -134,14 +134,10 @@ func syncDirectory(path string) (err error) {
 }
 
 // sensorsToCache copies the stable topology fields out of the live inventory.
-// Member slices are cloned so the persisted representation cannot alias mutable
-// publisher state.
 func sensorsToCache(sensors []hwmonSensor) []cachedHWMonSensor {
 	cached := make([]cachedHWMonSensor, 0, len(sensors))
 	for _, sensor := range sensors {
-		cached = append(cached, cachedHWMonSensor{
-			ID: sensor.id, Label: sensor.label, Members: append([]string(nil), sensor.members...),
-		})
+		cached = append(cached, cachedHWMonSensor{ID: sensor.id, Label: sensor.label})
 	}
 	return cached
 }
@@ -153,9 +149,7 @@ func samplesFromCache(cached []cachedHWMonSensor) []hwmonSample {
 	readings := make([]hwmonSample, 0, len(cached))
 	for _, reading := range cached {
 		readings = append(readings, hwmonSample{
-			sensor: hwmonSensor{
-				id: reading.ID, label: reading.Label, members: append([]string(nil), reading.Members...),
-			},
+			sensor:      hwmonSensor{id: reading.ID, label: reading.Label},
 			temperature: hwmonFailsafeTemp,
 		})
 	}

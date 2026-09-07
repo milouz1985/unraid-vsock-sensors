@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -232,7 +231,7 @@ func TestMakeHWMonSamples(t *testing.T) {
 
 	disks, hbas := makeHWMonSamples(state)
 	wantDisks := []hwmonSample{
-		hwmonTestSample("disk:group:hdd", "HDD maximum", 38, "disk:1", "disk:2"),
+		hwmonTestSample("disk:group:hdd", "HDD maximum", 38),
 		hwmonTestSample("disk:1", "disk1 (sda)", 34),
 		hwmonTestSample("disk:2", "disk2 (sdb)", 38),
 		hwmonTestSample("disk:3", "cache (nvme0n1)", 45),
@@ -243,20 +242,6 @@ func TestMakeHWMonSamples(t *testing.T) {
 	}
 	if !reflect.DeepEqual(hbas, wantHBAs) {
 		t.Fatalf("HBA readings = %#v, want %#v", hbas, wantHBAs)
-	}
-}
-
-func TestHWMonGroupMembersUseStableOrder(t *testing.T) {
-	first, _ := makeHWMonSamples(sensors.Response{Disks: []sensors.Disk{
-		{ID: "2", Name: "alpha", Device: "sdb", Rotational: true, Temp: 35},
-		{ID: "1", Name: "beta", Device: "sdc", Rotational: true, Temp: 36},
-	}})
-	second, _ := makeHWMonSamples(sensors.Response{Disks: []sensors.Disk{
-		{ID: "1", Name: "alpha", Device: "sdc", Rotational: true, Temp: 36},
-		{ID: "2", Name: "beta", Device: "sdb", Rotational: true, Temp: 35},
-	}})
-	if len(first) == 0 || len(second) == 0 || !slices.Equal(first[0].sensor.members, second[0].sensor.members) {
-		t.Fatalf("group member order changed: first=%v second=%v", first[0].sensor.members, second[0].sensor.members)
 	}
 }
 
@@ -488,6 +473,10 @@ func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 	} else if mode := info.Mode().Perm(); mode != 0600 {
 		t.Fatalf("cache mode = %04o, want 0600", mode)
 	}
+	legacy := `{"version":1,"disks":{"readings":[{"id":"disk:serial","label":"disk1 (sda)","members":["disk:serial"]}]}}`
+	if err := os.WriteFile(cache, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Truncate(device, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -682,9 +671,9 @@ func makeDiskSamples(state sensors.Response) []hwmonSample {
 	return disks
 }
 
-func hwmonTestSample(id, label string, temperature float64, members ...string) hwmonSample {
+func hwmonTestSample(id, label string, temperature float64) hwmonSample {
 	return hwmonSample{
-		sensor: hwmonSensor{id: id, label: label, members: members}, temperature: temperature,
+		sensor: hwmonSensor{id: id, label: label}, temperature: temperature,
 	}
 }
 

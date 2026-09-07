@@ -312,10 +312,11 @@ stable comme repli, puis conservé tant que cet ID reste présent.
 Pendant l'exécution :
 
 - chaque ID stable possède son propre périphérique et reste donc `temp1` sans
-  dépendre de l'ordre des autres sondes. Une modification d'inventaire recrée
-  tous les périphériques de la famille ; leurs noms platform et leurs identités
-  restent stables, mais leurs numéros dynamiques `hwmonX` peuvent changer. Un
-  ID retiré ne réaffecte jamais l'identité d'une autre sonde ;
+  dépendre de l'ordre des autres sondes. Une modification de l'ensemble des ID
+  recrée tous les périphériques de la famille ; leurs noms platform et leurs
+  identités restent stables, mais leurs numéros dynamiques `hwmonX` peuvent
+  changer. La composition d'un maximum HDD, SSD ou NVMe ne fait que modifier sa
+  valeur. Un ID retiré ne réaffecte jamais l'identité d'une autre sonde ;
 - une erreur globale de lecture, y compris une section active de `disks.ini`
   sans ID ou périphérique, ne modifie jamais le cache et laisse toute la famille
   disque atteindre le failsafe ; après une éventuelle grâce de spin-up, une

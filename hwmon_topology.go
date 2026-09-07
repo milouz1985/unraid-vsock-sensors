@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"slices"
-	"sort"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
@@ -14,9 +12,8 @@ const (
 )
 
 type hwmonSensor struct {
-	id      string
-	label   string
-	members []string
+	id    string
+	label string
 }
 
 type hwmonSample struct {
@@ -42,30 +39,27 @@ var hwmonDiskGroups = []hwmonDiskGroup{
 
 func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSample) {
 	for _, group := range hwmonDiskGroups {
-		members := make([]string, 0, len(state.Disks))
+		count := 0
 		maximum := 0.0
 		unavailable := false
 		for _, disk := range state.Disks {
 			if disk.Kind() != group.kind {
 				continue
 			}
-			if len(members) == 0 || disk.Temp > maximum {
+			if count == 0 || disk.Temp > maximum {
 				maximum = disk.Temp
 			}
 			unavailable = unavailable || disk.Unavailable
-			members = append(members, "disk:"+disk.ID)
+			count++
 		}
-		if len(members) < minHWMonGroupSize {
+		if count < minHWMonGroupSize {
 			continue
 		}
-		sort.Strings(members)
 		if unavailable {
 			maximum = hwmonFailsafeTemp
 		}
 		diskSamples = append(diskSamples, hwmonSample{
-			sensor: hwmonSensor{
-				id: "disk:group:" + string(group.kind), label: group.label, members: members,
-			},
+			sensor:      hwmonSensor{id: "disk:group:" + string(group.kind), label: group.label},
 			temperature: maximum,
 		})
 	}
@@ -103,13 +97,12 @@ func sameHWMonTopology(expected []hwmonSensor, current []hwmonSample) bool {
 	if len(expected) != len(current) {
 		return false
 	}
-	currentByID := make(map[string]hwmonSensor, len(current))
+	currentIDs := make(map[string]struct{}, len(current))
 	for _, sample := range current {
-		currentByID[sample.sensor.id] = sample.sensor
+		currentIDs[sample.sensor.id] = struct{}{}
 	}
-	for _, reading := range expected {
-		other, found := currentByID[reading.id]
-		if !found || !slices.Equal(reading.members, other.members) {
+	for _, sensor := range expected {
+		if _, found := currentIDs[sensor.id]; !found {
 			return false
 		}
 	}
@@ -119,9 +112,7 @@ func sameHWMonTopology(expected []hwmonSensor, current []hwmonSample) bool {
 func sensorsFromSamples(samples []hwmonSample) []hwmonSensor {
 	sensors := make([]hwmonSensor, 0, len(samples))
 	for _, sample := range samples {
-		sensor := sample.sensor
-		sensor.members = append([]string(nil), sensor.members...)
-		sensors = append(sensors, sensor)
+		sensors = append(sensors, sample.sensor)
 	}
 	return sensors
 }
