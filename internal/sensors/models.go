@@ -3,6 +3,9 @@ package sensors
 
 import "strings"
 
+// ProtocolVersion identifies incompatible revisions of the VSOCK snapshot.
+const ProtocolVersion = 1
+
 // Disk describes an Unraid disk and its latest collected temperature.
 type Disk struct {
 	ID          string  `json:"id"`
@@ -52,7 +55,7 @@ type HBA struct {
 
 // Response contains a snapshot of every sensor exposed by the Unraid agent.
 type Response struct {
-	Version     string `json:"version"`
+	Protocol    int    `json:"protocol"`
 	Disks       []Disk `json:"disks"`
 	HBAs        []HBA  `json:"hbas,omitempty"`
 	HBADisabled bool   `json:"hba_disabled,omitempty"`

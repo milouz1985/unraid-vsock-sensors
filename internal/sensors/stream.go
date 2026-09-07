@@ -58,5 +58,11 @@ func (r *FrameReader) Read() (Response, error) {
 	if err := json.Unmarshal(r.scanner.Bytes(), &response); err != nil {
 		return response, fmt.Errorf("decode stream snapshot: %w", err)
 	}
+	if response.Protocol != ProtocolVersion {
+		return Response{}, fmt.Errorf(
+			"unsupported snapshot protocol %d (expected %d)",
+			response.Protocol, ProtocolVersion,
+		)
+	}
 	return response, nil
 }

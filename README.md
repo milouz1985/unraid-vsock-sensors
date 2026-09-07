@@ -15,6 +15,8 @@ arrière-plan la température des disques actifs avec le helper
 utilise `smartctl -n standby` pour couvrir un changement d'état concurrent.
 Il maintient une connexion VSOCK vers Proxmox et y pousse chaque seconde le
 dernier snapshot complet. Cette publication périodique sert aussi de heartbeat.
+Chaque snapshot porte un numéro de protocole entier ; le récepteur refuse une
+version incompatible. La version logicielle reste indépendante de ce numéro.
 
 ## Architecture
 

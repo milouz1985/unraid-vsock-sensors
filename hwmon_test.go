@@ -129,16 +129,16 @@ func TestReceiveSnapshotsRejectsUnexpectedCID(t *testing.T) {
 	assertSnapshotConnectionClosed(t, wrongClient, time.Second)
 	waitForSnapshotAccept(t, listener)
 	want := sensors.Response{
-		Version: "accepted",
-		Disks:   []sensors.Disk{}, HBADisabled: true,
+		Protocol: sensors.ProtocolVersion,
+		Disks:    []sensors.Disk{}, HBADisabled: true,
 	}
 	if err := sensors.WriteFrame(validClient, want); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case got := <-out:
-		if got.response.Version != want.Version {
-			t.Fatalf("received version = %q, want %q", got.response.Version, want.Version)
+		if got.response.Protocol != want.Protocol {
+			t.Fatalf("received protocol = %d, want %d", got.response.Protocol, want.Protocol)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("valid connection did not publish its snapshot")
@@ -176,16 +176,16 @@ func TestReceiveSnapshotsClosesSilentStreamAndAcceptsReconnect(t *testing.T) {
 
 	waitForSnapshotAccept(t, listener)
 	want := sensors.Response{
-		Version: "reconnected",
-		Disks:   []sensors.Disk{}, HBADisabled: true,
+		Protocol: sensors.ProtocolVersion,
+		Disks:    []sensors.Disk{}, HBADisabled: true,
 	}
 	if err := sensors.WriteFrame(secondClient, want); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case got := <-out:
-		if got.response.Version != want.Version {
-			t.Fatalf("received version = %q, want %q", got.response.Version, want.Version)
+		if got.response.Protocol != want.Protocol {
+			t.Fatalf("received protocol = %d, want %d", got.response.Protocol, want.Protocol)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("reconnected publisher did not publish its snapshot")
@@ -201,16 +201,16 @@ func TestSnapshotQueueKeepsOnlyFreshestReading(t *testing.T) {
 	out := make(chan receivedSnapshot, 1)
 	now := time.Now()
 	first := receivedSnapshot{
-		response: sensors.Response{Version: "first"}, receivedAt: now,
+		response: sensors.Response{Error: "first"}, receivedAt: now,
 	}
 	latest := receivedSnapshot{
-		response: sensors.Response{Version: "latest"}, receivedAt: now.Add(time.Second),
+		response: sensors.Response{Error: "latest"}, receivedAt: now.Add(time.Second),
 	}
 	if !sendLatestSnapshot(ctx, out, first) || !sendLatestSnapshot(ctx, out, latest) {
 		t.Fatal("snapshot queue unexpectedly stopped")
 	}
-	if got := <-out; got.response.Version != latest.response.Version {
-		t.Fatalf("queued version = %q, want %q", got.response.Version, latest.response.Version)
+	if got := <-out; got.response.Error != latest.response.Error {
+		t.Fatalf("queued snapshot = %q, want %q", got.response.Error, latest.response.Error)
 	}
 	if latest.expired(latest.receivedAt.Add(snapshotStreamTimeout - time.Nanosecond)) {
 		t.Fatal("fresh snapshot was reported as expired")

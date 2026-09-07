@@ -17,8 +17,8 @@ func TestPublishedSnapshotMetadata(t *testing.T) {
 		newTestHBACollector(time.Minute, hbaModeDisabled),
 	)
 
-	if response.Version != version {
-		t.Fatalf("got version %q, want %q", response.Version, version)
+	if response.Protocol != sensors.ProtocolVersion {
+		t.Fatalf("got protocol %d, want %d", response.Protocol, sensors.ProtocolVersion)
 	}
 	if !response.HBADisabled {
 		t.Fatal("disabled HBA collection was not reported")

@@ -2,7 +2,9 @@ package sensors
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -11,12 +13,12 @@ func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 	var stream bytes.Buffer
 	want := []Response{
 		{
-			Version:     "one",
+			Protocol:    ProtocolVersion,
 			Disks:       []Disk{{ID: "disk1", Name: "disk1", Device: "sda", Temp: 35}},
 			HBADisabled: true,
 		},
 		{
-			Version: "two", Disks: []Disk{},
+			Protocol: ProtocolVersion, Disks: []Disk{},
 			HBAs: []HBA{{ID: "sas:1234", Temp: 51}},
 		},
 	}
@@ -31,12 +33,21 @@ func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Version != want[index].Version {
-			t.Fatalf("frame %d version = %q, want %q", index, got.Version, want[index].Version)
+		if !reflect.DeepEqual(got, want[index]) {
+			t.Fatalf("frame %d = %#v, want %#v", index, got, want[index])
 		}
 	}
 	if _, err := reader.Read(); err != io.EOF {
 		t.Fatalf("end of stream error = %v, want EOF", err)
+	}
+}
+
+func TestStreamRejectsIncompatibleProtocol(t *testing.T) {
+	for _, protocol := range []int{0, ProtocolVersion + 1} {
+		frame := fmt.Sprintf(`{"protocol":%d,"disks":[],"hba_disabled":true}`+"\n", protocol)
+		if _, err := NewFrameReader(strings.NewReader(frame)).Read(); err == nil {
+			t.Fatalf("protocol %d was accepted", protocol)
+		}
 	}
 }
 
