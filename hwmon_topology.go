@@ -49,26 +49,25 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 	}
 
 	for _, group := range hwmonDiskGroups {
-		groupDisks := make([]sensors.Disk, 0, len(internalDisks))
 		members := make([]string, 0, len(internalDisks))
+		maximum := 0.0
+		unavailable := false
 		for _, disk := range internalDisks {
-			if disk.Kind() == group.kind {
-				groupDisks = append(groupDisks, disk)
-				members = append(members, "disk:"+disk.ID)
+			if disk.Kind() != group.kind {
+				continue
 			}
+			if len(members) == 0 || disk.Temp > maximum {
+				maximum = disk.Temp
+			}
+			unavailable = unavailable || disk.Unavailable
+			members = append(members, "disk:"+disk.ID)
 		}
-		if len(groupDisks) < minHWMonGroupSize {
+		if len(members) < minHWMonGroupSize {
 			continue
 		}
 		sort.Strings(members)
-		maximum := sensors.MaxTemperature(groupDisks, func(disk sensors.Disk) float64 {
-			return disk.Temp
-		})
-		for _, disk := range groupDisks {
-			if disk.Unavailable {
-				maximum = hwmonFailsafeTemp
-				break
-			}
+		if unavailable {
+			maximum = hwmonFailsafeTemp
 		}
 		diskSamples = append(diskSamples, hwmonSample{
 			sensor: hwmonSensor{
