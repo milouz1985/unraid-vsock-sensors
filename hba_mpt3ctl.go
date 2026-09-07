@@ -247,9 +247,8 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	}
 	defer device.file.Close()
 	readings, identities := make([]sensors.HBA, 0), make(map[string]int)
-	// Deliberately rescan every possible IOC and its identity pages. This keeps
-	// topology handling simple and runs outside the VSOCK publication path; if systems
-	// with many HBAs make it measurable, IOC metadata can be cached later.
+	// IOC IDs may contain holes, so scan the configured range. Missing IOCINFO
+	// calls do not query firmware; only discovered controllers trigger CONFIG reads.
 	for ioc := 0; ioc <= mpt3MaxIOC; ioc++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
