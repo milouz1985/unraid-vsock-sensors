@@ -215,12 +215,15 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 		}
 		sections++
 		name := strings.Trim(section.Name(), "\"")
+		transport := strings.ToLower(strings.TrimSpace(section.Key("transport").String()))
 		id := strings.TrimSpace(section.Key("id").String())
 		device := strings.TrimSpace(section.Key("device").String())
 		status := strings.TrimSpace(section.Key("status").String())
 		// disks.ini contains sections for every possible array slot, including
-		// unassigned DISK_NP entries, plus the Unraid boot flash device.
-		if strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") {
+		// unassigned DISK_NP entries, the Unraid boot flash device and external
+		// USB disks. USB temperatures have no consumer in the push protocol.
+		if strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") ||
+			transport == "usb" {
 			continue
 		}
 		if id == "" {
@@ -232,7 +235,7 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 
 		disks = append(disks, unraidDisk{
 			id: id, name: name, device: device,
-			transport:  strings.ToLower(section.Key("transport").String()),
+			transport:  transport,
 			rotational: strings.TrimSpace(section.Key("rotational").String()) == "1",
 			spundown:   strings.TrimSpace(section.Key("spundown").String()) == "1",
 		})

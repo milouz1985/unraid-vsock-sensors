@@ -45,11 +45,6 @@ func (d Disk) Kind() DiskKind {
 	}
 }
 
-// IsExternal reports whether Unraid exposes the disk through USB transport.
-func (d Disk) IsExternal() bool {
-	return strings.EqualFold(d.Transport, "usb")
-}
-
 // HBA describes a host bus adapter by its backend-independent stable identity.
 type HBA struct {
 	ID         string  `json:"id"`

@@ -245,10 +245,10 @@ et `unraid_hba`. Lors de la première mise à niveau vers cette version, il faut
 donc sélectionner une fois les nouvelles sources dans CoolerControl ou adapter
 les `platform` configurées dans fan2go.
 
-Les disques USB ne créent aucun périphérique hwmon et ne participent pas aux groupes.
-Les slots Unraid non assignés (`DISK_NP`) et la clé USB de démarrage `flash`
-sont entièrement exclus. Les SSD internes utilisant un autre transport que
-SATA ou NVMe possèdent un périphérique individuel, mais ne créent pas de maximum
+L'agent Unraid exclut les disques USB avant toute lecture SMART et tout envoi
+VSOCK. Les slots non assignés (`DISK_NP`) et la clé USB de démarrage `flash`
+sont également exclus. Les SSD internes utilisant un autre transport que SATA
+ou NVMe possèdent un périphérique individuel, mais ne créent pas de maximum
 dédié.
 
 Un disque signalé en veille par `spundown="1"` est conservé dans l'inventaire

@@ -226,7 +226,6 @@ func TestMakeHWMonSamples(t *testing.T) {
 			{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
 			{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Temp: 38},
 			{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 45},
-			{ID: "4", Name: "external", Device: "sdc", Transport: "usb", Rotational: true, Temp: 60},
 		},
 		HBAs: []sensors.HBA{{ID: "sas:1234", Model: "SAS3008", PCIAddress: "0000:06:10.0", Temp: 51}},
 	}

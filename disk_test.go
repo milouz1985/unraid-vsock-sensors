@@ -150,8 +150,15 @@ func TestReadInventory(t *testing.T) {
 		device=""
 		status="DISK_NP"
 
-		["flash"]
+		["external"]
+		id="USB_external_serial"
 		device="sdi"
+		transport=" USB "
+		rotational="1"
+		spundown="0"
+
+		["flash"]
+		device="sdj"
 		transport="usb"
 		rotational="1"
 	`), "\n\t\t", "\n")
