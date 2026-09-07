@@ -304,7 +304,13 @@ static int update(struct virt_temp_session *session,
 
 	mutex_lock(family->lock);
 	inventory = family->inventory;
-	if (!inventory) {
+	/*
+	 * A failed configure followed by a failed rollback can leave the previous
+	 * inventory allocated but without a registered hwmon device. Force
+	 * userspace to configure it again. An empty inventory intentionally has no
+	 * hwmon device, so it remains a valid commit target.
+	 */
+	if (!inventory || (inventory->count && !inventory->hwmon)) {
 		mutex_unlock(family->lock);
 		return -ESTALE;
 	}

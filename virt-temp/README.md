@@ -90,10 +90,12 @@ secondes seulement lorsqu'une mesure valide antérieure existe. Un premier éche
 déclare immédiatement le disque indisponible. Un changement de label seul
 n'affecte pas l'identité.
 
-Si l'enregistrement d'une nouvelle topologie échoue, le pilote réenregistre
-l'inventaire précédent au lieu de laisser disparaître les sondes. L'erreur est
-retournée au récepteur, qui retente la nouvelle configuration, tandis que les
-anciens canaux non actualisés atteignent naturellement le failsafe.
+Si l'enregistrement d'une nouvelle topologie échoue, le pilote tente de
+réenregistrer l'inventaire précédent au lieu de laisser disparaître les sondes.
+L'erreur est retournée au récepteur, qui retente la nouvelle configuration,
+tandis que les anciens canaux non actualisés atteignent naturellement le
+failsafe. Si cette restauration échoue également, les `commit` suivants
+retournent `ESTALE` afin de forcer une nouvelle configuration.
 
 Si le module `virt_temp` est déchargé puis rechargé sans redémarrer le
 récepteur, le premier `commit` retourne `ESTALE` parce que le noyau a perdu son
