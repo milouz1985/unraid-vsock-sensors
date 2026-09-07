@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -48,15 +46,10 @@ func (publisher *hwmonPublisher) restore(device string) error {
 		return err
 	}
 	var cached cachedHWMonInventory
-	decoder := json.NewDecoder(bytes.NewReader(data))
 	// Ignore retired optional metadata so caches written by an older release
-	// remain usable when their semantic version is still supported.
-	if err := decoder.Decode(&cached); err != nil {
+	// remain usable when their cache version is still supported.
+	if err := json.Unmarshal(data, &cached); err != nil {
 		return fmt.Errorf("decode %s: %w", publisher.cachePath, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return fmt.Errorf("decode %s: unexpected data after inventory", publisher.cachePath)
 	}
 	if cached.Version != 1 {
 		return fmt.Errorf("unsupported cache version %d", cached.Version)

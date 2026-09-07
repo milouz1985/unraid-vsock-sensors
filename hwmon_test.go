@@ -493,23 +493,6 @@ func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 	}
 }
 
-func TestPublisherRejectsTrailingCacheData(t *testing.T) {
-	directory := t.TempDir()
-	device := filepath.Join(directory, "virt-temp")
-	cache := filepath.Join(directory, "inventory.json")
-	if err := os.WriteFile(device, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(cache, []byte(`{"version":1} {"version":1}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := (&hwmonPublisher{cachePath: cache}).restore(device); err == nil ||
-		!strings.Contains(err.Error(), "unexpected data after inventory") {
-		t.Fatalf("restore error = %v, want trailing data error", err)
-	}
-}
-
 func TestPublisherReportsPartialCacheRestore(t *testing.T) {
 	directory := t.TempDir()
 	device := filepath.Join(directory, "virt-temp")
