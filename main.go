@@ -155,11 +155,10 @@ func collectorSnapshot(
 	disks *diskCollector,
 	collector *hbaCollector,
 ) sensors.Response {
-	now := time.Now().UTC()
 	diskReadings, diskErr := disks.snapshot()
 	hbaReadings, hbaErr := collector.snapshot()
 	response := sensors.Response{
-		Version: version, Timestamp: now, Disks: diskReadings, HBAs: hbaReadings,
+		Version: version, Disks: diskReadings, HBAs: hbaReadings,
 		HBADisabled: collector.mode == hbaModeDisabled,
 	}
 	if diskErr != nil {

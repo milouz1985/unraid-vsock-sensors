@@ -129,8 +129,8 @@ func TestReceiveSnapshotsRejectsUnexpectedCID(t *testing.T) {
 	assertSnapshotConnectionClosed(t, wrongClient, time.Second)
 	waitForSnapshotAccept(t, listener)
 	want := sensors.Response{
-		Version: "accepted", Timestamp: time.Now().UTC(),
-		Disks: []sensors.Disk{}, HBADisabled: true,
+		Version: "accepted",
+		Disks:   []sensors.Disk{}, HBADisabled: true,
 	}
 	if err := sensors.WriteFrame(validClient, want); err != nil {
 		t.Fatal(err)
@@ -176,8 +176,8 @@ func TestReceiveSnapshotsClosesSilentStreamAndAcceptsReconnect(t *testing.T) {
 
 	waitForSnapshotAccept(t, listener)
 	want := sensors.Response{
-		Version: "reconnected", Timestamp: time.Now().UTC(),
-		Disks: []sensors.Disk{}, HBADisabled: true,
+		Version: "reconnected",
+		Disks:   []sensors.Disk{}, HBADisabled: true,
 	}
 	if err := sensors.WriteFrame(secondClient, want); err != nil {
 		t.Fatal(err)

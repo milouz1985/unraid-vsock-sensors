@@ -15,8 +15,6 @@ arrière-plan la température des disques actifs avec le helper
 utilise `smartctl -n standby` pour couvrir un changement d'état concurrent.
 Il maintient une connexion VSOCK vers Proxmox et y pousse chaque seconde le
 dernier snapshot complet. Cette publication périodique sert aussi de heartbeat.
-Le champ `timestamp` indique l'heure de cette publication, pas celle de la
-dernière collecte SMART ou HBA dont les valeurs peuvent provenir du cache.
 
 ## Architecture
 

@@ -94,23 +94,19 @@ func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
 			)
 		}()
 
-		readFrames := func(conn net.Conn, count int) []sensors.Response {
+		readFrames := func(conn net.Conn, count int) {
 			t.Helper()
 			reader := sensors.NewFrameReader(conn)
-			frames := make([]sensors.Response, 0, count)
 			for range count {
-				frame, err := reader.Read()
-				if err != nil {
+				if _, err := reader.Read(); err != nil {
 					t.Fatal(err)
 				}
-				frames = append(frames, frame)
 			}
-			return frames
 		}
 
-		first := readFrames(firstServer, 2)
+		readFrames(firstServer, 2)
 		_ = firstServer.Close()
-		second := readFrames(secondServer, 2)
+		readFrames(secondServer, 2)
 		cancel()
 		_ = secondServer.Close()
 		if err := <-done; err != nil {
@@ -118,10 +114,6 @@ func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
 		}
 		if dials != 2 {
 			t.Fatalf("dial count = %d, want 2", dials)
-		}
-		if first[0].Timestamp.IsZero() || first[1].Timestamp.Before(first[0].Timestamp) ||
-			second[0].Timestamp.Before(first[1].Timestamp) {
-			t.Fatalf("publication timestamps are not monotonic: first=%v second=%v", first, second)
 		}
 	})
 }

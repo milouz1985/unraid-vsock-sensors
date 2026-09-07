@@ -5,20 +5,18 @@ import (
 	"io"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 	var stream bytes.Buffer
-	now := time.Now().UTC()
 	want := []Response{
 		{
-			Version: "one", Timestamp: now,
+			Version:     "one",
 			Disks:       []Disk{{ID: "disk1", Name: "disk1", Device: "sda", Temp: 35}},
 			HBADisabled: true,
 		},
 		{
-			Version: "two", Timestamp: now.Add(time.Second), Disks: []Disk{},
+			Version: "two", Disks: []Disk{},
 			HBAs: []HBA{{ID: "sas:1234", Temp: 51}},
 		},
 	}
