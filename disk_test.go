@@ -208,6 +208,35 @@ func TestReadInventoryRejectsIncompleteActiveDisk(t *testing.T) {
 	}
 }
 
+func TestReadInventoryRejectsMissingSections(t *testing.T) {
+	for name, data := range map[string]string{
+		"empty":         "",
+		"comments only": "; inventory is being rewritten\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "disks.ini")
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if disks, err := readDisks(path); err == nil || len(disks) != 0 {
+				t.Fatalf("inventory = %#v, %v; want no inventory and an error", disks, err)
+			}
+		})
+	}
+}
+
+func TestReadInventoryAllowsNoAssignedDisks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	data := "[disk1]\nstatus=DISK_NP\n\n[flash]\ndevice=sda\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	disks, err := readDisks(path)
+	if err != nil || len(disks) != 0 {
+		t.Fatalf("inventory = %#v, %v; want a valid empty inventory", disks, err)
+	}
+}
+
 func TestParseSMARTTemperature(t *testing.T) {
 	for name, test := range map[string]struct {
 		json        string

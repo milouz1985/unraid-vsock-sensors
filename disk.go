@@ -208,10 +208,12 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 	}
 
 	var disks []unraidDisk
+	sections := 0
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
 		}
+		sections++
 		name := strings.Trim(section.Name(), "\"")
 		id := strings.TrimSpace(section.Key("id").String())
 		device := strings.TrimSpace(section.Key("device").String())
@@ -234,6 +236,9 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 			rotational: strings.TrimSpace(section.Key("rotational").String()) == "1",
 			spundown:   strings.TrimSpace(section.Key("spundown").String()) == "1",
 		})
+	}
+	if sections == 0 {
+		return nil, errors.New("disk inventory contains no sections")
 	}
 
 	sort.Slice(disks, func(i, j int) bool { return disks[i].name < disks[j].name })
