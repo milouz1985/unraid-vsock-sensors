@@ -230,12 +230,12 @@ func TestParseSMARTTemperature(t *testing.T) {
 			runErr:  &exec.ExitError{},
 			wantErr: true,
 		},
-		"standby": {
+		"exit three with matching standby mode": {
 			json:        `{"smartctl":{"exit_status":3},"power_mode":{"name":"STANDBY"}}`,
 			runErr:      &exec.ExitError{},
 			wantStandby: true,
 		},
-		"ambiguous exit three": {
+		"exit three without low-power mode": {
 			json:    `{"smartctl":{"exit_status":3}}`,
 			runErr:  &exec.ExitError{},
 			wantErr: true,
