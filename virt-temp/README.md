@@ -30,7 +30,7 @@ maintient `/dev/virt-temp` à jour.
 Le module crée `/dev/virt-temp`. Le récepteur y envoie séparément les familles
 `disk` et `hba` :
 
-1. `configure` crée l'inventaire et les canaux d'une famille ;
+1. `configure` crée un périphérique hwmon par sonde de la famille ;
 2. `commit` actualise uniquement les identifiants déjà configurés ;
 3. une fermeture sans opération finale ne modifie rien.
 
@@ -60,30 +60,43 @@ Au sein d'une famille, le mutex sérialise les `commit` avec un éventuel
 `configure`. Les lectures sysfs n'en ont pas besoin : la désinscription hwmon
 attend la fin des lectures en cours avant que l'ancien inventaire soit libéré.
 
-Le pilote expose au maximum deux périphériques hwmon :
+Le pilote expose un périphérique hwmon indépendant par sonde. Son nom technique
+commence par `unraid_disk_` ou `unraid_hba_` et encode l'ID stable en
+hexadécimal. Son unique mesure est donc toujours `temp1_input`, accompagnée de
+`temp1_label`. Le parent platform possède le même nom stable : l'identité du
+périphérique ne dépend ni de `hwmonX`, ni de l'ordre des autres sondes. Pour un
+HBA, le label utilise le modèle et l'adresse PCI lorsqu'ils sont disponibles.
+Les indices locaux IOC et StorCLI ne font pas partie de l'identité publiée.
 
-- `unraid_storage`, avec les disques internes et leurs maximums de groupe ;
-- `unraid_hba`, avec les contrôleurs HBA transmis par la VM.
+Ce choix évite d'associer durablement une sonde à une position `tempN` dans un
+périphérique agrégé. Une modification de topologie pourrait autrement décaler
+les canaux et faire lire à un consommateur la température d'un autre disque.
+Réserver les anciens canaux empêcherait ce décalage, mais conserverait des
+sondes fantômes à `100 °C` après un retrait planifié. Avec un périphérique par
+ID, chaque sonde reste `temp1`, tandis qu'un ID retiré disparaît sans modifier
+l'identité des autres périphériques.
 
-Chaque sonde correspond à un canal `tempN_input` accompagné de
-`tempN_label`. Les ID stables restent internes au protocole ; sysfs expose le
-label configuré au démarrage. Pour un HBA, ce label utilise le modèle et
-l'adresse PCI lorsqu'ils sont disponibles. Les indices locaux IOC et StorCLI
-ne font pas partie de l'identité publiée.
+Ce modèle remplace les anciens périphériques agrégés `unraid_storage` et
+`unraid_hba`. La première mise à niveau nécessite donc de sélectionner les
+nouvelles sources dans CoolerControl ou d'adapter les `platform` fan2go.
 
 ## Inventaire persistant et failsafe
 
 Après un premier relevé valide, le récepteur met en cache les ID, labels et
 groupes, mais jamais les températures. Au démarrage suivant, ce cache recrée
-les canaux à `100 °C` avant que la VM réponde. Un logiciel de ventilation peut
-donc les découvrir dès le boot de Proxmox.
+les périphériques à `100 °C` avant que la VM réponde. Un logiciel de ventilation
+peut donc les découvrir dès le boot de Proxmox.
 
-Un snapshot valide dont les ID diffèrent remplace automatiquement la famille
-concernée et le cache. Une erreur globale de lecture ne constitue pas une
-nouvelle topologie : les anciens canaux restent alors en place et atteignent le
-failsafe. Une température de disque indisponible n'interrompt pas les autres
+Chaque ID stable possède son propre périphérique et reste toujours `temp1`. Un
+snapshot valide qui ne contient plus cet ID supprime uniquement ce périphérique
+et le retire du cache ; aucune autre sonde ne récupère son identité. Un ancien
+périphérique restauré depuis le cache reste temporairement au failsafe jusqu'au
+premier snapshot valide, qui le supprime si le matériel a réellement été retiré.
+Une erreur globale de lecture ne constitue pas une nouvelle topologie : les
+anciens périphériques restent alors en place et atteignent le failsafe. Une
+température de disque indisponible n'interrompt pas les autres
 mises à jour : ce disque et le maximum de sa catégorie reçoivent explicitement
-la température failsafe, tandis que les autres canaux restent actualisés.
+la température failsafe, tandis que les autres périphériques restent actualisés.
 L'agent Unraid collecte les températures SMART en arrière-plan. Il masque une
 erreur transitoire pendant l'intervalle SMART configuré augmenté de cinq
 secondes seulement lorsqu'une mesure valide antérieure existe. Un premier échec
@@ -93,15 +106,16 @@ n'affecte pas l'identité.
 Si l'enregistrement d'une nouvelle topologie échoue, le pilote tente de
 réenregistrer l'inventaire précédent au lieu de laisser disparaître les sondes.
 L'erreur est retournée au récepteur, qui retente la nouvelle configuration,
-tandis que les anciens canaux non actualisés atteignent naturellement le
+tandis que les anciens périphériques non actualisés atteignent naturellement le
 failsafe. Si cette restauration échoue également, les `commit` suivants
 retournent `ESTALE` afin de forcer une nouvelle configuration.
 
 Si le module `virt_temp` est déchargé puis rechargé sans redémarrer le
 récepteur, le premier `commit` retourne `ESTALE` parce que le noyau a perdu son
 inventaire.
-Le récepteur répond par une unique opération `configure`, restaure les canaux et
-notifie les consommateurs comme lors de tout changement de topologie.
+Le récepteur répond par une unique opération `configure`, restaure les
+périphériques et notifie les consommateurs comme lors de tout changement de
+topologie.
 
 Une erreur HBA invalide le relevé complet. L'inventaire précédent reste en
 place sans être actualisé et atteint donc le failsafe. StorCLI tente auparavant

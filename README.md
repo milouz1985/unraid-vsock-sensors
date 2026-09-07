@@ -29,7 +29,7 @@ VM Unraid                                      Hôte Proxmox
 │ unraid-vsock-sensors serve ├────────────────►│ /dev/virt-temp              │
 └────────────────────────────┘                 │            │                │
                                                │            ▼                │
-                                               │ unraid_storage / unraid_hba │
+                                               │ 1 périphérique hwmon/sonde  │
                                                └─────────────────────────────┘
 ```
 
@@ -163,7 +163,7 @@ UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 
 - `UNRAID_VSOCK_CID` désigne la VM Unraid configurée dans Proxmox ;
 - `UNRAID_VSOCK_PORT` doit correspondre au port du plugin Unraid ;
-- `UNRAID_VSOCK_CACHE` conserve la structure des canaux entre deux démarrages ;
+- `UNRAID_VSOCK_CACHE` conserve les périphériques des sondes entre deux démarrages ;
 - `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
   des virgules. Les unités actives sont redémarrées après la restauration du
   cache ou un changement de topologie, afin qu'elles rescannent les hwmon.
@@ -208,23 +208,45 @@ Résultats attendus :
 - le paquet est `install ok installed` ;
 - DKMS indique `virt-temp/X.Y.Z ... installed` pour le noyau actif ;
 - le service est `active (running)` ;
-- `sensors` affiche `unraid_storage` et, si activé, `unraid_hba`.
+- `sensors` affiche un périphérique `unraid_disk_*` par sonde disque ou maximum
+  de groupe et, si activé, un périphérique `unraid_hba_*` par contrôleur.
 
 ## Sondes publiées
 
-`unraid_storage` contient :
+Le module crée un périphérique hwmon indépendant avec un unique `temp1` pour :
 
-- un canal par disque interne ;
+- chaque disque interne ;
 - `HDD maximum`, `SATA SSD maximum` ou `NVMe SSD maximum` lorsqu'au moins deux
   disques appartiennent au groupe correspondant.
 
-`unraid_hba` contient un canal par contrôleur lorsque la collecte HBA est
-activée.
+Chaque contrôleur possède également son propre périphérique lorsque la collecte
+HBA est activée. Le nom technique `unraid_disk_*` ou `unraid_hba_*` encode sans
+collision l'ID stable ; le label `temp1_label` conserve le nom lisible.
 
-Les disques USB ne créent aucun canal hwmon et ne participent pas aux groupes.
+### Pourquoi un périphérique par sonde ?
+
+Dans un périphérique agrégé, les fichiers `temp1`, `temp2`, etc. décrivent des
+positions, pas l'identité des sondes. L'ajout d'un maximum de groupe ou le
+retrait d'un disque peut donc décaler les numéros suivants et faire pointer une
+configuration CoolerControl ou fan2go vers une autre température. Conserver les
+anciens numéros éviterait ce décalage, mais laisserait après un retrait planifié
+des sondes fantômes au failsafe de `100 °C`.
+
+Un périphérique par ID stable évite les deux problèmes : chaque sonde reste
+toujours son propre `temp1`, et son retrait supprime son périphérique sans
+réaffecter l'identité des autres. Le numéro dynamique `hwmonX` n'est pas utilisé
+comme identité ; celle-ci vient du parent platform et du nom technique dérivés
+de l'ID stable.
+
+Cette organisation remplace les anciens périphériques agrégés `unraid_storage`
+et `unraid_hba`. Lors de la première mise à niveau vers cette version, il faut
+donc sélectionner une fois les nouvelles sources dans CoolerControl ou adapter
+les `platform` configurées dans fan2go.
+
+Les disques USB ne créent aucun périphérique hwmon et ne participent pas aux groupes.
 Les slots Unraid non assignés (`DISK_NP`) et la clé USB de démarrage `flash`
 sont entièrement exclus. Les SSD internes utilisant un autre transport que
-SATA ou NVMe possèdent un canal individuel, mais ne créent pas de canal maximum
+SATA ou NVMe possèdent un périphérique individuel, mais ne créent pas de maximum
 dédié.
 
 Un disque signalé en veille par `spundown="1"` est conservé dans l'inventaire
@@ -258,16 +280,16 @@ ne déclenche pas lui-même le failsafe thermique : celui-ci reste le
 
 ## Inventaire persistant et changement de topologie
 
-Après le premier relevé valide, l'agent enregistre la structure des canaux dans
+Après le premier relevé valide, l'agent enregistre la liste des sondes dans
 `UNRAID_VSOCK_CACHE`. Au démarrage suivant, il la restaure immédiatement avec
 des températures failsafe de `100 °C`, sans attendre la VM Unraid. Les logiciels
-comme CoolerControl peuvent ainsi découvrir les canaux pendant le boot de
+comme CoolerControl peuvent ainsi découvrir les périphériques pendant le boot de
 Proxmox, même si Unraid met plusieurs minutes à démarrer.
 
-Sans cache, le premier relevé non vide de chaque famille configure ses canaux.
-Un relevé vide est ignoré afin de ne pas figer un démarrage incomplet d'Unraid
-ou du backend HBA. Seul le mode HBA explicitement `disabled` autorise un inventaire
-HBA vide.
+Sans cache, le premier relevé disque sans erreur configure ses sondes, y compris
+un inventaire vide lorsqu'aucun disque interne n'est assigné. Une erreur de
+lecture ne modifie jamais la topologie précédente. Un inventaire HBA vide n'est
+valide que lorsque ce collecteur est explicitement `disabled`.
 
 L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
 pour un disque, puis adresse SAS, adresse PCI ou numéro de série pour un HBA. Les
@@ -287,6 +309,10 @@ stable comme repli, puis conservé tant que cet ID reste présent.
 
 Pendant l'exécution :
 
+- chaque ID stable possède son propre périphérique et reste donc `temp1` sans
+  dépendre de l'ordre des autres sondes. Un ID retiré supprime uniquement son
+  périphérique après le premier snapshot valide ; les autres identités ne sont
+  pas réaffectées ;
 - une erreur globale de lecture, y compris une section active de `disks.ini`
   sans ID ou périphérique, ne modifie jamais le cache et laisse toute la famille
   disque atteindre le failsafe ; après une éventuelle grâce de spin-up, une
@@ -303,7 +329,7 @@ Pendant l'exécution :
 - les consommateurs configurés dans `UNRAID_VSOCK_RESTART_UNITS` sont relancés
   une première fois dès que la VM répond, même si la topologie restaurée depuis
   le cache est inchangée, puis après chaque reconfiguration afin de découvrir
-  les nouveaux canaux.
+  les nouveaux périphériques.
 
 ## Failsafe et fraîcheur des mesures
 
@@ -338,7 +364,7 @@ la température ROC fournie par sa sortie JSON est utilisée à la place.
 
 Une collecte HBA dispose de 15 secondes. Au-delà, l'agent signale une erreur
 HBA même si l'ioctl reste bloqué : l'ancien relevé cesse d'être publié et les
-canaux hwmon atteignent leur failsafe après leur délai de 10 secondes sans
+périphériques hwmon atteignent leur failsafe après leur délai de 10 secondes sans
 actualisation. Un résultat arrivé après l'échéance est rejeté ; une nouvelle
 collecte réussie rétablit les mesures. Le cache reste valide pendant l'intervalle
 normal entre deux collectes.

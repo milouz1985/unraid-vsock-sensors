@@ -393,6 +393,40 @@ func TestPublisherReconfiguresChangedTopology(t *testing.T) {
 	}
 }
 
+func TestPublisherRemovesLastDisk(t *testing.T) {
+	directory := t.TempDir()
+	device := filepath.Join(directory, "virt-temp")
+	if err := os.WriteFile(device, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &hwmonPublisher{
+		cachePath: filepath.Join(directory, "inventory.json"),
+		disks: hwmonInventory{initialized: true, sensors: []hwmonSensor{
+			{id: "disk:serial", label: "disk1 (sda)"},
+		}},
+		hbas: hwmonInventory{initialized: true},
+	}
+
+	changed, err := publisher.publish(device, sensors.Response{HBADisabled: true})
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if len(publisher.disks.sensors) != 0 {
+		t.Fatalf("disk inventory = %#v, want empty", publisher.disks.sensors)
+	}
+
+	if err := os.Truncate(device, 0); err != nil {
+		t.Fatal(err)
+	}
+	restored := &hwmonPublisher{cachePath: publisher.cachePath}
+	if err := restored.restore(device); err != nil {
+		t.Fatal(err)
+	}
+	if !restored.disks.initialized || len(restored.disks.sensors) != 0 {
+		t.Fatalf("restored disk inventory = %#v, want initialized and empty", restored.disks)
+	}
+}
+
 func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 	directory := t.TempDir()
 	device := filepath.Join(directory, "virt-temp")
@@ -594,6 +628,28 @@ func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
 	}
 	if got, want := string(data), "configure\thba\n"; got != want {
 		t.Fatalf("configuration = %q, want %q", got, want)
+	}
+
+	inventory = hwmonInventory{
+		initialized: true,
+		sensors:     []hwmonSensor{{id: "hba:sas:1234", label: "HBA"}},
+	}
+	if err := os.Truncate(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := publishHWMonFamily(path, "hba", &inventory, nil, true)
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if len(inventory.sensors) != 0 {
+		t.Fatalf("disabled HBA inventory = %#v, want empty", inventory.sensors)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "configure\thba\n"; got != want {
+		t.Fatalf("cleared configuration = %q, want %q", got, want)
 	}
 }
 

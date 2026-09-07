@@ -195,12 +195,14 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 	reconfigured := false
 	if state.Error != "" {
 		diskErr = fmt.Errorf("disks: %s", state.Error)
-	} else if changed, err := publishHWMonFamily(device, "disk", &publisher.disks, disks, false); err != nil {
+		// An error-free empty snapshot is authoritative and removes the last cached
+		// disk instead of leaving a permanent failsafe device behind.
+	} else if changed, err := publishHWMonFamily(device, "disk", &publisher.disks, disks, true); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
 	} else {
 		reconfigured = reconfigured || changed
 		if changed {
-			log.Printf("configured storage hwmon inventory with %d channels", len(disks))
+			log.Printf("configured storage hwmon inventory with %d sensors", len(disks))
 		}
 	}
 	if state.HBAError != "" {
@@ -210,7 +212,7 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 	} else {
 		reconfigured = reconfigured || changed
 		if changed {
-			log.Printf("configured HBA hwmon inventory with %d channels", len(hbas))
+			log.Printf("configured HBA hwmon inventory with %d sensors", len(hbas))
 		}
 	}
 	if reconfigured {

@@ -3,6 +3,7 @@
 #include <linux/fs.h>
 #include <linux/hwmon.h>
 #include <linux/jiffies.h>
+#include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
@@ -17,32 +18,34 @@
 #define MAX_STALE_TIMEOUT 300U
 #define ID_SIZE 64
 #define LABEL_SIZE 96
+#define SENSOR_NAME_SIZE (sizeof("unraid_disk_") + 2 * (ID_SIZE - 1))
 #define MAX_RECORDS 1024
 #define MAX_WRITE_SIZE 256
 
 struct virt_temp_sensor {
 	char id[ID_SIZE];
 	char label[LABEL_SIZE];
+	char name[SENSOR_NAME_SIZE];
 	atomic_long_t temperature;
 	unsigned long last_update;
+	/*
+	 * Keep one stable platform/hwmon device per ID. Aggregated tempN channels
+	 * are positional: topology changes either renumber them or require stale
+	 * 100-degree tombstones for removed sensors.
+	 */
+	struct platform_device *platform;
+	struct device *hwmon;
 };
 
 struct virt_temp_inventory {
-	struct device *hwmon;
 	struct virt_temp_sensor *sensors;
 	unsigned int count;
-	u32 *config;
-	struct hwmon_channel_info channel_info;
-	const struct hwmon_channel_info *info[2];
-	struct hwmon_chip_info chip_info;
 };
 
 struct virt_temp_family {
 	const char *namespace;
-	const char *hwmon_name;
 	/* Serializes inventory replacement and updates for this family only. */
 	struct mutex *lock;
-	struct platform_device *platform;
 	struct virt_temp_inventory *inventory;
 };
 
@@ -68,12 +71,10 @@ static unsigned int stale_timeout = 10;
 static DEFINE_MUTEX(storage_lock);
 static DEFINE_MUTEX(hba_lock);
 static struct virt_temp_family disk_family = {
-	.namespace = "disk", .hwmon_name = "unraid_storage",
-	.lock = &storage_lock,
+	.namespace = "disk", .lock = &storage_lock,
 };
 static struct virt_temp_family hba_family = {
-	.namespace = "hba", .hwmon_name = "unraid_hba",
-	.lock = &hba_lock,
+	.namespace = "hba", .lock = &hba_lock,
 };
 
 static int set_stale_timeout(const char *value,
@@ -119,11 +120,11 @@ static struct virt_temp_record *find_record(struct virt_temp_session *session,
 static struct virt_temp_sensor *find_sensor(struct virt_temp_inventory *inventory,
 					    const char *id)
 {
-	unsigned int channel;
+	unsigned int index;
 
-	for (channel = 0; channel < inventory->count; channel++)
-		if (!strcmp(inventory->sensors[channel].id, id))
-			return &inventory->sensors[channel];
+	for (index = 0; index < inventory->count; index++)
+		if (!strcmp(inventory->sensors[index].id, id))
+			return &inventory->sensors[index];
 	return NULL;
 }
 
@@ -145,10 +146,7 @@ static bool is_stale(const struct virt_temp_sensor *sensor)
 static umode_t is_visible(const void *data, enum hwmon_sensor_types type,
 			  u32 attr, int channel)
 {
-	const struct virt_temp_inventory *inventory = data;
-
-	if (type != hwmon_temp || channel < 0 ||
-	    channel >= (int)inventory->count)
+	if (type != hwmon_temp || channel != 0)
 		return 0;
 	return attr == hwmon_temp_input || attr == hwmon_temp_label ? 0444 : 0;
 }
@@ -156,13 +154,10 @@ static umode_t is_visible(const void *data, enum hwmon_sensor_types type,
 static int read_value(struct device *dev, enum hwmon_sensor_types type,
 		      u32 attr, int channel, long *value)
 {
-	struct virt_temp_inventory *inventory = dev_get_drvdata(dev);
-	struct virt_temp_sensor *sensor;
+	struct virt_temp_sensor *sensor = dev_get_drvdata(dev);
 
-	if (type != hwmon_temp || attr != hwmon_temp_input || channel < 0 ||
-	    channel >= (int)inventory->count)
+	if (type != hwmon_temp || attr != hwmon_temp_input || channel != 0)
 		return -EOPNOTSUPP;
-	sensor = &inventory->sensors[channel];
 	*value = is_stale(sensor) ? FAILSAFE_MILLIC :
 				       atomic_long_read(&sensor->temperature);
 	return 0;
@@ -171,12 +166,11 @@ static int read_value(struct device *dev, enum hwmon_sensor_types type,
 static int read_label(struct device *dev, enum hwmon_sensor_types type,
 		      u32 attr, int channel, const char **str)
 {
-	struct virt_temp_inventory *inventory = dev_get_drvdata(dev);
+	struct virt_temp_sensor *sensor = dev_get_drvdata(dev);
 
-	if (type != hwmon_temp || attr != hwmon_temp_label || channel < 0 ||
-	    channel >= (int)inventory->count)
+	if (type != hwmon_temp || attr != hwmon_temp_label || channel != 0)
 		return -EOPNOTSUPP;
-	*str = inventory->sensors[channel].label;
+	*str = sensor->label;
 	return 0;
 }
 
@@ -184,38 +178,127 @@ static const struct hwmon_ops hwmon_ops = {
 	.is_visible = is_visible, .read = read_value, .read_string = read_label,
 };
 
+static const u32 temp_config[] = {
+	HWMON_T_INPUT | HWMON_T_LABEL,
+	0,
+};
+static const struct hwmon_channel_info temp_channel_info = {
+	.type = hwmon_temp,
+	.config = temp_config,
+};
+static const struct hwmon_channel_info * const temp_info[] = {
+	&temp_channel_info,
+	NULL,
+};
+static const struct hwmon_chip_info temp_chip_info = {
+	.ops = &hwmon_ops,
+	.info = temp_info,
+};
+
+static void make_sensor_name(struct virt_temp_sensor *sensor,
+			     const struct virt_temp_family *family)
+{
+	static const char hex[] = "0123456789abcdef";
+	const unsigned char *id = (const unsigned char *)sensor->id;
+	size_t offset = scnprintf(sensor->name, sizeof(sensor->name),
+				  "unraid_%s_", family->namespace);
+
+	/* Hex is collision-free, hwmon-safe, and stable as a platform path. */
+	while (*id && offset + 2 < sizeof(sensor->name)) {
+		sensor->name[offset++] = hex[*id >> 4];
+		sensor->name[offset++] = hex[*id & 0x0f];
+		id++;
+	}
+	sensor->name[offset] = '\0';
+}
+
+static void unregister_sensor(struct virt_temp_sensor *sensor)
+{
+	if (sensor->hwmon) {
+		hwmon_device_unregister(sensor->hwmon);
+		sensor->hwmon = NULL;
+	}
+	if (sensor->platform) {
+		platform_device_unregister(sensor->platform);
+		sensor->platform = NULL;
+	}
+}
+
 static void unregister_inventory(struct virt_temp_inventory *inventory)
 {
-	if (inventory && inventory->hwmon) {
-		hwmon_device_unregister(inventory->hwmon);
-		inventory->hwmon = NULL;
-	}
+	unsigned int index;
+
+	if (!inventory)
+		return;
+	for (index = 0; index < inventory->count; index++)
+		unregister_sensor(&inventory->sensors[index]);
 }
 
 static void free_inventory(struct virt_temp_inventory *inventory)
 {
 	if (!inventory)
 		return;
-	kfree(inventory->config);
 	kfree(inventory->sensors);
 	kfree(inventory);
+}
+
+static int register_sensor(struct virt_temp_family *family,
+			   struct virt_temp_sensor *sensor)
+{
+	int err;
+
+	make_sensor_name(sensor, family);
+	sensor->platform = platform_device_register_simple(sensor->name,
+							  PLATFORM_DEVID_NONE,
+							  NULL, 0);
+	if (IS_ERR(sensor->platform)) {
+		err = PTR_ERR(sensor->platform);
+		sensor->platform = NULL;
+		return err;
+	}
+	sensor->hwmon = hwmon_device_register_with_info(
+		&sensor->platform->dev, sensor->name, sensor,
+		&temp_chip_info, NULL);
+	if (IS_ERR(sensor->hwmon)) {
+		err = PTR_ERR(sensor->hwmon);
+		sensor->hwmon = NULL;
+		platform_device_unregister(sensor->platform);
+		sensor->platform = NULL;
+		return err;
+	}
+	return 0;
 }
 
 static int register_inventory(struct virt_temp_family *family,
 			      struct virt_temp_inventory *inventory)
 {
-	if (!inventory->count)
-		return 0;
-	inventory->hwmon = hwmon_device_register_with_info(
-		&family->platform->dev, family->hwmon_name, inventory,
-		&inventory->chip_info, NULL);
-	if (IS_ERR(inventory->hwmon)) {
-		int err = PTR_ERR(inventory->hwmon);
+	unsigned int index;
+	int err;
 
-		inventory->hwmon = NULL;
-		return err;
+	for (index = 0; index < inventory->count; index++) {
+		err = register_sensor(family, &inventory->sensors[index]);
+		if (err) {
+			while (index > 0) {
+				index--;
+				unregister_sensor(&inventory->sensors[index]);
+			}
+			return err;
+		}
 	}
 	return 0;
+}
+
+static bool inventory_is_registered(const struct virt_temp_inventory *inventory)
+{
+	unsigned int index;
+
+	if (!inventory)
+		return false;
+	for (index = 0; index < inventory->count; index++)
+		if (!inventory->sensors[index].platform ||
+		    !inventory->sensors[index].hwmon)
+			return false;
+	return true;
 }
 
 static struct virt_temp_inventory *build_inventory(
@@ -223,7 +306,7 @@ static struct virt_temp_inventory *build_inventory(
 {
 	struct virt_temp_inventory *inventory;
 	struct virt_temp_record *record;
-	unsigned int channel = 0;
+	unsigned int index = 0;
 
 	inventory = kzalloc(sizeof(*inventory), GFP_KERNEL);
 	if (!inventory)
@@ -232,27 +315,20 @@ static struct virt_temp_inventory *build_inventory(
 		return inventory;
 	inventory->sensors = kcalloc(session->count,
 				     sizeof(*inventory->sensors), GFP_KERNEL);
-	inventory->config = kcalloc(session->count + 1,
-				    sizeof(*inventory->config), GFP_KERNEL);
-	if (!inventory->sensors || !inventory->config) {
+	if (!inventory->sensors) {
 		free_inventory(inventory);
 		return ERR_PTR(-ENOMEM);
 	}
 	inventory->count = session->count;
 	list_for_each_entry(record, &session->records, node) {
-		struct virt_temp_sensor *sensor = &inventory->sensors[channel];
+		struct virt_temp_sensor *sensor = &inventory->sensors[index];
 
 		strscpy(sensor->id, record->id, sizeof(sensor->id));
 		strscpy(sensor->label, record->label, sizeof(sensor->label));
 		atomic_long_set(&sensor->temperature, record->temperature);
 		smp_store_release(&sensor->last_update, jiffies);
-		inventory->config[channel++] = HWMON_T_INPUT | HWMON_T_LABEL;
+		index++;
 	}
-	inventory->channel_info.type = hwmon_temp;
-	inventory->channel_info.config = inventory->config;
-	inventory->info[0] = &inventory->channel_info;
-	inventory->chip_info.ops = &hwmon_ops;
-	inventory->chip_info.info = inventory->info;
 	return inventory;
 }
 
@@ -269,9 +345,10 @@ static int configure(struct virt_temp_session *session,
 	mutex_lock(family->lock);
 	/*
 	 * hwmon_device_unregister() removes the sysfs device and drains in-flight
-	 * hwmon callbacks before returning. It must therefore precede any change
-	 * or free of sensors/count. This lifetime guarantee is also why read_value
-	 * and read_label do not need the family mutex.
+	 * hwmon callbacks before returning. Every old hwmon and platform device
+	 * must therefore be removed before their sensor storage is freed. This
+	 * lifetime guarantee is also why read_value and read_label do not need the
+	 * family mutex.
 	 */
 	previous = family->inventory;
 	unregister_inventory(previous);
@@ -281,7 +358,7 @@ static int configure(struct virt_temp_session *session,
 		free_inventory(previous);
 	} else {
 		/*
-		 * Keep a working, stale-safe hwmon device if registering the new
+		 * Keep working, stale-safe hwmon devices if registering the new
 		 * topology fails. The userspace error makes the agent retry the new
 		 * inventory, while the restored sensors naturally reach their failsafe.
 		 */
@@ -306,11 +383,11 @@ static int update(struct virt_temp_session *session,
 	inventory = family->inventory;
 	/*
 	 * A failed configure followed by a failed rollback can leave the previous
-	 * inventory allocated but without a registered hwmon device. Force
+	 * inventory allocated but without registered sensor devices. Force
 	 * userspace to configure it again. An empty inventory intentionally has no
-	 * hwmon device, so it remains a valid commit target.
+	 * devices, so it remains a valid commit target.
 	 */
-	if (!inventory || (inventory->count && !inventory->hwmon)) {
+	if (!inventory_is_registered(inventory)) {
 		mutex_unlock(family->lock);
 		return -ESTALE;
 	}
@@ -479,25 +556,7 @@ static struct miscdevice control_device = {
 
 static int __init virt_temp_init(void)
 {
-	int err;
-
-	disk_family.platform = platform_device_register_simple(
-		"virt_temp_storage", PLATFORM_DEVID_NONE, NULL, 0);
-	if (IS_ERR(disk_family.platform))
-		return PTR_ERR(disk_family.platform);
-	hba_family.platform = platform_device_register_simple(
-		"virt_temp_hba", PLATFORM_DEVID_NONE, NULL, 0);
-	if (IS_ERR(hba_family.platform)) {
-		err = PTR_ERR(hba_family.platform);
-		platform_device_unregister(disk_family.platform);
-		return err;
-	}
-	err = misc_register(&control_device);
-	if (err) {
-		platform_device_unregister(hba_family.platform);
-		platform_device_unregister(disk_family.platform);
-	}
-	return err;
+	return misc_register(&control_device);
 }
 
 static void __exit virt_temp_exit(void)
@@ -507,12 +566,10 @@ static void __exit virt_temp_exit(void)
 	free_inventory(hba_family.inventory);
 	unregister_inventory(disk_family.inventory);
 	free_inventory(disk_family.inventory);
-	platform_device_unregister(hba_family.platform);
-	platform_device_unregister(disk_family.platform);
 }
 
 module_init(virt_temp_init);
 module_exit(virt_temp_exit);
 MODULE_AUTHOR("François HOYEZ");
-MODULE_DESCRIPTION("Fixed-inventory virtual hwmon temperature channels");
+MODULE_DESCRIPTION("Stable per-sensor virtual hwmon temperature devices");
 MODULE_LICENSE("GPL");

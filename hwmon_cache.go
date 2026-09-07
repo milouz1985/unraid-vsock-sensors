@@ -38,7 +38,7 @@ type cachedHWMonSensor struct {
 }
 
 // restore loads the last known topology and recreates its virtual hwmon
-// channels at the failsafe temperature. Families are applied in order, so a
+// devices at the failsafe temperature. Families are applied in order, so a
 // family restored before a later validation failure remains usable.
 func (publisher *hwmonPublisher) restore(device string) error {
 	data, err := os.ReadFile(publisher.cachePath)
@@ -63,7 +63,7 @@ func (publisher *hwmonPublisher) restore(device string) error {
 	}
 	if cached.Disks != nil {
 		readings := samplesFromCache(cached.Disks.Sensors)
-		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, false); err != nil {
+		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, true); err != nil {
 			return fmt.Errorf("restore disks: %w", err)
 		}
 	}
