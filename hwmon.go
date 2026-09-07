@@ -37,6 +37,15 @@ type hwmonPublisher struct {
 	cacheDirty bool
 }
 
+type receivedSnapshot struct {
+	response   sensors.Response
+	receivedAt time.Time
+}
+
+func (snapshot receivedSnapshot) expired(now time.Time) bool {
+	return !now.Before(snapshot.receivedAt.Add(snapshotStreamTimeout))
+}
+
 func hwmon(args []string) error {
 	fs := flag.NewFlagSet("hwmon", flag.ContinueOnError)
 	cid := fs.Uint("cid", 3, "guest vsock CID")
@@ -83,7 +92,7 @@ func hwmon(args []string) error {
 	// still retain disks discovered through drivetemp before the host released the
 	// HBA to the VM. Wait for the first successful VSOCK snapshot, then restart the
 	// consumer so it drops those stale disks and discovers the virtual sensors.
-	snapshots := make(chan sensors.Response)
+	snapshots := make(chan receivedSnapshot, 1)
 	backgroundErrors := make(chan error, 1)
 	go func() {
 		backgroundErrors <- receiveSnapshots(ctx, listener, uint32(*cid), snapshots)
@@ -95,8 +104,12 @@ func hwmon(args []string) error {
 	for {
 		var err error
 		select {
-		case state := <-snapshots:
-			reconfigured, publishErr := publisher.publish(*device, state)
+		case snapshot := <-snapshots:
+			if snapshot.expired(time.Now()) {
+				err = fmt.Errorf("discard snapshot queued for %s", time.Since(snapshot.receivedAt).Round(time.Millisecond))
+				break
+			}
+			reconfigured, publishErr := publisher.publish(*device, snapshot.response)
 			err = publishErr
 			firstSnapshot := !receivedSnapshot
 			receivedSnapshot = true
@@ -139,7 +152,7 @@ func receiveSnapshots(
 	ctx context.Context,
 	listener net.Listener,
 	expectedCID uint32,
-	out chan<- sensors.Response,
+	out chan receivedSnapshot,
 ) error {
 	lastError := ""
 	for {
@@ -166,9 +179,8 @@ func receiveSnapshots(
 						log.Printf("VSOCK snapshot stream recovered")
 						lastError = ""
 					}
-					select {
-					case out <- snapshot:
-					case <-ctx.Done():
+					received := receivedSnapshot{response: snapshot, receivedAt: time.Now()}
+					if !sendLatestSnapshot(ctx, out, received) {
 						_ = conn.Close()
 						return nil
 					}
@@ -186,6 +198,29 @@ func receiveSnapshots(
 			}
 			break
 		}
+	}
+}
+
+func sendLatestSnapshot(ctx context.Context, out chan receivedSnapshot, snapshot receivedSnapshot) bool {
+	select {
+	case out <- snapshot:
+		return true
+	case <-ctx.Done():
+		return false
+	default:
+	}
+
+	// Keep a single pending snapshot. If publication is temporarily busy, a
+	// newer heartbeat supersedes the older one instead of creating a backlog.
+	select {
+	case <-out:
+	default:
+	}
+	select {
+	case out <- snapshot:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 

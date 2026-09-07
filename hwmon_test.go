@@ -121,21 +121,24 @@ func TestReceiveSnapshotsRejectsUnexpectedCID(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	out := make(chan sensors.Response)
+	out := make(chan receivedSnapshot)
 	done := make(chan error, 1)
 	go func() { done <- receiveSnapshots(ctx, listener, expectedCID, out) }()
 
 	waitForSnapshotAccept(t, listener)
 	assertSnapshotConnectionClosed(t, wrongClient, time.Second)
 	waitForSnapshotAccept(t, listener)
-	want := sensors.Response{Version: "accepted", Timestamp: time.Now().UTC()}
+	want := sensors.Response{
+		Version: "accepted", Timestamp: time.Now().UTC(),
+		Disks: []sensors.Disk{}, HBADisabled: true,
+	}
 	if err := sensors.WriteFrame(validClient, want); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case got := <-out:
-		if got.Version != want.Version {
-			t.Fatalf("received version = %q, want %q", got.Version, want.Version)
+		if got.response.Version != want.Version {
+			t.Fatalf("received version = %q, want %q", got.response.Version, want.Version)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("valid connection did not publish its snapshot")
@@ -160,7 +163,7 @@ func TestReceiveSnapshotsClosesSilentStreamAndAcceptsReconnect(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	out := make(chan sensors.Response)
+	out := make(chan receivedSnapshot)
 	done := make(chan error, 1)
 	go func() { done <- receiveSnapshots(ctx, listener, expectedCID, out) }()
 
@@ -172,14 +175,17 @@ func TestReceiveSnapshotsClosesSilentStreamAndAcceptsReconnect(t *testing.T) {
 	}
 
 	waitForSnapshotAccept(t, listener)
-	want := sensors.Response{Version: "reconnected", Timestamp: time.Now().UTC()}
+	want := sensors.Response{
+		Version: "reconnected", Timestamp: time.Now().UTC(),
+		Disks: []sensors.Disk{}, HBADisabled: true,
+	}
 	if err := sensors.WriteFrame(secondClient, want); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case got := <-out:
-		if got.Version != want.Version {
-			t.Fatalf("received version = %q, want %q", got.Version, want.Version)
+		if got.response.Version != want.Version {
+			t.Fatalf("received version = %q, want %q", got.response.Version, want.Version)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("reconnected publisher did not publish its snapshot")
@@ -188,6 +194,30 @@ func TestReceiveSnapshotsClosesSilentStreamAndAcceptsReconnect(t *testing.T) {
 	cancel()
 	_ = secondClient.Close()
 	waitForSnapshotReceiver(t, done)
+}
+
+func TestSnapshotQueueKeepsOnlyFreshestReading(t *testing.T) {
+	ctx := context.Background()
+	out := make(chan receivedSnapshot, 1)
+	now := time.Now()
+	first := receivedSnapshot{
+		response: sensors.Response{Version: "first"}, receivedAt: now,
+	}
+	latest := receivedSnapshot{
+		response: sensors.Response{Version: "latest"}, receivedAt: now.Add(time.Second),
+	}
+	if !sendLatestSnapshot(ctx, out, first) || !sendLatestSnapshot(ctx, out, latest) {
+		t.Fatal("snapshot queue unexpectedly stopped")
+	}
+	if got := <-out; got.response.Version != latest.response.Version {
+		t.Fatalf("queued version = %q, want %q", got.response.Version, latest.response.Version)
+	}
+	if latest.expired(latest.receivedAt.Add(snapshotStreamTimeout - time.Nanosecond)) {
+		t.Fatal("fresh snapshot was reported as expired")
+	}
+	if !latest.expired(latest.receivedAt.Add(snapshotStreamTimeout)) {
+		t.Fatal("snapshot was accepted at its expiration deadline")
+	}
 }
 
 func TestMakeHWMonSamples(t *testing.T) {
