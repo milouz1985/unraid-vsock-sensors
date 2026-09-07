@@ -22,9 +22,8 @@ L'inventaire persistant est stocké par défaut dans
 
 L'agent Unraid ouvre une connexion VSOCK persistante vers ce récepteur. Il
 pousse chaque seconde son dernier snapshot complet, qui sert aussi de heartbeat.
-Le récepteur refuse les connexions qui ne viennent pas du CID configuré,
-maintient `/dev/virt-temp` à jour et expose le dernier snapshot sur
-`/run/unraid-vsock-sensors/sensors.sock` pour la commande locale `get`.
+Le récepteur refuse les connexions qui ne viennent pas du CID configuré et
+maintient `/dev/virt-temp` à jour.
 
 ## Fonctionnement du pilote
 

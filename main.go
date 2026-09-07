@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,7 +11,6 @@ import (
 	"log/syslog"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -30,16 +28,8 @@ const (
 
 var version = "dev"
 
-type sensorType string
-
-const (
-	sensorTypeDisk sensorType = "disk"
-	sensorTypeHBA  sensorType = "hba"
-)
-
 func main() {
-	// Keep stderr concise: service managers already add timestamps, while sensor
-	// values are written separately to stdout for cmd-based consumers.
+	// Keep stderr concise: service managers already add timestamps.
 	log.SetFlags(0)
 	if len(os.Args) < 2 {
 		usage()
@@ -48,8 +38,6 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = serve(os.Args[2:])
-	case "get":
-		err = get(os.Args[2:])
 	case "hwmon":
 		err = hwmon(os.Args[2:])
 	case "version", "--version":
@@ -66,14 +54,11 @@ func main() {
 func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
   %[1]s serve [options]
-  %[1]s get [options] TYPE SELECTOR
-  %[1]s get [options] --json
   %[1]s hwmon [options]
   %[1]s version
 
 Commands:
   serve                     Push sensor data to the Proxmox host over AF_VSOCK
-  get                       Read the latest snapshot from the host daemon
   hwmon                     Publish fixed storage and HBA hwmon inventories
   version                   Print the build version
 
@@ -86,35 +71,18 @@ Serve options:
   --hba-interval DURATION   Delay between HBA temperature refreshes (default: 30s)
   --syslog                  Send service logs to the system logger
 
-Get options:
-  --socket PATH             Host daemon socket
-                            (default: /run/unraid-vsock-sensors/sensors.sock)
-  --json                    Print the complete JSON response
-
 Hwmon options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
   --port PORT               AF_VSOCK port (default: 990)
   --device PATH             virt-temp control device (default: /dev/virt-temp)
   --cache PATH              Persistent hwmon inventory cache
                             (default: /var/lib/unraid-vsock-sensors/hwmon-inventory.json)
-  --socket PATH             Local socket served to get
-                            (default: /run/unraid-vsock-sensors/sensors.sock)
   --restart-units UNITS     Comma-separated systemd units restarted after a
                             topology change
 
-Sensor types:
-  disk                      Select disks, pools, or disk groups
-  hba                       Select HBA temperature sensors
-
-Selectors:
-  disk: hdd, ssd, nvme, all, disk name, or device name
-  hba:  all or stable controller ID (for example sas:500605b00abc1234)
-
 Examples:
   %[1]s serve --port 990
-  %[1]s get disk hdd
-  %[1]s get hba all
-  %[1]s get --json
+  %[1]s hwmon --cid 3 --port 990
 `, os.Args[0])
 	os.Exit(2)
 }
@@ -264,77 +232,4 @@ func waitFor(ctx context.Context, delay time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
-}
-
-func get(args []string) error {
-	fs := flag.NewFlagSet("get", flag.ContinueOnError)
-	socketPath := fs.String("socket", defaultSnapshotSocket, "host daemon socket")
-	printJSON := fs.Bool("json", false, "print the complete JSON response")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *printJSON {
-		if fs.NArg() != 0 {
-			return errors.New("--json does not accept a sensor type or selector")
-		}
-	} else if fs.NArg() != 2 {
-		return errors.New("a sensor type and selector are required (for example: disk hdd or hba all)")
-	}
-	kind := sensorType(fs.Arg(0))
-	if !*printJSON && kind != sensorTypeDisk && kind != sensorTypeHBA {
-		return fmt.Errorf("unknown sensor type %q (expected disk or hba)", kind)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-	defer cancel()
-	response, err := sensors.FetchUnix(ctx, *socketPath)
-	if err != nil {
-		return err
-	}
-	if *printJSON {
-		return json.NewEncoder(os.Stdout).Encode(response)
-	}
-	return writeResponse(os.Stdout, response, kind, fs.Arg(1))
-}
-
-func writeResponse(out io.Writer, response sensors.Response, kind sensorType, selector string) error {
-	switch kind {
-	case sensorTypeHBA:
-		if response.HBAError != "" {
-			return fmt.Errorf("HBA temperature unavailable: %s", response.HBAError)
-		}
-		return writeMaxTemperature(out, selectHBAs(response.HBAs, selector), selector, nil, func(hba sensors.HBA) float64 {
-			return hba.Temp
-		})
-	case sensorTypeDisk:
-		if response.Error != "" {
-			return errors.New(response.Error)
-		}
-		return writeMaxTemperature(out, selectDisks(response.Disks, selector), selector, nil, func(disk sensors.Disk) float64 {
-			if disk.Unavailable {
-				return hwmonFailsafeTemp
-			}
-			return disk.Temp
-		})
-	default:
-		return fmt.Errorf("unknown sensor type %q (expected disk or hba)", kind)
-	}
-}
-
-func writeMaxTemperature[T any](
-	out io.Writer,
-	items []T,
-	selector string,
-	unavailable error,
-	temperature func(T) float64,
-) error {
-	if len(items) == 0 {
-		if unavailable != nil {
-			return unavailable
-		}
-		return fmt.Errorf("no available temperature for selector %q", selector)
-	}
-	_, err := fmt.Fprintln(out, strconv.FormatFloat(
-		sensors.MaxTemperature(items, temperature), 'f', -1, 64,
-	))
-	return err
 }

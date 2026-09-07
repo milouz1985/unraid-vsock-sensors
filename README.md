@@ -7,7 +7,6 @@ Sur Proxmox, ces températures peuvent être :
 
 - exposées comme sondes Linux `hwmon` natives pour CoolerControl, fan2go,
   fancontrol ou lm-sensors ;
-- interrogées directement en ligne de commande ;
 - utilisées sans réseau IP entre la VM et l'hôte.
 
 L'agent Unraid lit l'inventaire et l'état de rotation, puis relève en
@@ -157,14 +156,12 @@ Le fichier `/etc/default/unraid-vsock-hwmon` contient :
 UNRAID_VSOCK_CID=3
 UNRAID_VSOCK_PORT=990
 UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
-UNRAID_VSOCK_SOCKET=/run/unraid-vsock-sensors/sensors.sock
 # UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
 ```
 
 - `UNRAID_VSOCK_CID` désigne la VM Unraid configurée dans Proxmox ;
 - `UNRAID_VSOCK_PORT` doit correspondre au port du plugin Unraid ;
 - `UNRAID_VSOCK_CACHE` conserve la structure des canaux entre deux démarrages ;
-- `UNRAID_VSOCK_SOCKET` expose le dernier snapshot au client local `get` ;
 - `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
   des virgules. Les unités actives sont redémarrées après la restauration du
   cache ou un changement de topologie, afin qu'elles rescannent les hwmon.
@@ -211,12 +208,6 @@ Résultats attendus :
 - le service est `active (running)` ;
 - `sensors` affiche `unraid_storage` et, si activé, `unraid_hba`.
 
-Pour afficher directement l'inventaire reçu sans passer par le module :
-
-```sh
-unraid-vsock-sensors get --json
-```
-
 ## Sondes publiées
 
 `unraid_storage` contient :
@@ -228,12 +219,11 @@ unraid-vsock-sensors get --json
 `unraid_hba` contient un canal par contrôleur lorsque la collecte HBA est
 activée.
 
-Les disques USB sont exposés dans le JSON et restent accessibles avec
-`disk all`, leur nom ou leur périphérique, mais ne créent aucun canal hwmon et
-ne participent pas aux groupes. Les slots Unraid non assignés (`DISK_NP`) et la
-clé USB de démarrage `flash` sont entièrement exclus. Les SSD internes utilisant
-un autre transport que SATA ou NVMe possèdent un canal individuel, mais ne
-créent pas de canal maximum dédié.
+Les disques USB ne créent aucun canal hwmon et ne participent pas aux groupes.
+Les slots Unraid non assignés (`DISK_NP`) et la clé USB de démarrage `flash`
+sont entièrement exclus. Les SSD internes utilisant un autre transport que
+SATA ou NVMe possèdent un canal individuel, mais ne créent pas de canal maximum
+dédié.
 
 Un disque signalé en veille par `spundown="1"` est conservé dans l'inventaire
 avec une température de `0 °C`, sans exécuter de commande SMART. Cette valeur
@@ -274,7 +264,7 @@ HBA vide.
 L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
 pour un disque, puis adresse SAS, adresse PCI ou numéro de série pour un HBA. Les
 indices locaux tels que l'IOC mpt3ctl ou le contrôleur StorCLI `/c0` ne sont
-exposés ni dans le JSON, ni dans les sélecteurs, ni dans le cache hwmon.
+pas conservés dans le cache hwmon.
 `mpt3ctl` relit l'identité et la température dans chaque relevé, mais conserve
 par adresse PCI la dernière identité SAS valide afin qu'une erreur transitoire
 de la page Manufacturing 5 ne renomme pas la sonde. StorCLI conserve
@@ -343,29 +333,6 @@ canaux hwmon atteignent leur failsafe après leur délai de 10 secondes sans
 actualisation. Un résultat arrivé après l'échéance est rejeté ; une nouvelle
 collecte réussie rétablit les mesures. Le cache reste valide pendant l'intervalle
 normal entre deux collectes.
-
-## Utilisation en ligne de commande
-
-Les sélecteurs de groupe retournent la température maximale :
-
-```sh
-unraid-vsock-sensors get disk hdd
-unraid-vsock-sensors get disk ssd
-unraid-vsock-sensors get disk nvme
-unraid-vsock-sensors get hba all
-```
-
-Un disque ou un HBA peut être interrogé explicitement :
-
-```sh
-unraid-vsock-sensors get disk disk1
-unraid-vsock-sensors get disk sdb
-unraid-vsock-sensors get hba sas:500605b00abc1234
-```
-
-Ces commandes écrivent uniquement un nombre en degrés Celsius et conviennent à
-une source `cmd` de fan2go. L'option `--json` affiche le snapshot complet avec
-les erreurs éventuelles de chaque famille.
 
 ## Mise à jour et désinstallation Unraid
 
@@ -491,9 +458,7 @@ make hwmon-package VERSION=X.Y.Z DEBIAN_REVISION=2
 
 AF_VSOCK n'est pas un mécanisme d'authentification général. L'agent Unraid se
 connecte uniquement au CID hôte standard `2`. Le récepteur Proxmox n'accepte
-que le CID de VM configuré et limite chaque message encadré à 1 Mio. Le socket
-Unix local renvoie un unique snapshot dès la connexion et ne reçoit aucune
-commande ni aucun chemin fourni par le client.
+que le CID de VM configuré et limite chaque snapshot encadré à 1 Mio.
 
 ## Références techniques et remerciements
 

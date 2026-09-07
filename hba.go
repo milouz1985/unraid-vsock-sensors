@@ -243,14 +243,3 @@ func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	}
 	return slices.Clone(c.readings), nil
 }
-
-func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {
-	selector = strings.ToLower(selector)
-	var matches []sensors.HBA
-	for _, sensor := range hbas {
-		if selector == "all" || strings.EqualFold(sensor.ID, selector) {
-			matches = append(matches, sensor)
-		}
-	}
-	return matches
-}

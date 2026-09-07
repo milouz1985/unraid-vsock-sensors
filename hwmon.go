@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
@@ -41,7 +40,6 @@ func hwmon(args []string) error {
 	port := fs.Uint("port", defaultPort, "vsock port")
 	device := fs.String("device", virtTempDevicePath, "virt-temp control device")
 	cache := fs.String("cache", defaultHWMonCache, "persistent hwmon inventory cache")
-	socketPath := fs.String("socket", defaultSnapshotSocket, "local socket used by get")
 	restartUnitsFlag := fs.String("restart-units", "", "comma-separated systemd units restarted after a topology change")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -71,13 +69,6 @@ func hwmon(args []string) error {
 		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
 	}
 	defer listener.Close()
-	localListener, err := listenSnapshotSocket(*socketPath)
-	if err != nil {
-		return err
-	}
-	defer localListener.Close()
-	defer os.Remove(*socketPath)
-
 	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through %s", *port, *device)
 	publisher := &hwmonPublisher{cachePath: *cache}
 	err = publisher.restore(*device)
@@ -89,14 +80,10 @@ func hwmon(args []string) error {
 	// still retain disks discovered through drivetemp before the host released the
 	// HBA to the VM. Wait for the first successful VSOCK snapshot, then restart the
 	// consumer so it drops those stale disks and discovers the virtual sensors.
-	store := &snapshotStore{}
 	snapshots := make(chan sensors.Response)
-	backgroundErrors := make(chan error, 2)
+	backgroundErrors := make(chan error, 1)
 	go func() {
 		backgroundErrors <- receiveSnapshots(ctx, listener, uint32(*cid), snapshots)
-	}()
-	go func() {
-		backgroundErrors <- serveSnapshotSocket(ctx, localListener, store)
 	}()
 
 	lastError, restartPending := "", false
@@ -106,7 +93,6 @@ func hwmon(args []string) error {
 		var err error
 		select {
 		case state := <-snapshots:
-			store.set(state)
 			reconfigured, publishErr := publisher.publish(*device, state)
 			err = publishErr
 			firstSnapshot := !receivedSnapshot

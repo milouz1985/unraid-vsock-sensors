@@ -2,12 +2,30 @@ package sensors
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"github.com/mdlayher/socket"
+	"golang.org/x/sys/unix"
 )
 
 const maxFrameSize = 1 << 20
+
+// DialVSOCK connects the publisher to the host without leaving connection
+// establishment outside its context deadline.
+func DialVSOCK(ctx context.Context, cid, port uint32) (*socket.Conn, error) {
+	conn, err := socket.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0, "vsock", nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Connect(ctx, &unix.SockaddrVM{CID: cid, Port: port}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
 
 // WriteFrame writes one newline-delimited JSON snapshot to a persistent stream.
 func WriteFrame(out io.Writer, response Response) error {

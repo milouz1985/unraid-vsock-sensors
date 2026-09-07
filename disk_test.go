@@ -122,7 +122,7 @@ func TestDiskStatePurgesDisappearedDisks(t *testing.T) {
 	}
 }
 
-func TestReadInventoryAndSelect(t *testing.T) {
+func TestReadInventory(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "disks.ini")
 	data := strings.ReplaceAll(strings.TrimSpace(`
 		["disk1"]
@@ -173,14 +173,8 @@ func TestReadInventoryAndSelect(t *testing.T) {
 	readings := tracker.apply(disks, []diskProbe{
 		{temperature: 35}, {standby: true}, {temperature: 48},
 	}, time.Now(), time.Minute)
-	if got := selectDisks(readings, "hdd"); len(got) != 2 || got[0].Temp != 35 || got[1].Temp != 0 {
-		t.Fatalf("hdd: %#v", got)
-	}
-	if got := selectDisks(readings, "nvme"); len(got) != 1 || got[0].Temp != 48 {
-		t.Fatalf("nvme: %#v", got)
-	}
-	if got := selectDisks(readings, "fast"); len(got) != 1 || got[0].Device != "nvme0n1" {
-		t.Fatalf("name: %#v", got)
+	if len(readings) != 3 || readings[0].Temp != 35 || readings[1].Temp != 0 || readings[2].Temp != 48 {
+		t.Fatalf("readings: %#v", readings)
 	}
 }
 
@@ -264,22 +258,5 @@ func TestDiskCollectorExpiresFailedReadingAtGraceDeadline(t *testing.T) {
 	readings, err := collector.snapshot()
 	if err != nil || len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
 		t.Fatalf("expired failed reading = %#v, %v", readings, err)
-	}
-}
-
-func TestSelectDisksExcludesExternalDisksFromKindSelectors(t *testing.T) {
-	disks := []sensors.Disk{
-		{Name: "internal", Device: "sdb", Transport: "ata", Rotational: true},
-		{Name: "external", Device: "sdc", Transport: "usb", Rotational: true},
-	}
-
-	if got := selectDisks(disks, "hdd"); len(got) != 1 || got[0].Name != "internal" {
-		t.Fatalf("hdd: %#v", got)
-	}
-	if got := selectDisks(disks, "external"); len(got) != 1 || got[0].Name != "external" {
-		t.Fatalf("explicit name: %#v", got)
-	}
-	if got := selectDisks(disks, "all"); len(got) != 2 {
-		t.Fatalf("all should include external disks: %#v", got)
 	}
 }

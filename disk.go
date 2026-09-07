@@ -230,29 +230,3 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 	sort.Slice(disks, func(i, j int) bool { return disks[i].name < disks[j].name })
 	return disks, nil
 }
-
-func selectDisks(disks []sensors.Disk, selector string) []sensors.Disk {
-	selector = strings.ToLower(selector)
-	var matches []sensors.Disk
-
-	for _, disk := range disks {
-		var match bool
-		switch selector {
-		case "all":
-			match = true
-		case "nvme":
-			match = !disk.IsExternal() && disk.Kind() == sensors.DiskKindNVMe
-		case "hdd":
-			match = !disk.IsExternal() && disk.Kind() == sensors.DiskKindHDD
-		case "ssd":
-			match = !disk.IsExternal() && disk.Kind() == sensors.DiskKindSATASSD
-		default:
-			match = strings.EqualFold(disk.Name, selector) || strings.EqualFold(disk.Device, selector)
-		}
-		if match {
-			matches = append(matches, disk)
-		}
-	}
-
-	return matches
-}

@@ -422,13 +422,3 @@ func TestStorCLIParsersRejectDuplicateControllerNumbers(t *testing.T) {
 		t.Fatalf("duplicate temperature controllers returned %v", err)
 	}
 }
-
-func TestSelectHBAs(t *testing.T) {
-	hbas := []sensors.HBA{{ID: "sas:1234", Temp: 40}, {ID: "pci:0000:06:10.0", Temp: 50}}
-	if got := selectHBAs(hbas, "all"); len(got) != 2 {
-		t.Fatalf("all = %#v", got)
-	}
-	if got := selectHBAs(hbas, "PCI:0000:06:10.0"); len(got) != 1 || got[0].Temp != 50 {
-		t.Fatalf("PCI selector = %#v", got)
-	}
-}
