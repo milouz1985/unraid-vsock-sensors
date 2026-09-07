@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include <linux/ctype.h>
 #include <linux/fs.h>
 #include <linux/hwmon.h>
 #include <linux/jiffies.h>
@@ -18,14 +19,16 @@
 #define MAX_STALE_TIMEOUT 300U
 #define ID_SIZE 64
 #define LABEL_SIZE 96
-#define SENSOR_NAME_SIZE (sizeof("unraid_disk_") + 2 * (ID_SIZE - 1))
+#define PLATFORM_NAME_SIZE (sizeof("unraid_disk_") + 2 * (ID_SIZE - 1))
+#define HWMON_NAME_SIZE (sizeof("unraid_") + LABEL_SIZE - 1)
 #define MAX_RECORDS 1024
 #define MAX_WRITE_SIZE 256
 
 struct virt_temp_sensor {
 	char id[ID_SIZE];
 	char label[LABEL_SIZE];
-	char name[SENSOR_NAME_SIZE];
+	char platform_name[PLATFORM_NAME_SIZE];
+	char hwmon_name[HWMON_NAME_SIZE];
 	atomic_long_t temperature;
 	unsigned long last_update;
 	/*
@@ -195,21 +198,55 @@ static const struct hwmon_chip_info temp_chip_info = {
 	.info = temp_info,
 };
 
-static void make_sensor_name(struct virt_temp_sensor *sensor,
-			     const struct virt_temp_family *family)
+static void make_platform_name(struct virt_temp_sensor *sensor,
+			       const struct virt_temp_family *family)
 {
 	static const char hex[] = "0123456789abcdef";
 	const unsigned char *id = (const unsigned char *)sensor->id;
-	size_t offset = scnprintf(sensor->name, sizeof(sensor->name),
+	size_t offset = scnprintf(sensor->platform_name,
+				  sizeof(sensor->platform_name),
 				  "unraid_%s_", family->namespace);
 
-	/* Hex is collision-free, hwmon-safe, and stable as a platform path. */
-	while (*id && offset + 2 < sizeof(sensor->name)) {
-		sensor->name[offset++] = hex[*id >> 4];
-		sensor->name[offset++] = hex[*id & 0x0f];
+	/* Hex keeps the hidden platform identity collision-free and stable. */
+	while (*id && offset + 2 < sizeof(sensor->platform_name)) {
+		sensor->platform_name[offset++] = hex[*id >> 4];
+		sensor->platform_name[offset++] = hex[*id & 0x0f];
 		id++;
 	}
-	sensor->name[offset] = '\0';
+	sensor->platform_name[offset] = '\0';
+}
+
+static void make_hwmon_name(struct virt_temp_sensor *sensor)
+{
+	const char *label_end = strstr(sensor->label, " (");
+	const char *input;
+	size_t output;
+
+	strscpy(sensor->hwmon_name, "unraid_", sizeof(sensor->hwmon_name));
+	output = strlen(sensor->hwmon_name);
+	if (!label_end)
+		label_end = sensor->label + strlen(sensor->label);
+
+	for (input = sensor->label;
+	     input < label_end && output + 1 < sizeof(sensor->hwmon_name);
+	     input++) {
+		unsigned char character = *input;
+
+		if (isalnum(character)) {
+			sensor->hwmon_name[output++] = tolower(character);
+		} else if (sensor->hwmon_name[output - 1] != '_') {
+			sensor->hwmon_name[output++] = '_';
+		}
+	}
+
+	if (output > strlen("unraid_") &&
+	    sensor->hwmon_name[output - 1] == '_')
+		output--;
+	if (output == strlen("unraid_"))
+		strscpy(sensor->hwmon_name + output, "sensor",
+			sizeof(sensor->hwmon_name) - output);
+	else
+		sensor->hwmon_name[output] = '\0';
 }
 
 static void unregister_sensor(struct virt_temp_sensor *sensor)
@@ -247,8 +284,9 @@ static int register_sensor(struct virt_temp_family *family,
 {
 	int err;
 
-	make_sensor_name(sensor, family);
-	sensor->platform = platform_device_register_simple(sensor->name,
+	make_platform_name(sensor, family);
+	make_hwmon_name(sensor);
+	sensor->platform = platform_device_register_simple(sensor->platform_name,
 							  PLATFORM_DEVID_NONE,
 							  NULL, 0);
 	if (IS_ERR(sensor->platform)) {
@@ -257,7 +295,7 @@ static int register_sensor(struct virt_temp_family *family,
 		return err;
 	}
 	sensor->hwmon = hwmon_device_register_with_info(
-		&sensor->platform->dev, sensor->name, sensor,
+		&sensor->platform->dev, sensor->hwmon_name, sensor,
 		&temp_chip_info, NULL);
 	if (IS_ERR(sensor->hwmon)) {
 		err = PTR_ERR(sensor->hwmon);

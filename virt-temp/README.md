@@ -60,13 +60,14 @@ Au sein d'une famille, le mutex sérialise les `commit` avec un éventuel
 `configure`. Les lectures sysfs n'en ont pas besoin : la désinscription hwmon
 attend la fin des lectures en cours avant que l'ancien inventaire soit libéré.
 
-Le pilote expose un périphérique hwmon indépendant par sonde. Son nom technique
-commence par `unraid_disk_` ou `unraid_hba_` et encode l'ID stable en
-hexadécimal. Son unique mesure est donc toujours `temp1_input`, accompagnée de
-`temp1_label`. Le parent platform possède le même nom stable : l'identité du
-périphérique ne dépend ni de `hwmonX`, ni de l'ordre des autres sondes. Pour un
-HBA, le label utilise le modèle et l'adresse PCI lorsqu'ils sont disponibles.
-Les indices locaux IOC et StorCLI ne font pas partie de l'identité publiée.
+Le pilote expose un périphérique hwmon indépendant par sonde. Son nom lisible
+est dérivé du label, par exemple `unraid_disk1`, `unraid_hdd_maximum` ou
+`unraid_sas3008`. Son unique mesure est donc toujours `temp1_input`, accompagnée
+du label complet dans `temp1_label`. Le parent platform encode l'ID stable en
+hexadécimal : l'identité du périphérique ne dépend ni du nom hwmon, ni de
+`hwmonX`, ni de l'ordre des autres sondes. Pour un HBA, le label utilise le
+modèle et l'adresse PCI lorsqu'ils sont disponibles. Les indices locaux IOC et
+StorCLI ne font pas partie de l'identité publiée.
 
 Ce choix évite d'associer durablement une sonde à une position `tempN` dans un
 périphérique agrégé. Une modification de topologie pourrait autrement décaler

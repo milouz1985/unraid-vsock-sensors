@@ -209,8 +209,8 @@ Résultats attendus :
 - le paquet est `install ok installed` ;
 - DKMS indique `virt-temp/X.Y.Z ... installed` pour le noyau actif ;
 - le service est `active (running)` ;
-- `sensors` affiche un périphérique `unraid_disk_*` par sonde disque ou maximum
-  de groupe et, si activé, un périphérique `unraid_hba_*` par contrôleur.
+- `sensors` affiche un périphérique lisible par sonde, par exemple
+  `unraid_disk1`, `unraid_hdd_maximum` ou `unraid_sas3008`.
 
 ## Sondes publiées
 
@@ -221,8 +221,9 @@ Le module crée un périphérique hwmon indépendant avec un unique `temp1` pour
   disques appartiennent au groupe correspondant.
 
 Chaque contrôleur possède également son propre périphérique lorsque la collecte
-HBA est activée. Le nom technique `unraid_disk_*` ou `unraid_hba_*` encode sans
-collision l'ID stable ; le label `temp1_label` conserve le nom lisible.
+HBA est activée. Le nom hwmon est dérivé du label pour rester lisible ; la partie
+entre parenthèses, telle que le périphérique bloc ou l'adresse PCI, en est
+retirée. Le label complet reste disponible dans `temp1_label`.
 
 ### Pourquoi un périphérique par sonde ?
 
@@ -235,9 +236,9 @@ des sondes fantômes au failsafe de `100 °C`.
 
 Un périphérique par ID stable évite les deux problèmes : chaque sonde reste
 toujours son propre `temp1`, et son retrait supprime son périphérique sans
-réaffecter l'identité des autres. Le numéro dynamique `hwmonX` n'est pas utilisé
-comme identité ; celle-ci vient du parent platform et du nom technique dérivés
-de l'ID stable.
+réaffecter l'identité des autres. Le numéro dynamique `hwmonX` et le nom hwmon
+lisible ne sont pas utilisés comme identité ; celle-ci vient du parent platform,
+dont le nom encode sans collision l'ID stable.
 
 Cette organisation remplace les anciens périphériques agrégés `unraid_storage`
 et `unraid_hba`. Lors de la première mise à niveau vers cette version, il faut
