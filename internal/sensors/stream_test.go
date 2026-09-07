@@ -13,9 +13,9 @@ func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 	var stream bytes.Buffer
 	want := []Response{
 		{
-			Protocol:    ProtocolVersion,
-			Disks:       []Disk{{ID: "disk1", Name: "disk1", Device: "sda", Temp: 35}},
-			HBADisabled: true,
+			Protocol: ProtocolVersion,
+			Disks:    []Disk{{ID: "disk1", Name: "disk1", Device: "sda", Temp: 35}},
+			HBAs:     []HBA{},
 		},
 		{
 			Protocol: ProtocolVersion, Disks: []Disk{},
@@ -44,7 +44,7 @@ func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 
 func TestStreamRejectsIncompatibleProtocol(t *testing.T) {
 	for _, protocol := range []int{0, ProtocolVersion + 1} {
-		frame := fmt.Sprintf(`{"protocol":%d,"disks":[],"hba_disabled":true}`+"\n", protocol)
+		frame := fmt.Sprintf(`{"protocol":%d,"disks":[],"hbas":[]}`+"\n", protocol)
 		if _, err := NewFrameReader(strings.NewReader(frame)).Read(); err == nil {
 			t.Fatalf("protocol %d was accepted", protocol)
 		}

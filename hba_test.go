@@ -205,7 +205,7 @@ func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {
 	})
 	collector.run(context.Background())
 	readings, err := collector.snapshot()
-	if len(readings) != 0 || err != nil {
+	if readings == nil || len(readings) != 0 || err != nil {
 		t.Fatalf("got %#v, %v", readings, err)
 	}
 }

@@ -130,7 +130,7 @@ func TestReceiveSnapshotsRejectsUnexpectedCID(t *testing.T) {
 	waitForSnapshotAccept(t, listener)
 	want := sensors.Response{
 		Protocol: sensors.ProtocolVersion,
-		Disks:    []sensors.Disk{}, HBADisabled: true,
+		Disks:    []sensors.Disk{}, HBAs: []sensors.HBA{},
 	}
 	if err := sensors.WriteFrame(validClient, want); err != nil {
 		t.Fatal(err)
@@ -177,7 +177,7 @@ func TestReceiveSnapshotsClosesSilentStreamAndAcceptsReconnect(t *testing.T) {
 	waitForSnapshotAccept(t, listener)
 	want := sensors.Response{
 		Protocol: sensors.ProtocolVersion,
-		Disks:    []sensors.Disk{}, HBADisabled: true,
+		Disks:    []sensors.Disk{}, HBAs: []sensors.HBA{},
 	}
 	if err := sensors.WriteFrame(secondClient, want); err != nil {
 		t.Fatal(err)
@@ -437,7 +437,7 @@ func TestPublisherDistinguishesMissingAndEmptyDiskInventory(t *testing.T) {
 		hbas: hwmonInventory{initialized: true},
 	}
 
-	_, err := publisher.publish(device, sensors.Response{HBADisabled: true})
+	_, err := publisher.publish(device, sensors.Response{})
 	if err == nil || !strings.Contains(err.Error(), "disks: inventory is missing") {
 		t.Fatalf("missing inventory error = %v", err)
 	}
@@ -446,7 +446,7 @@ func TestPublisherDistinguishesMissingAndEmptyDiskInventory(t *testing.T) {
 	}
 
 	changed, err := publisher.publish(device, sensors.Response{
-		Disks: []sensors.Disk{}, HBADisabled: true,
+		Disks: []sensors.Disk{}, HBAs: []sensors.HBA{},
 	})
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
@@ -632,22 +632,7 @@ func TestPublisherDoesNotReconfigureAfterOtherCommitError(t *testing.T) {
 	}
 }
 
-func TestPublisherRejectsEmptyEnabledHBA(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "virt-temp")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	publisher := &hwmonPublisher{cachePath: filepath.Join(t.TempDir(), "inventory.json")}
-	_, err := publisher.publish(path, sensors.Response{Error: "disks unavailable"})
-	if err == nil || !strings.Contains(err.Error(), "HBA: inventory is empty") {
-		t.Fatalf("error = %v, want empty HBA inventory error", err)
-	}
-	if publisher.hbas.initialized {
-		t.Fatal("empty enabled HBA inventory was configured")
-	}
-}
-
-func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
+func TestPublisherPublishesEmptyHBAInventory(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "virt-temp")
 	if err := os.WriteFile(path, nil, 0600); err != nil {
@@ -657,7 +642,7 @@ func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
 		cachePath: filepath.Join(directory, "inventory.json"),
 		disks:     hwmonInventory{initialized: true},
 	}
-	changed, err := publisher.publish(path, sensors.Response{Disks: []sensors.Disk{}, HBADisabled: true})
+	changed, err := publisher.publish(path, sensors.Response{Disks: []sensors.Disk{}, HBAs: []sensors.HBA{}})
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -676,12 +661,12 @@ func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatal(err)
 	}
-	changed, err = publisher.publish(path, sensors.Response{Disks: []sensors.Disk{}, HBADisabled: true})
+	changed, err = publisher.publish(path, sensors.Response{Disks: []sensors.Disk{}, HBAs: []sensors.HBA{}})
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
 	if len(publisher.hbas.sensors) != 0 {
-		t.Fatalf("disabled HBA inventory = %#v, want empty", publisher.hbas.sensors)
+		t.Fatalf("HBA inventory = %#v, want empty", publisher.hbas.sensors)
 	}
 	data, err = os.ReadFile(path)
 	if err != nil {
@@ -715,8 +700,8 @@ func TestPublisherReportsReconfigurationWhenCacheSaveFails(t *testing.T) {
 	}
 	publisher := &hwmonPublisher{cachePath: filepath.Join(blockingFile, "inventory.json")}
 	state := sensors.Response{
-		Disks:       []sensors.Disk{{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34}},
-		HBADisabled: true,
+		Disks: []sensors.Disk{{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34}},
+		HBAs:  []sensors.HBA{},
 	}
 	reconfigured, err := publisher.publish(device, state)
 	if !reconfigured {

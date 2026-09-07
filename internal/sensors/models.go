@@ -55,10 +55,9 @@ type HBA struct {
 
 // Response contains a snapshot of every sensor exposed by the Unraid agent.
 type Response struct {
-	Protocol    int    `json:"protocol"`
-	Disks       []Disk `json:"disks"`
-	HBAs        []HBA  `json:"hbas,omitempty"`
-	HBADisabled bool   `json:"hba_disabled,omitempty"`
-	HBAError    string `json:"hba_error,omitempty"`
-	Error       string `json:"error,omitempty"`
+	Protocol int    `json:"protocol"`
+	Disks    []Disk `json:"disks"`
+	HBAs     []HBA  `json:"hbas"`
+	HBAError string `json:"hba_error,omitempty"`
+	Error    string `json:"error,omitempty"`
 }

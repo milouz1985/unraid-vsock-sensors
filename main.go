@@ -159,7 +159,6 @@ func collectorSnapshot(
 	hbaReadings, hbaErr := collector.snapshot()
 	response := sensors.Response{
 		Protocol: sensors.ProtocolVersion, Disks: diskReadings, HBAs: hbaReadings,
-		HBADisabled: collector.mode == hbaModeDisabled,
 	}
 	if diskErr != nil {
 		response.Error = diskErr.Error()

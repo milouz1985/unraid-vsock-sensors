@@ -20,8 +20,8 @@ func TestPublishedSnapshotMetadata(t *testing.T) {
 	if response.Protocol != sensors.ProtocolVersion {
 		t.Fatalf("got protocol %d, want %d", response.Protocol, sensors.ProtocolVersion)
 	}
-	if !response.HBADisabled {
-		t.Fatal("disabled HBA collection was not reported")
+	if response.HBAs == nil || len(response.HBAs) != 0 || response.HBAError != "" {
+		t.Fatalf("disabled HBA snapshot = %#v, error %q", response.HBAs, response.HBAError)
 	}
 	if response.Error == "" {
 		t.Fatal("uncollected disks were reported as available")

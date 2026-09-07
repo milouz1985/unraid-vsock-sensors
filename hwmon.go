@@ -246,8 +246,6 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 	}
 	if state.HBAError != "" {
 		hbaErr = fmt.Errorf("HBA: %s", state.HBAError)
-	} else if len(hbas) == 0 && !state.HBADisabled {
-		hbaErr = errors.New("HBA: inventory is empty; waiting for sensors")
 	} else if changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
 	} else {

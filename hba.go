@@ -236,7 +236,7 @@ func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.mode == hbaModeDisabled {
-		return nil, nil
+		return []sensors.HBA{}, nil
 	}
 	if c.err != nil {
 		return nil, c.err

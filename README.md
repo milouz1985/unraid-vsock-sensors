@@ -286,10 +286,12 @@ des températures failsafe de `100 °C`, sans attendre la VM Unraid. Les logicie
 comme CoolerControl peuvent ainsi découvrir les périphériques pendant le boot de
 Proxmox, même si Unraid met plusieurs minutes à démarrer.
 
-Sans cache, le premier relevé disque sans erreur configure ses sondes, y compris
-un inventaire vide lorsqu'aucun disque interne n'est assigné. Une erreur de
-lecture ne modifie jamais la topologie précédente. Un inventaire HBA vide n'est
-valide que lorsque ce collecteur est explicitement `disabled`.
+Sans cache, le premier relevé sans erreur configure sa famille, y compris avec
+un inventaire vide. Un snapshot portant `error` ou `hba_error` n'est pas
+autoritaire : il ne modifie jamais la topologie précédente et la laisse
+atteindre le failsafe. Sans erreur, l'inventaire reçu est autoritaire ; une
+liste vide retire donc les périphériques de la famille. Le mode HBA `disabled`
+est représenté naturellement par `hbas: []` sans `hba_error`.
 
 L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
 pour un disque, puis adresse SAS, adresse PCI ou numéro de série pour un HBA. Les
