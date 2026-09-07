@@ -215,6 +215,8 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	if !time.Now().Before(deadline) {
 		err = context.DeadlineExceeded
 	} else if err == nil {
+		// Do not accept a successful result if the parent was canceled while
+		// the collector was returning, before this collection deadline.
 		err = ctx.Err()
 	}
 	c.mu.Lock()
