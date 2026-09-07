@@ -14,13 +14,9 @@ import (
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-func newDiskStateTracker() diskStateTracker {
-	return make(diskStateTracker)
-}
-
 func TestDiskStateAllowsTransientSMARTFailure(t *testing.T) {
 	disk := unraidDisk{id: "serial1", name: "disk1", device: "sdb", rotational: true}
-	tracker := newDiskStateTracker()
+	tracker := make(diskStateTracker)
 	now := time.Unix(1000, 0)
 
 	readings := tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, 35*time.Second)
@@ -46,7 +42,7 @@ func TestDiskStateIsolatesTimedOutSMARTProbe(t *testing.T) {
 		{id: "serial1", name: "disk1", rotational: true},
 		{id: "serial2", name: "disk2", rotational: true},
 	}
-	tracker := newDiskStateTracker()
+	tracker := make(diskStateTracker)
 	now := time.Unix(1000, 0)
 	grace := 35 * time.Second
 
@@ -75,7 +71,7 @@ func TestDiskStateIsolatesTimedOutSMARTProbe(t *testing.T) {
 }
 
 func TestDiskStateReportsUnavailableWithoutPreviousTemperature(t *testing.T) {
-	tracker := newDiskStateTracker()
+	tracker := make(diskStateTracker)
 	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true}
 	readings := tracker.apply(
 		[]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}}, time.Now(), time.Minute,
@@ -89,7 +85,7 @@ func TestDiskStateReportsUnavailableWithoutPreviousTemperature(t *testing.T) {
 }
 
 func TestDiskStateReportsStandbyAsZero(t *testing.T) {
-	tracker := newDiskStateTracker()
+	tracker := make(diskStateTracker)
 	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true, spundown: true}
 	readings := tracker.apply([]unraidDisk{disk}, []diskProbe{{standby: true}}, time.Now(), time.Minute)
 	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
@@ -105,7 +101,7 @@ func TestCollectDiskProbesSkipsKnownStandbyDisk(t *testing.T) {
 }
 
 func TestDiskStatePurgesDisappearedDisks(t *testing.T) {
-	tracker := newDiskStateTracker()
+	tracker := make(diskStateTracker)
 	disk := unraidDisk{id: "serial1", name: "disk1"}
 	now := time.Unix(1000, 0)
 	tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, time.Minute)
@@ -170,7 +166,7 @@ func TestReadInventory(t *testing.T) {
 		t.Fatalf("inventory = %#v", disks)
 	}
 
-	tracker := newDiskStateTracker()
+	tracker := make(diskStateTracker)
 	readings := tracker.apply(disks, []diskProbe{
 		{temperature: 35}, {standby: true}, {temperature: 48},
 	}, time.Now(), time.Minute)

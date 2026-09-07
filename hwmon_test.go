@@ -367,7 +367,8 @@ func TestEncodeHWMonSamplesRejectsDuplicateIDsBeforeWriting(t *testing.T) {
 }
 
 func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "virt-temp")
+	directory := t.TempDir()
+	path := filepath.Join(directory, "virt-temp")
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -375,12 +376,10 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 		Error: "disks.ini failed",
 		HBAs:  []sensors.HBA{{ID: "sas:1234", Temp: 51}},
 	}
-	_, err := (&hwmonPublisher{}).publish(path, state)
-	if err == nil {
-		t.Fatal("expected disk error")
-	}
-	if message := err.Error(); !strings.Contains(message, "disks: disks.ini failed") {
-		t.Fatalf("unexpected error %q", message)
+	publisher := &hwmonPublisher{cachePath: filepath.Join(directory, "inventory.json")}
+	_, err := publisher.publish(path, state)
+	if err == nil || err.Error() != "disks: disks.ini failed" {
+		t.Fatalf("error = %v, want disks.ini failure only", err)
 	}
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {
@@ -412,7 +411,9 @@ func TestPublisherReconfiguresChangedTopology(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		_, _ = publishHWMonFamily(path, "disk", &publisher.disks, readings)
+		if _, err := publishHWMonFamily(path, "disk", &publisher.disks, readings); err != nil {
+			t.Fatalf("state %d: %v", index, err)
+		}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
