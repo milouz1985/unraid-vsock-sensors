@@ -11,38 +11,28 @@ import (
 )
 
 func TestServerResponseMetadata(t *testing.T) {
-	diskMessage, _, hbaMessage, _, heartbeat := collectorMessages(
+	response := collectorSnapshot(
 		newDiskCollector("unused", time.Minute),
 		newHBACollector(time.Minute, hbaModeDisabled),
 	)
 
-	if heartbeat.Version != version {
-		t.Fatalf("got version %q, want %q", heartbeat.Version, version)
+	if response.Version != version {
+		t.Fatalf("got version %q, want %q", response.Version, version)
 	}
-	if !hbaMessage.HBADisabled {
+	if !response.HBADisabled {
 		t.Fatal("disabled HBA collection was not reported")
 	}
-	if diskMessage.Type != sensors.MessageDisks || hbaMessage.Type != sensors.MessageHBAs ||
-		heartbeat.Type != sensors.MessageHeartbeat {
-		t.Fatalf("unexpected message types: %q, %q, %q", diskMessage.Type, hbaMessage.Type, heartbeat.Type)
-	}
-	if heartbeat.Disks != nil || heartbeat.HBAs != nil || heartbeat.Error != "" ||
-		heartbeat.HBAError != "" || heartbeat.HBADisabled || heartbeat.ValidFor != 0 {
-		t.Fatalf("heartbeat contains sensor data: %#v", heartbeat)
+	if response.Error == "" {
+		t.Fatal("uncollected disks were reported as available")
 	}
 }
 
 func TestHandleReturnsLatestSnapshot(t *testing.T) {
 	store := &snapshotStore{}
-	if err := store.apply(sensors.Message{
-		Type: sensors.MessageDisks,
-		Response: sensors.Response{
-			Version: "test-version",
-			Disks:   []sensors.Disk{{ID: "serial", Name: "disk1", Temp: 37}},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	store.set(sensors.Response{
+		Version: "test-version",
+		Disks:   []sensors.Disk{{ID: "serial", Name: "disk1", Temp: 37}},
+	})
 	server, client := net.Pipe()
 	done := make(chan struct{})
 	go func() {
@@ -61,58 +51,17 @@ func TestHandleReturnsLatestSnapshot(t *testing.T) {
 	}
 }
 
-func TestSnapshotStoreExpiresFamiliesIndependently(t *testing.T) {
+func TestSnapshotStoreExpiresDisconnectedStream(t *testing.T) {
 	store := &snapshotStore{}
-	if err := store.apply(sensors.Message{
-		Type:     sensors.MessageDisks,
-		Response: sensors.Response{Disks: []sensors.Disk{{ID: "disk", Temp: 37}}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.apply(sensors.Message{
-		Type:     sensors.MessageHBAs,
-		Response: sensors.Response{HBAs: []sensors.HBA{{ID: "hba", Temp: 48}}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	store.expireDisks()
+	store.set(sensors.Response{
+		Disks: []sensors.Disk{{ID: "disk", Temp: 37}},
+		HBAs:  []sensors.HBA{{ID: "hba", Temp: 48}},
+	})
+	store.receivedAt = time.Now().Add(-snapshotStreamTimeout)
 	response := store.get()
-	if response.Error == "" || len(response.Disks) != 1 {
-		t.Fatalf("disk family did not expire: %#v", response)
-	}
-	if response.HBAError != "" || len(response.HBAs) != 1 {
-		t.Fatalf("disk expiry changed HBA family: %#v", response)
-	}
-
-	store.expireHBAs()
-	response = store.get()
-	if response.HBAError == "" || len(response.HBAs) != 1 {
-		t.Fatalf("HBA family did not expire: %#v", response)
-	}
-}
-
-func TestSnapshotStoreHeartbeatPreservesFamilyState(t *testing.T) {
-	store := &snapshotStore{}
-	for _, message := range []sensors.Message{
-		{Type: sensors.MessageDisks, Response: sensors.Response{
-			Disks: []sensors.Disk{{ID: "disk", Temp: 37}}, Error: "disk failed",
-		}},
-		{Type: sensors.MessageHBAs, Response: sensors.Response{
-			HBAs: []sensors.HBA{{ID: "hba", Temp: 48}}, HBADisabled: true, HBAError: "HBA failed",
-		}},
-		{Type: sensors.MessageHeartbeat, Response: sensors.Response{Version: "test"}},
-	} {
-		if err := store.apply(message); err != nil {
-			t.Fatal(err)
-		}
-	}
-	response := store.get()
-	if response.Version != "test" || response.Error != "disk failed" ||
-		response.HBAError != "HBA failed" || !response.HBADisabled {
-		t.Fatalf("heartbeat changed family state: %#v", response)
-	}
-	if len(response.Disks) != 1 || len(response.HBAs) != 1 {
-		t.Fatalf("heartbeat replaced family data: %#v", response)
+	if response.Error == "" || response.HBAError == "" ||
+		len(response.Disks) != 1 || len(response.HBAs) != 1 {
+		t.Fatalf("disconnected stream did not expire: %#v", response)
 	}
 }
 

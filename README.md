@@ -14,9 +14,8 @@ L'agent Unraid lit l'inventaire et l'état de rotation, puis relève en
 arrière-plan la température des disques actifs avec le helper
 `smartctl_type`. Il ne consulte pas les disques déjà signalés en veille et
 utilise `smartctl -n standby` pour couvrir un changement d'état concurrent.
-Il maintient une connexion VSOCK vers Proxmox, y pousse séparément les familles
-disque et HBA après leurs collectes, puis confirme leur validité avec un
-heartbeat léger chaque seconde.
+Il maintient une connexion VSOCK vers Proxmox et y pousse chaque seconde le
+dernier snapshot complet. Cette publication périodique sert aussi de heartbeat.
 
 ## Architecture
 
@@ -309,25 +308,19 @@ Pendant l'exécution :
 
 ## Failsafe et fraîcheur des mesures
 
-Le récepteur Proxmox suit séparément la fraîcheur des familles disque et HBA.
-Chaque état transporte sa durée de validité restante, calculée à partir de
-l'intervalle de collecte et de son délai maximal. Proxmox mémorise cette
-échéance jusqu'au prochain état de la famille : un collecteur bloqué finit donc
-par expirer. Le heartbeat contrôle séparément la connexion ; trois secondes
-sans heartbeat font expirer les deux familles. Une erreur explicite ramène
-l'échéance de sa famille à trois secondes.
-Une erreur d'une famille n'interrompt pas l'autre.
+Chaque collecteur Unraid invalide son propre cache après son intervalle normal
+augmenté du délai maximal de collecte. Un collecteur bloqué finit donc par
+publier une erreur pour sa famille ; Proxmox cesse de l'actualiser sans
+interrompre l'autre famille.
 
-Le module `virt_temp` conserve son propre garde-fou : chaque canal non actualisé
-pendant 10 secondes retourne aussi `100 °C`. Ce second délai reste actif si le
-récepteur Proxmox lui-même s'arrête et ne peut donc plus injecter le failsafe.
+Chaque canal du module `virt_temp` non actualisé pendant 10 secondes retourne
+`100 °C`. Ce garde-fou couvre aussi bien une famille en erreur qu'une perte du
+flux VSOCK ou l'arrêt du récepteur Proxmox.
 
 La température des disques vient d'une collecte SMART directe, exécutée en
 arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.
-Chaque nouvel état est poussé après sa collecte. Entre deux collectes, le
-heartbeat VSOCK confirme chaque seconde que la connexion reste active et permet
-à Proxmox de continuer à alimenter le module `virt-temp`, dont le propre failsafe
-se déclenche après 10 secondes sans mise à jour. Pour une régulation thermique
+Le snapshot VSOCK réutilise ce relevé entre deux collectes et permet à Proxmox
+de continuer à alimenter le module `virt-temp`. Pour une régulation thermique
 réactive, une
 valeur de 30 à 60 secondes est recommandée. Cinq minutes constitue une limite
 haute raisonnable ; au-delà, une température peut rester ancienne trop
@@ -340,8 +333,8 @@ strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
 Fahrenheit sont converties puis validées dans la plage `0..150 °C`. Chaque
 collecte native lit aussi les pages de fabrication pour associer la température
 à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC.
-L'agent actualise ce relevé en arrière-plan puis le pousse sans bloquer le
-heartbeat VSOCK. Lorsque le backend StorCLI est sélectionné,
+L'agent actualise ce relevé en arrière-plan sans bloquer la publication VSOCK.
+Lorsque le backend StorCLI est sélectionné,
 la température ROC fournie par sa sortie JSON est utilisée à la place.
 
 Une collecte HBA dispose de 15 secondes. Au-delà, l'agent signale une erreur
@@ -519,7 +512,7 @@ virtuelle alimentée par les températures d'une VM a été inspirée par le pro
 GPL-2.0
 [`wxxsfxyzm/hdd-temp-monitor`](https://github.com/wxxsfxyzm/hdd-temp-monitor).
 Le présent projet étend cette idée avec AF_VSOCK, des inventaires dynamiques et
-persistants, plusieurs familles de sondes et une gestion explicite du failsafe.
+persistants, plusieurs familles de sondes et un failsafe indépendant du flux.
 
 ## Licence
 

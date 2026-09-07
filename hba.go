@@ -22,7 +22,6 @@ type hbaCollector struct {
 	readings  []sensors.HBA
 	err       error
 	updatedAt time.Time
-	revision  uint64
 	reader    hbaSnapshotReader
 }
 
@@ -220,7 +219,6 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.revision++
 	c.err = err
 	if err != nil {
 		c.readings = nil
@@ -231,14 +229,19 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	c.updatedAt = time.Now()
 }
 
-func (c *hbaCollector) snapshot() ([]sensors.HBA, error, uint64, time.Duration) {
+func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.err != nil {
-		return nil, c.err, c.revision, 0
+	if c.mode == hbaModeDisabled {
+		return nil, nil
 	}
-	validFor := max(c.updatedAt.Add(c.interval+hbaCollectionTimeout).Sub(time.Now()), 0)
-	return slices.Clone(c.readings), nil, c.revision, validFor
+	if c.err != nil {
+		return nil, c.err
+	}
+	if !time.Now().Before(c.updatedAt.Add(c.interval + hbaCollectionTimeout)) {
+		return nil, errors.New("HBA temperature snapshot expired")
+	}
+	return slices.Clone(c.readings), nil
 }
 
 func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {

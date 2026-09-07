@@ -12,7 +12,6 @@ import (
 	"log/syslog"
 	"os"
 	"os/signal"
-	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -177,33 +176,24 @@ func serve(args []string) error {
 	return publishSnapshots(ctx, uint32(*port), disks, hbas)
 }
 
-func collectorMessages(
+func collectorSnapshot(
 	disks *diskCollector,
 	collector *hbaCollector,
-) (sensors.Message, uint64, sensors.Message, uint64, sensors.Message) {
+) sensors.Response {
 	now := time.Now().UTC()
-	diskReadings, diskErr, diskRevision, diskValidFor := disks.snapshot()
-	hbaReadings, hbaErr, hbaRevision, hbaValidFor := collector.snapshot()
-	diskResponse := sensors.Response{Version: version, Timestamp: now, Disks: diskReadings}
-	if diskErr != nil {
-		diskResponse.Error = diskErr.Error()
-	}
-	hbaResponse := sensors.Response{
-		Version: version, Timestamp: now, HBAs: hbaReadings,
+	diskReadings, diskErr := disks.snapshot()
+	hbaReadings, hbaErr := collector.snapshot()
+	response := sensors.Response{
+		Version: version, Timestamp: now, Disks: diskReadings, HBAs: hbaReadings,
 		HBADisabled: collector.mode == hbaModeDisabled,
 	}
+	if diskErr != nil {
+		response.Error = diskErr.Error()
+	}
 	if hbaErr != nil {
-		hbaResponse.HBAError = hbaErr.Error()
+		response.HBAError = hbaErr.Error()
 	}
-	heartbeat := sensors.Message{
-		Type:     sensors.MessageHeartbeat,
-		Response: sensors.Response{Version: version, Timestamp: now},
-	}
-	return sensors.Message{
-			Type: sensors.MessageDisks, ValidFor: diskValidFor, Response: diskResponse,
-		}, diskRevision, sensors.Message{
-			Type: sensors.MessageHBAs, ValidFor: hbaValidFor, Response: hbaResponse,
-		}, hbaRevision, heartbeat
+	return response
 }
 
 func publishSnapshots(
@@ -228,31 +218,8 @@ func publishSnapshots(
 			}
 			continue
 		}
-		if lastError != "" {
-			log.Printf("VSOCK publishing recovered")
-			lastError = ""
-		}
-		var lastDisks sensors.Message
-		var diskRevision, hbaRevision uint64
-		disksSent, hbasSent := false, false
 		for ctx.Err() == nil {
-			diskMessage, nextDiskRevision, hbaMessage, nextHBARevision, heartbeat :=
-				collectorMessages(disks, collector)
-			if !disksSent || nextDiskRevision != diskRevision || !sameDiskMessage(lastDisks, diskMessage) {
-				err = writeStreamMessage(conn, diskMessage)
-				if err == nil {
-					lastDisks, diskRevision, disksSent = diskMessage, nextDiskRevision, true
-				}
-			}
-			if err == nil && (!hbasSent || nextHBARevision != hbaRevision) {
-				err = writeStreamMessage(conn, hbaMessage)
-				if err == nil {
-					hbaRevision, hbasSent = nextHBARevision, true
-				}
-			}
-			if err == nil {
-				err = writeStreamMessage(conn, heartbeat)
-			}
+			err = writeStreamMessage(conn, collectorSnapshot(disks, collector))
 			if err != nil {
 				_ = conn.Close()
 				message := err.Error()
@@ -261,6 +228,10 @@ func publishSnapshots(
 					lastError = message
 				}
 				break
+			}
+			if lastError != "" {
+				log.Printf("VSOCK publishing recovered")
+				lastError = ""
 			}
 			if !waitFor(ctx, defaultPublishInterval) {
 				_ = conn.Close()
@@ -277,15 +248,11 @@ func publishSnapshots(
 func writeStreamMessage(conn interface {
 	SetWriteDeadline(time.Time) error
 	io.Writer
-}, message sensors.Message) error {
+}, response sensors.Response) error {
 	if err := conn.SetWriteDeadline(time.Now().Add(requestTimeout)); err != nil {
 		return err
 	}
-	return sensors.WriteFrame(conn, message)
-}
-
-func sameDiskMessage(left, right sensors.Message) bool {
-	return left.Error == right.Error && slices.Equal(left.Disks, right.Disks)
+	return sensors.WriteFrame(conn, response)
 }
 
 func waitFor(ctx context.Context, delay time.Duration) bool {

@@ -2,7 +2,6 @@ package sensors
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,23 +9,15 @@ import (
 
 const maxFrameSize = 1 << 20
 
-// WriteFrame writes one newline-delimited JSON message to a persistent stream.
-func WriteFrame(out io.Writer, message Message) error {
-	payload, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("encode stream message: %w", err)
-	}
-	if len(payload) > maxFrameSize {
-		return fmt.Errorf("stream message exceeds %d bytes", maxFrameSize)
-	}
-	payload = append(payload, '\n')
-	if _, err := io.Copy(out, bytes.NewReader(payload)); err != nil {
-		return fmt.Errorf("write stream message: %w", err)
+// WriteFrame writes one newline-delimited JSON snapshot to a persistent stream.
+func WriteFrame(out io.Writer, response Response) error {
+	if err := json.NewEncoder(out).Encode(response); err != nil {
+		return fmt.Errorf("encode stream snapshot: %w", err)
 	}
 	return nil
 }
 
-// FrameReader reads successive newline-delimited JSON messages while limiting
+// FrameReader reads successive newline-delimited JSON snapshots while limiting
 // each one to maxFrameSize bytes.
 type FrameReader struct {
 	scanner *bufio.Scanner
@@ -38,16 +29,16 @@ func NewFrameReader(in io.Reader) *FrameReader {
 	return &FrameReader{scanner: scanner}
 }
 
-func (r *FrameReader) Read() (Message, error) {
-	var message Message
+func (r *FrameReader) Read() (Response, error) {
+	var response Response
 	if !r.scanner.Scan() {
 		if err := r.scanner.Err(); err != nil {
-			return message, fmt.Errorf("read stream message: %w", err)
+			return response, fmt.Errorf("read stream snapshot: %w", err)
 		}
-		return message, io.EOF
+		return response, io.EOF
 	}
-	if err := json.Unmarshal(r.scanner.Bytes(), &message); err != nil {
-		return message, fmt.Errorf("decode stream message: %w", err)
+	if err := json.Unmarshal(r.scanner.Bytes(), &response); err != nil {
+		return response, fmt.Errorf("decode stream snapshot: %w", err)
 	}
-	return message, nil
+	return response, nil
 }

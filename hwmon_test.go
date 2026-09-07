@@ -11,7 +11,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
@@ -93,90 +92,6 @@ func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 		"commit\tdisk\n"
 	if got := string(data); got != want {
 		t.Fatalf("update = %q, want explicit disk and group failsafe %q", got, want)
-	}
-}
-
-func TestPublisherExplicitlyFailsSafeAnExpiredFamily(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "virt-temp")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	publisher := &hwmonPublisher{disks: hwmonInventory{
-		initialized: true,
-		sensors: []hwmonSensor{
-			{id: "disk:group:hdd", label: "HDD maximum", members: []string{"disk:1", "disk:2"}},
-			{id: "disk:1", label: "disk1 (sda)"},
-			{id: "disk:2", label: "disk2 (sdb)"},
-		},
-	}}
-	if err := publisher.publishFailsafe(path, "disk"); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "sample\tdisk:group:hdd\t100000\tHDD maximum\n" +
-		"sample\tdisk:1\t100000\tdisk1 (sda)\n" +
-		"sample\tdisk:2\t100000\tdisk2 (sdb)\n" +
-		"commit\tdisk\n"
-	if got := string(data); got != want {
-		t.Fatalf("failsafe update = %q, want %q", got, want)
-	}
-}
-
-func TestFreshnessDeadlineExpiresOnceUntilRefreshed(t *testing.T) {
-	now := time.Unix(100, 0)
-	var freshness freshnessDeadline
-	if freshness.expire(now) {
-		t.Fatal("a family which was never received must not expire")
-	}
-	freshness.refresh(now, 3*time.Second)
-	if freshness.expire(now.Add(2999 * time.Millisecond)) {
-		t.Fatal("family expired before its TTL")
-	}
-	if !freshness.expire(now.Add(3 * time.Second)) {
-		t.Fatal("family did not expire at its TTL")
-	}
-	if freshness.expire(now.Add(4 * time.Second)) {
-		t.Fatal("family expiry was emitted more than once")
-	}
-	freshness.refresh(now.Add(5*time.Second), 3*time.Second)
-	if !freshness.expire(now.Add(8 * time.Second)) {
-		t.Fatal("refreshed family did not expire again")
-	}
-}
-
-func TestFamilyErrorShortensButDoesNotExtendFreshness(t *testing.T) {
-	now := time.Unix(100, 0)
-	var freshness freshnessDeadline
-	freshness.refresh(now, time.Minute)
-	if updateFamilyFreshness(&freshness, now, 0, "collection failed") {
-		t.Fatal("family error expired without its transport grace")
-	}
-	deadline := freshness.until
-	if updateFamilyFreshness(&freshness, now.Add(time.Second), 0, "collection failed") {
-		t.Fatal("repeated family error expired too early")
-	}
-	if !freshness.until.Equal(deadline) {
-		t.Fatalf("repeated error extended deadline from %s to %s", deadline, freshness.until)
-	}
-	if !freshness.expire(deadline) {
-		t.Fatal("family did not expire after its error grace")
-	}
-}
-
-func TestZeroSourceValidityExpiresImmediately(t *testing.T) {
-	now := time.Unix(100, 0)
-	var freshness freshnessDeadline
-	if !updateFamilyFreshness(&freshness, now, 0, "") {
-		t.Fatal("zero source validity did not expire")
-	}
-	if updateFamilyFreshness(&freshness, now.Add(time.Second), 0, "") {
-		t.Fatal("repeated zero source validity emitted another expiry")
-	}
-	if updateFamilyFreshness(&freshness, now.Add(time.Second), time.Minute, "") {
-		t.Fatal("valid source remained expired after recovery")
 	}
 }
 

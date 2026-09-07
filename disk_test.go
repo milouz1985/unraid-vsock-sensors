@@ -244,14 +244,14 @@ func TestParseSMARTTemperature(t *testing.T) {
 	}
 }
 
-func TestDiskCollectorReportsExpiredValidity(t *testing.T) {
+func TestDiskCollectorExpiresStaleSnapshot(t *testing.T) {
 	collector := newDiskCollector("unused", time.Minute)
 	collector.err = nil
 	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
 	collector.updatedAt = time.Now().Add(-collector.interval - diskCollectionTimeout)
-	readings, err, _, validFor := collector.snapshot()
-	if err != nil || len(readings) != 1 || validFor != 0 {
-		t.Fatalf("expired snapshot = %#v, %v, valid for %s", readings, err, validFor)
+	readings, err := collector.snapshot()
+	if err == nil || len(readings) != 0 {
+		t.Fatalf("expired snapshot = %#v, %v", readings, err)
 	}
 }
 
@@ -261,7 +261,7 @@ func TestDiskCollectorExpiresFailedReadingAtGraceDeadline(t *testing.T) {
 	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
 	collector.updatedAt = time.Now()
 	collector.state["serial"] = diskState{failedSince: time.Now().Add(-collector.grace - time.Second)}
-	readings, err, _, _ := collector.snapshot()
+	readings, err := collector.snapshot()
 	if err != nil || len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
 		t.Fatalf("expired failed reading = %#v, %v", readings, err)
 	}

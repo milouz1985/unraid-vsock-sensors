@@ -21,11 +21,10 @@ L'inventaire persistant est stocké par défaut dans
 `/var/lib/unraid-vsock-sensors/hwmon-inventory.json`.
 
 L'agent Unraid ouvre une connexion VSOCK persistante vers ce récepteur. Il
-pousse séparément les familles disque et HBA après leurs collectes, puis envoie
-un heartbeat léger chaque seconde. Le récepteur refuse les connexions qui ne
-viennent pas du CID configuré, maintient `/dev/virt-temp` à jour et expose le
-dernier snapshot sur `/run/unraid-vsock-sensors/sensors.sock` pour la commande
-locale `get`.
+pousse chaque seconde son dernier snapshot complet, qui sert aussi de heartbeat.
+Le récepteur refuse les connexions qui ne viennent pas du CID configuré,
+maintient `/dev/virt-temp` à jour et expose le dernier snapshot sur
+`/run/unraid-vsock-sensors/sensors.sock` pour la commande locale `get`.
 
 ## Fonctionnement du pilote
 
@@ -121,16 +120,14 @@ UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
 Le récepteur utilise `systemctl try-restart` : une unité absente ou inactive n'est
 pas démarrée. La valeur reste vide par défaut.
 
-Le récepteur suit un TTL distinct pour les familles disque et HBA. Chaque état
-transporte la durée de validité restante de sa collecte, que Proxmox mémorise
-jusqu'au prochain état de cette famille. Un collecteur bloqué expire donc même
-si la connexion reste active. Une erreur explicite ramène son échéance à trois
-secondes ; trois secondes sans heartbeat font expirer les deux familles à
-`100000` millidegrés Celsius.
+Chaque collecteur Unraid invalide son cache après son intervalle normal augmenté
+du délai maximal de collecte. Le snapshot signale alors une erreur et le
+récepteur cesse d'actualiser uniquement la famille concernée.
 
-Chaque canal applique en plus le même failsafe après 10 secondes sans mise à
-jour. Ce second délai, géré dans le module, protège encore le système si le
-récepteur lui-même s'arrête. Il est configurable entre 1 et 300 secondes. Par
+Chaque canal applique un failsafe de `100000` millidegrés Celsius après
+10 secondes sans mise à jour. Ce délai, géré dans le module, couvre aussi une
+perte du flux VSOCK ou l'arrêt du récepteur. Il est configurable entre 1 et
+300 secondes. Par
 exemple, pour utiliser 15 secondes de manière persistante :
 
 ```sh

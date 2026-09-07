@@ -17,59 +17,34 @@ import (
 const defaultSnapshotSocket = "/run/unraid-vsock-sensors/sensors.sock"
 
 type snapshotStore struct {
-	mu        sync.RWMutex
-	response  sensors.Response
-	available bool
+	mu         sync.RWMutex
+	response   sensors.Response
+	receivedAt time.Time
 }
 
-func (s *snapshotStore) apply(message sensors.Message) error {
+func (s *snapshotStore) set(response sensors.Response) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.available {
-		s.response.Error = "no disk snapshot received yet"
-		s.response.HBAError = "no HBA snapshot received yet"
-	}
-	s.response.Version = message.Version
-	s.response.Timestamp = message.Timestamp
-	switch message.Type {
-	case sensors.MessageDisks:
-		s.response.Disks = append([]sensors.Disk(nil), message.Disks...)
-		s.response.Error = message.Error
-	case sensors.MessageHBAs:
-		s.response.HBAs = append([]sensors.HBA(nil), message.HBAs...)
-		s.response.HBADisabled = message.HBADisabled
-		s.response.HBAError = message.HBAError
-	case sensors.MessageHeartbeat:
-	default:
-		return fmt.Errorf("unknown stream message type %q", message.Type)
-	}
-	s.available = true
-	return nil
+	s.response = cloneResponse(response)
+	s.receivedAt = time.Now()
 }
 
 func (s *snapshotStore) get() sensors.Response {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if !s.available {
+	if s.receivedAt.IsZero() {
 		return sensors.Response{
 			Version:  version,
 			Error:    "no Unraid snapshot received yet",
 			HBAError: "no Unraid snapshot received yet",
 		}
 	}
-	return cloneResponse(s.response)
-}
-
-func (s *snapshotStore) expireDisks() {
-	s.mu.Lock()
-	s.response.Error = "disk snapshot TTL expired"
-	s.mu.Unlock()
-}
-
-func (s *snapshotStore) expireHBAs() {
-	s.mu.Lock()
-	s.response.HBAError = "HBA snapshot TTL expired"
-	s.mu.Unlock()
+	response := cloneResponse(s.response)
+	if time.Since(s.receivedAt) >= snapshotStreamTimeout {
+		response.Error = "Unraid snapshot stream expired"
+		response.HBAError = "Unraid snapshot stream expired"
+	}
+	return response
 }
 
 func cloneResponse(response sensors.Response) sensors.Response {
@@ -122,7 +97,7 @@ func serveSnapshotSocket(ctx context.Context, listener net.Listener, store *snap
 			}
 			return err
 		}
-		go handleSnapshotRequest(conn, store)
+		handleSnapshotRequest(conn, store)
 	}
 }
 

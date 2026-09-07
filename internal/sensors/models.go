@@ -68,21 +68,3 @@ type Response struct {
 	HBAError    string    `json:"hba_error,omitempty"`
 	Error       string    `json:"error,omitempty"`
 }
-
-// MessageType identifies a frame on the persistent guest-to-host stream.
-type MessageType string
-
-const (
-	MessageHeartbeat MessageType = "heartbeat"
-	MessageDisks     MessageType = "disks"
-	MessageHBAs      MessageType = "hbas"
-)
-
-// Message carries either one sensor family or a lightweight heartbeat. The
-// embedded response keeps the public snapshot and stream representations
-// aligned without duplicating their JSON fields.
-type Message struct {
-	Type     MessageType   `json:"type"`
-	ValidFor time.Duration `json:"valid_for,omitempty"`
-	Response
-}
