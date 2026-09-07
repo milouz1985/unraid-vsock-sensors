@@ -285,7 +285,7 @@ func TestBlockedDiskCollectionDoesNotStopSnapshotPublication(t *testing.T) {
 	frames := capturePublishedSnapshots(
 		t,
 		collector,
-		newHBACollector(time.Minute, hbaModeDisabled),
+		newTestHBACollector(time.Minute, hbaModeDisabled),
 		2,
 	)
 	for index, frame := range frames {

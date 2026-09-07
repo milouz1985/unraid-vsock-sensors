@@ -7,7 +7,7 @@ import (
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-func newHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
+func newTestHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
 	return newConfiguredHBACollector(interval, mode, hbaBackendMPT3CTL)
 }
 

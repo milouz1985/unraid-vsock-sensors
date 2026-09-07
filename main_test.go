@@ -14,7 +14,7 @@ import (
 func TestPublishedSnapshotMetadata(t *testing.T) {
 	response := collectorSnapshot(
 		newDiskCollector("unused", time.Minute),
-		newHBACollector(time.Minute, hbaModeDisabled),
+		newTestHBACollector(time.Minute, hbaModeDisabled),
 	)
 
 	if response.Version != version {
@@ -92,7 +92,7 @@ func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
 			ctx,
 			time.Millisecond,
 			newDiskCollector("unused", time.Minute),
-			newHBACollector(time.Minute, hbaModeDisabled),
+			newTestHBACollector(time.Minute, hbaModeDisabled),
 			func(context.Context) (snapshotConnection, error) {
 				if dials >= len(connections) {
 					return nil, errors.New("unexpected extra dial")
