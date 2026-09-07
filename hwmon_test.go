@@ -272,7 +272,7 @@ func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Temp: 38},
 		{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 45},
 	}})
-	if _, err := publishHWMonFamily(path, "disk", &inventory, initial, false); err != nil {
+	if _, err := publishHWMonFamily(path, "disk", &inventory, initial); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Truncate(path, 0); err != nil {
@@ -283,7 +283,7 @@ func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
 		{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 46},
 	}})
-	if _, err := publishHWMonFamily(path, "disk", &inventory, current, false); err != nil {
+	if _, err := publishHWMonFamily(path, "disk", &inventory, current); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -412,7 +412,7 @@ func TestPublisherReconfiguresChangedTopology(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		_, _ = publishHWMonFamily(path, "disk", &publisher.disks, readings, false)
+		_, _ = publishHWMonFamily(path, "disk", &publisher.disks, readings)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -556,14 +556,14 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 	}
 	inventory := hwmonInventory{}
 	initial := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sda)", 34)}
-	if _, err := publishHWMonFamily(path, "disk", &inventory, initial, false); err != nil {
+	if _, err := publishHWMonFamily(path, "disk", &inventory, initial); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatal(err)
 	}
 	changed := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sdb)", 35)}
-	if _, err := publishHWMonFamily(path, "disk", &inventory, changed, false); err != nil {
+	if _, err := publishHWMonFamily(path, "disk", &inventory, changed); err != nil {
 		t.Fatalf("a label change must not change sensor identity: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -592,7 +592,7 @@ func TestPublisherReconfiguresAfterStaleCommit(t *testing.T) {
 		}
 		return nil
 	}
-	changed, err := publishHWMonFamilyWithWriter("unused", "disk", &inventory, current, false, write)
+	changed, err := publishHWMonFamilyWithWriter("unused", "disk", &inventory, current, write)
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -616,41 +616,40 @@ func TestPublisherDoesNotReconfigureAfterOtherCommitError(t *testing.T) {
 		calls++
 		return wantErr
 	}
-	changed, err := publishHWMonFamilyWithWriter("unused", "disk", &inventory, current, false, write)
+	changed, err := publishHWMonFamilyWithWriter("unused", "disk", &inventory, current, write)
 	if changed || !errors.Is(err, wantErr) || calls != 1 {
 		t.Fatalf("changed=%v err=%v calls=%d", changed, err, calls)
 	}
 }
 
-func TestPublisherWaitsForFirstNonEmptyInventory(t *testing.T) {
+func TestPublisherRejectsEmptyEnabledHBA(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "virt-temp")
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	inventory := hwmonInventory{}
-	if _, err := publishHWMonFamily(path, "disk", &inventory, nil, false); err == nil {
-		t.Fatal("an empty initial inventory should not be configured")
+	publisher := &hwmonPublisher{cachePath: filepath.Join(t.TempDir(), "inventory.json")}
+	_, err := publisher.publish(path, sensors.Response{Error: "disks unavailable"})
+	if err == nil || !strings.Contains(err.Error(), "HBA: inventory is empty") {
+		t.Fatalf("error = %v, want empty HBA inventory error", err)
 	}
-	if inventory.initialized {
-		t.Fatal("empty initial inventory was frozen")
-	}
-	readings := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sda)", 35)}
-	if _, err := publishHWMonFamily(path, "disk", &inventory, readings, false); err != nil {
-		t.Fatal(err)
-	}
-	if !inventory.initialized {
-		t.Fatal("non-empty inventory was not configured")
+	if publisher.hbas.initialized {
+		t.Fatal("empty enabled HBA inventory was configured")
 	}
 }
 
 func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "virt-temp")
+	directory := t.TempDir()
+	path := filepath.Join(directory, "virt-temp")
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	inventory := hwmonInventory{}
-	if _, err := publishHWMonFamily(path, "hba", &inventory, nil, true); err != nil {
-		t.Fatal(err)
+	publisher := &hwmonPublisher{
+		cachePath: filepath.Join(directory, "inventory.json"),
+		disks:     hwmonInventory{initialized: true},
+	}
+	changed, err := publisher.publish(path, sensors.Response{HBADisabled: true})
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -660,19 +659,19 @@ func TestPublisherAllowsExplicitlyDisabledEmptyFamily(t *testing.T) {
 		t.Fatalf("configuration = %q, want %q", got, want)
 	}
 
-	inventory = hwmonInventory{
+	publisher.hbas = hwmonInventory{
 		initialized: true,
 		sensors:     []hwmonSensor{{id: "hba:sas:1234", label: "HBA"}},
 	}
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := publishHWMonFamily(path, "hba", &inventory, nil, true)
+	changed, err = publisher.publish(path, sensors.Response{HBADisabled: true})
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
-	if len(inventory.sensors) != 0 {
-		t.Fatalf("disabled HBA inventory = %#v, want empty", inventory.sensors)
+	if len(publisher.hbas.sensors) != 0 {
+		t.Fatalf("disabled HBA inventory = %#v, want empty", publisher.hbas.sensors)
 	}
 	data, err = os.ReadFile(path)
 	if err != nil {

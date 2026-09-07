@@ -63,13 +63,13 @@ func (publisher *hwmonPublisher) restore(device string) error {
 	}
 	if cached.Disks != nil {
 		readings := samplesFromCache(cached.Disks.Sensors)
-		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, true); err != nil {
+		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings); err != nil {
 			return fmt.Errorf("restore disks: %w", err)
 		}
 	}
 	if cached.HBAs != nil {
 		readings := samplesFromCache(cached.HBAs.Sensors)
-		if _, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings, true); err != nil {
+		if _, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings); err != nil {
 			return fmt.Errorf("restore HBA: %w", err)
 		}
 	}

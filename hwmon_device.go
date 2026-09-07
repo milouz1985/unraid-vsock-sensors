@@ -19,33 +19,21 @@ func publishHWMonFamily(
 	path, namespace string,
 	inventory *hwmonInventory,
 	current []hwmonSample,
-	allowEmpty bool,
 ) (bool, error) {
-	return publishHWMonFamilyWithWriter(path, namespace, inventory, current, allowEmpty, writeHWMonSamples)
+	return publishHWMonFamilyWithWriter(path, namespace, inventory, current, writeHWMonSamples)
 }
 
 func publishHWMonFamilyWithWriter(
 	path, namespace string,
 	inventory *hwmonInventory,
 	current []hwmonSample,
-	allowEmpty bool,
 	write func(string, string, string, []hwmonSample) error,
 ) (bool, error) {
-	if len(current) == 0 && !allowEmpty {
-		return false, errors.New("inventory is empty; waiting for sensors")
-	}
-	if !inventory.initialized {
+	if !inventory.initialized || !sameHWMonTopology(inventory.sensors, current) {
 		if err := write(path, namespace, "configure", current); err != nil {
 			return false, err
 		}
 		inventory.initialized = true
-		inventory.sensors = sensorsFromSamples(current)
-		return true, nil
-	}
-	if !sameHWMonTopology(inventory.sensors, current) {
-		if err := write(path, namespace, "configure", current); err != nil {
-			return false, err
-		}
 		inventory.sensors = sensorsFromSamples(current)
 		return true, nil
 	}

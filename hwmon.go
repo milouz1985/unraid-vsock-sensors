@@ -232,7 +232,7 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 		diskErr = fmt.Errorf("disks: %s", state.Error)
 		// An error-free empty snapshot is authoritative and removes the last cached
 		// disk instead of leaving a permanent failsafe device behind.
-	} else if changed, err := publishHWMonFamily(device, "disk", &publisher.disks, disks, true); err != nil {
+	} else if changed, err := publishHWMonFamily(device, "disk", &publisher.disks, disks); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
 	} else {
 		reconfigured = reconfigured || changed
@@ -242,7 +242,9 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 	}
 	if state.HBAError != "" {
 		hbaErr = fmt.Errorf("HBA: %s", state.HBAError)
-	} else if changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas, state.HBADisabled); err != nil {
+	} else if len(hbas) == 0 && !state.HBADisabled {
+		hbaErr = errors.New("HBA: inventory is empty; waiting for sensors")
+	} else if changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
 	} else {
 		reconfigured = reconfigured || changed
