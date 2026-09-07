@@ -179,6 +179,35 @@ func TestReadInventory(t *testing.T) {
 	}
 }
 
+func TestReadInventoryRejectsIncompleteActiveDisk(t *testing.T) {
+	complete := strings.TrimSpace(`
+		["disk1"]
+		id="serial1"
+		device="sda"
+		status="DISK_OK"
+
+		["disk3"]
+		id="serial3"
+		device="sdc"
+		status="DISK_OK"
+	`) + "\n"
+	for name, incomplete := range map[string]string{
+		"missing ID":     "[\"disk2\"]\ndevice=\"sdb\"\nstatus=\"DISK_OK\"\ntemp=\"65\"\n",
+		"missing device": "[\"disk2\"]\nid=\"serial2\"\nstatus=\"DISK_OK\"\ntemp=\"65\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "disks.ini")
+			data := strings.ReplaceAll(complete+incomplete, "\n\t\t", "\n")
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if disks, err := readDisks(path); err == nil || len(disks) != 0 {
+				t.Fatalf("partial inventory = %#v, %v; want no inventory and an error", disks, err)
+			}
+		})
+	}
+}
+
 func TestParseSMARTTemperature(t *testing.T) {
 	for name, test := range map[string]struct {
 		json        string

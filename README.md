@@ -287,9 +287,10 @@ stable comme repli, puis conservé tant que cet ID reste présent.
 
 Pendant l'exécution :
 
-- une erreur globale de lecture ne modifie jamais le cache et laisse toute la
-  famille disque atteindre le failsafe ; après une éventuelle grâce de spin-up,
-  une température indisponible ou invalide place son disque et le maximum de sa
+- une erreur globale de lecture, y compris une section active de `disks.ini`
+  sans ID ou périphérique, ne modifie jamais le cache et laisse toute la famille
+  disque atteindre le failsafe ; après une éventuelle grâce de spin-up, une
+  température indisponible ou invalide place son disque et le maximum de sa
   catégorie au failsafe ;
 - une erreur HBA invalide le relevé complet : l'inventaire précédent reste
   configuré sans être actualisé et atteint donc le failsafe. StorCLI tente

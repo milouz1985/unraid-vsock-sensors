@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -220,8 +221,14 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 		status := strings.TrimSpace(section.Key("status").String())
 		// disks.ini contains sections for every possible array slot, including
 		// unassigned DISK_NP entries, plus the Unraid boot flash device.
-		if id == "" || device == "" || strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") {
+		if strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") {
 			continue
+		}
+		if id == "" {
+			return nil, fmt.Errorf("active disk %q has no stable ID", name)
+		}
+		if device == "" {
+			return nil, fmt.Errorf("active disk %q has no device", name)
 		}
 
 		disks = append(disks, unraidDisk{
