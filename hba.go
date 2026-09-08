@@ -108,6 +108,8 @@ func (r *storCLIReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 		return readings, nil
 	}
 	r.metadata = nil
+	// Rediscover at most once per collection. If discovery already happened in
+	// this call, leave the metadata invalidated so the next collection retries.
 	if freshDiscovery {
 		return nil, err
 	}
@@ -212,6 +214,8 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 
+	// Do not hold c.mu during backend I/O: a synchronous ioctl may outlive its
+	// context, while snapshots must remain readable and expire independently.
 	readings, err := c.reader.collect(ctx)
 	if !time.Now().Before(deadline) {
 		err = context.DeadlineExceeded
@@ -236,6 +240,7 @@ func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.mode == hbaModeDisabled {
+		// Disabled is an authoritative empty inventory, not a missing snapshot.
 		return []sensors.HBA{}, nil
 	}
 	if c.err != nil {

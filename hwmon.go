@@ -250,6 +250,8 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 	if reconfigured {
 		publisher.cacheDirty = true
 	}
+	// Clear cacheDirty only after a durable save. On failure, the next snapshot
+	// retries persistence even if no further topology change occurs.
 	if publisher.cacheDirty {
 		if err := publisher.saveCache(); err != nil {
 			return reconfigured, errors.Join(diskErr, hbaErr, fmt.Errorf("save hwmon inventory cache: %w", err))

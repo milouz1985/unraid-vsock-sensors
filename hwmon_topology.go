@@ -55,6 +55,8 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 		if count < minHWMonGroupSize {
 			continue
 		}
+		// If any member is explicitly unavailable, the true maximum is unknown;
+		// use the failsafe instead of understating the hottest member.
 		if unavailable {
 			maximum = hwmonFailsafeTemp
 		}
@@ -93,6 +95,8 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 	return diskSamples, hbaSamples
 }
 
+// Labels are configuration data: virt_temp commit updates temperatures only,
+// so changing a label requires a full configure operation.
 func sameHWMonConfiguration(expected []hwmonSensor, current []hwmonSample) bool {
 	if len(expected) != len(current) {
 		return false

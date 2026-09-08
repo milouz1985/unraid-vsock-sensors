@@ -51,6 +51,8 @@ func publishHWMonFamilyWithWriter(
 	return false, nil
 }
 
+// Each operation needs a fresh file: virt_temp stages records per open session
+// and accepts only one configure or commit on that session.
 func writeHWMonSamples(path, namespace, operation string, readings []hwmonSample) (err error) {
 	device, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {

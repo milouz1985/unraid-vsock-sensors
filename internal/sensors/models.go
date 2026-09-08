@@ -54,6 +54,8 @@ type HBA struct {
 }
 
 // Response contains a snapshot of every sensor exposed by the Unraid agent.
+// A nil disk or HBA inventory means missing or unavailable data; a non-nil
+// empty slice is authoritative and may remove that family's host sensors.
 type Response struct {
 	Protocol int    `json:"protocol"`
 	Disks    []Disk `json:"disks"`
