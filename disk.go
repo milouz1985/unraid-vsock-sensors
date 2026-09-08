@@ -15,32 +15,24 @@ import (
 )
 
 const (
-	diskFailureMargin              = 5 * time.Second
 	defaultDiskInterval            = 30 * time.Second
+	diskRetryDelay                 = 2 * time.Second
+	maxDiskRetries                 = 2
 	maximumRecommendedDiskInterval = 5 * time.Minute
 	diskCollectionTimeout          = 15 * time.Second
 	maxConcurrentSMARTReads        = 4
 )
 
 type diskCollector struct {
-	path     string
-	interval time.Duration
-	grace    time.Duration
+	path       string
+	interval   time.Duration
+	retryDelay time.Duration
 
 	mu        sync.RWMutex
 	readings  []sensors.Disk
 	err       error
 	updatedAt time.Time
-	state     diskStateTracker
 }
-
-type diskState struct {
-	lastValid   float64
-	hasValid    bool
-	failedSince time.Time
-}
-
-type diskStateTracker map[string]diskState
 
 // unraidDisk is the inventory and power state read from Unraid's disks.ini.
 // Temperature is collected separately through Unraid's smartctl_type helper.
@@ -58,35 +50,49 @@ type diskProbe struct {
 
 func newDiskCollector(path string, interval time.Duration) *diskCollector {
 	return &diskCollector{
-		path: path, interval: interval, grace: interval + diskFailureMargin,
-		err:   errors.New("disk temperatures have not been collected yet"),
-		state: make(diskStateTracker),
+		path: path, interval: interval, retryDelay: min(interval, diskRetryDelay),
+		err: errors.New("disk temperatures have not been collected yet"),
 	}
 }
 
 func (c *diskCollector) run(ctx context.Context) {
-	c.refresh(ctx)
-	timer := time.NewTimer(c.interval)
-	defer timer.Stop()
+	retries := 0
 	for {
+		failed := c.refresh(ctx)
+		// Give a transient failure two chances to recover before virt_temp's
+		// stale timeout, but never turn a persistent failure into a tight loop.
+		var delay time.Duration
+		delay, retries = nextDiskCollection(failed, retries, c.interval, c.retryDelay)
+
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
 		case <-timer.C:
-			c.refresh(ctx)
-			timer.Reset(c.interval)
 		}
 	}
 }
 
-func (c *diskCollector) refresh(parent context.Context) {
+func nextDiskCollection(failed bool, retries int, interval, retryDelay time.Duration) (time.Duration, int) {
+	if failed && retries < maxDiskRetries {
+		return retryDelay, retries + 1
+	}
+	return interval, 0
+}
+
+func (c *diskCollector) refresh(parent context.Context) bool {
 	ctx, cancel := context.WithTimeout(parent, diskCollectionTimeout)
 	defer cancel()
 
 	rawDisks, err := readDisks(c.path)
 	var probes []diskProbe
+	failed := err != nil
 	if err == nil {
 		probes = collectDiskProbes(ctx, rawDisks)
+		for _, probe := range probes {
+			failed = failed || probe.err != nil
+		}
 	}
 
 	now := time.Now()
@@ -96,13 +102,14 @@ func (c *diskCollector) refresh(parent context.Context) {
 	if err != nil {
 		c.readings = nil
 		c.updatedAt = time.Time{}
-		return
+		return failed
 	}
 	// A collection timeout belongs to each probe which did not finish.
-	// Successful probes remain usable and failed probes follow their own grace
-	// period instead of invalidating the complete disk snapshot.
-	c.readings = c.state.apply(rawDisks, probes, now, c.grace)
+	// Successful probes remain usable while failed probes are omitted from hwmon
+	// commits and retried twice before the normal collection interval resumes.
+	c.readings = makeDiskReadings(rawDisks, probes)
 	c.updatedAt = now
+	return failed
 }
 
 func (c *diskCollector) snapshot() ([]sensors.Disk, error) {
@@ -111,19 +118,10 @@ func (c *diskCollector) snapshot() ([]sensors.Disk, error) {
 	if c.err != nil {
 		return nil, c.err
 	}
-	readings := slices.Clone(c.readings)
-	now := time.Now()
-	if !now.Before(c.updatedAt.Add(c.interval + diskCollectionTimeout)) {
+	if !time.Now().Before(c.updatedAt.Add(c.interval + diskCollectionTimeout)) {
 		return nil, errors.New("disk temperature snapshot expired")
 	}
-	for i := range readings {
-		state := c.state[readings[i].ID]
-		if !state.failedSince.IsZero() && !now.Before(state.failedSince.Add(c.grace)) {
-			readings[i].Temp = 0
-			readings[i].Unavailable = true
-		}
-	}
-	return readings, nil
+	return slices.Clone(c.readings), nil
 }
 
 func collectDiskProbes(ctx context.Context, disks []unraidDisk) []diskProbe {
@@ -152,49 +150,19 @@ func collectDiskProbes(ctx context.Context, disks []unraidDisk) []diskProbe {
 	return probes
 }
 
-func (s diskStateTracker) apply(disks []unraidDisk, probes []diskProbe, now time.Time, grace time.Duration) []sensors.Disk {
-	present := make(map[string]struct{}, len(disks))
+func makeDiskReadings(disks []unraidDisk, probes []diskProbe) []sensors.Disk {
 	readings := make([]sensors.Disk, 0, len(disks))
 	for i, disk := range disks {
-		present[disk.id] = struct{}{}
 		probe := probes[i]
-		state := s[disk.id]
-		temperature, unavailable := probe.temperature, false
-		switch {
-		case probe.standby:
+		temperature := probe.temperature
+		if probe.standby || probe.err != nil {
 			temperature = 0
-			state.failedSince = time.Time{}
-		case probe.err == nil:
-			state.lastValid = probe.temperature
-			state.hasValid = true
-			state.failedSince = time.Time{}
-		default:
-			if state.failedSince.IsZero() {
-				state.failedSince = now
-			}
-			if !state.hasValid {
-				temperature = 0
-				unavailable = true
-			} else if now.Sub(state.failedSince) < grace {
-				// Avoid the hwmon failsafe during a normal spin-up or one missed
-				// SMART read. A persistent failure expires this grace explicitly.
-				temperature = state.lastValid
-			} else {
-				temperature = 0
-				unavailable = true
-			}
 		}
-		s[disk.id] = state
 		readings = append(readings, sensors.Disk{
 			ID: disk.id, Name: disk.name, Device: disk.device,
 			Transport: disk.transport, Rotational: disk.rotational,
-			Temp: temperature, Unavailable: unavailable,
+			Temp: temperature, Unavailable: probe.err != nil,
 		})
-	}
-	for id := range s {
-		if _, ok := present[id]; !ok {
-			delete(s, id)
-		}
 	}
 	return readings
 }

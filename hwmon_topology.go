@@ -17,8 +17,9 @@ type hwmonSensor struct {
 }
 
 type hwmonSample struct {
-	sensor      hwmonSensor
-	temperature float64
+	sensor       hwmonSensor
+	temperature  float64
+	omitOnCommit bool
 }
 
 type hwmonInventory struct {
@@ -55,14 +56,16 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 		if count < minHWMonGroupSize {
 			continue
 		}
-		// If any member is explicitly unavailable, the true maximum is unknown;
-		// use the failsafe instead of understating the hottest member.
+		// If any member is unavailable, the true maximum is unknown. Keep the
+		// group in the topology but stop refreshing it so virt_temp applies its
+		// stale timeout. A configure still starts it at the failsafe temperature.
 		if unavailable {
 			maximum = hwmonFailsafeTemp
 		}
 		diskSamples = append(diskSamples, hwmonSample{
-			sensor:      hwmonSensor{id: "disk:group:" + string(group.kind), label: group.label},
-			temperature: maximum,
+			sensor:       hwmonSensor{id: "disk:group:" + string(group.kind), label: group.label},
+			temperature:  maximum,
+			omitOnCommit: unavailable,
 		})
 	}
 
@@ -75,7 +78,8 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 			sensor: hwmonSensor{
 				id: "disk:" + disk.ID, label: fmt.Sprintf("%s (%s)", disk.Name, disk.Device),
 			},
-			temperature: temperature,
+			temperature:  temperature,
+			omitOnCommit: disk.Unavailable,
 		})
 	}
 	for _, hba := range state.HBAs {

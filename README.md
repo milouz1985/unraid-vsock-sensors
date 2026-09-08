@@ -268,13 +268,19 @@ le code par défaut `2` peut aussi signaler un échec d'ouverture ou
 d'identification. Le code `3` n'est accepté comme veille que si le JSON indique
 `STANDBY` ou `SLEEP`. Les NVMe sont interrogés sans l'option `-n standby`.
 
-Une erreur SMART transitoire conserve la dernière température valide pendant
-l'intervalle de collecte augmenté de cinq secondes. Si aucune mesure valide
-n'existe encore, le disque est immédiatement déclaré indisponible. Si l'erreur
-persiste après la grâce, il l'est également. Dans les deux cas, le disque et le
-maximum de sa catégorie passent explicitement au failsafe de `100 °C`. Cet
-intervalle appartient au service, vaut `30s` par défaut et ne dépend plus du
-réglage Unraid **Tunable (poll_attributes)**.
+Après une erreur SMART, l'agent marque le disque indisponible et effectue jusqu'à
+deux nouvelles tentatives espacées de deux secondes, ou de l'intervalle de
+collecte configuré s'il est inférieur. Une erreur persistante ne crée donc pas
+de boucle de lectures rapprochées : après ces tentatives, l'agent reprend son
+intervalle normal, fixé à `30s` par défaut et indépendant du réglage Unraid
+**Tunable (poll_attributes)**.
+
+Le disque reste présent dans l'inventaire hwmon, mais les `commit` cessent
+d'actualiser sa valeur et celle du maximum de sa catégorie. `virt_temp` conserve
+alors leur dernière valeur avant de les faire passer à `100 °C` après son délai
+de dix secondes. Si un retry réussit assez vite, ce délai n'expire pas. Une
+nouvelle configuration crée néanmoins toute sonde déjà indisponible directement
+au failsafe afin de ne jamais présenter `0 °C` comme une mesure valide.
 
 Le récepteur ferme une connexion qui ne fournit aucun snapshot pendant environ
 trois secondes afin de permettre une reconnexion propre. Ce délai de transport
@@ -324,9 +330,9 @@ Pendant l'exécution :
   autre sonde ;
 - une erreur globale de lecture, y compris une section active de `disks.ini`
   sans ID ou périphérique, ne modifie jamais le cache et laisse toute la famille
-  disque atteindre le failsafe ; après une éventuelle grâce de spin-up, une
-  température indisponible ou invalide place son disque et le maximum de sa
-  catégorie au failsafe ;
+  disque atteindre le failsafe. Une température indisponible ou invalide cesse
+  d'actualiser son disque et le maximum de sa catégorie ; jusqu'à deux retries
+  SMART peuvent les rétablir avant l'expiration du délai noyau ;
 - une erreur HBA invalide le relevé complet : l'inventaire précédent reste
   configuré sans être actualisé et atteint donc le failsafe. StorCLI tente
   auparavant une redécouverte et une nouvelle lecture lorsque celle fondée sur
@@ -356,8 +362,9 @@ La température des disques vient d'une collecte SMART directe, exécutée en
 arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.
 Le snapshot VSOCK réutilise ce relevé entre deux collectes et permet à Proxmox
 de continuer à alimenter le module `virt-temp`. Pour une régulation thermique
-réactive, une
-valeur de 30 à 60 secondes est recommandée. Cinq minutes constitue une limite
+réactive, une erreur déclenche jusqu'à deux nouvelles collectes espacées de deux
+secondes ; après leur échec, le cycle normal reprend. Une valeur de 30 à 60
+secondes est recommandée. Cinq minutes constitue une limite
 haute raisonnable ; au-delà, une température peut rester ancienne trop
 longtemps pour piloter efficacement les ventilateurs. L'agent accepte une
 valeur plus longue passée en ligne de commande, mais écrit alors un

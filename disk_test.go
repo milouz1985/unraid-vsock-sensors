@@ -14,80 +14,37 @@ import (
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-func TestDiskStateAllowsTransientSMARTFailure(t *testing.T) {
-	disk := unraidDisk{id: "serial1", name: "disk1", device: "sdb", rotational: true}
-	tracker := make(diskStateTracker)
-	now := time.Unix(1000, 0)
-
-	readings := tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, 35*time.Second)
-	if readings[0].Temp != 35 || readings[0].Unavailable {
-		t.Fatalf("initial reading = %#v", readings)
-	}
-	readings = tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}}, now, 35*time.Second)
-	if readings[0].Temp != 35 || readings[0].Unavailable {
-		t.Fatalf("failure grace reading = %#v", readings)
-	}
-	readings = tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("still unavailable")}}, now.Add(35*time.Second), 35*time.Second)
-	if !readings[0].Unavailable {
-		t.Fatalf("expired failure reused stale temperature: %#v", readings)
-	}
-	readings = tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 40}}, now.Add(36*time.Second), 35*time.Second)
-	if readings[0].Temp != 40 || readings[0].Unavailable {
-		t.Fatalf("recovered reading = %#v", readings)
-	}
-}
-
-func TestDiskStateIsolatesTimedOutSMARTProbe(t *testing.T) {
+func TestMakeDiskReadingsIsolatesFailedSMARTProbe(t *testing.T) {
 	disks := []unraidDisk{
 		{id: "serial1", name: "disk1", rotational: true},
 		{id: "serial2", name: "disk2", rotational: true},
 	}
-	tracker := make(diskStateTracker)
-	now := time.Unix(1000, 0)
-	grace := 35 * time.Second
-
-	tracker.apply(disks, []diskProbe{{temperature: 35}, {temperature: 40}}, now, grace)
-	readings := tracker.apply(disks, []diskProbe{
+	readings := makeDiskReadings(disks, []diskProbe{
 		{err: context.DeadlineExceeded},
 		{temperature: 42},
-	}, now.Add(30*time.Second), grace)
-	if readings[0].Temp != 35 || readings[0].Unavailable {
-		t.Fatalf("timed out disk during grace = %#v", readings[0])
+	})
+	if readings[0].Temp != 0 || !readings[0].Unavailable {
+		t.Fatalf("failed disk = %#v", readings[0])
 	}
 	if readings[1].Temp != 42 || readings[1].Unavailable {
 		t.Fatalf("successful disk affected by peer timeout = %#v", readings[1])
 	}
-
-	readings = tracker.apply(disks, []diskProbe{
-		{err: context.DeadlineExceeded},
-		{temperature: 43},
-	}, now.Add(65*time.Second), grace)
-	if !readings[0].Unavailable {
-		t.Fatalf("timed out disk did not expire = %#v", readings[0])
-	}
-	if readings[1].Temp != 43 || readings[1].Unavailable {
-		t.Fatalf("successful disk affected after peer grace = %#v", readings[1])
-	}
 }
 
-func TestDiskStateReportsUnavailableWithoutPreviousTemperature(t *testing.T) {
-	tracker := make(diskStateTracker)
+func TestFailedDiskConfiguresAtFailsafe(t *testing.T) {
 	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true}
-	readings := tracker.apply(
-		[]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}}, time.Now(), time.Minute,
-	)
+	readings := makeDiskReadings([]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}})
 	if len(readings) != 1 || readings[0].Temp != 0 || !readings[0].Unavailable {
-		t.Fatalf("initial failed reading = %#v", readings)
+		t.Fatalf("failed reading = %#v", readings)
 	}
-	if samples := makeDiskSamples(sensors.Response{Disks: readings}); len(samples) != 1 || samples[0].temperature != hwmonFailsafeTemp {
+	if samples := makeDiskSamples(sensors.Response{Disks: readings}); len(samples) != 1 || samples[0].temperature != hwmonFailsafeTemp || !samples[0].omitOnCommit {
 		t.Fatalf("initial failure did not trigger hwmon failsafe: %#v", samples)
 	}
 }
 
-func TestDiskStateReportsStandbyAsZero(t *testing.T) {
-	tracker := make(diskStateTracker)
+func TestMakeDiskReadingsReportsStandbyAsZero(t *testing.T) {
 	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true, spundown: true}
-	readings := tracker.apply([]unraidDisk{disk}, []diskProbe{{standby: true}}, time.Now(), time.Minute)
+	readings := makeDiskReadings([]unraidDisk{disk}, []diskProbe{{standby: true}})
 	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
 		t.Fatalf("standby reading = %#v", readings)
 	}
@@ -100,22 +57,27 @@ func TestCollectDiskProbesSkipsKnownStandbyDisk(t *testing.T) {
 	}
 }
 
-func TestDiskStatePurgesDisappearedDisks(t *testing.T) {
-	tracker := make(diskStateTracker)
-	disk := unraidDisk{id: "serial1", name: "disk1"}
-	now := time.Unix(1000, 0)
-	tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, time.Minute)
-	tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("missing")}}, now, time.Minute)
-	tracker.apply(nil, nil, now, time.Minute)
-	if len(tracker) != 0 {
-		t.Fatalf("state was not purged: %v", tracker)
-	}
+func TestNextDiskCollectionRetriesTwice(t *testing.T) {
+	interval := 30 * time.Second
+	retryDelay := 2 * time.Second
 
-	readings := tracker.apply(
-		[]unraidDisk{disk}, []diskProbe{{err: errors.New("missing")}}, now.Add(2*time.Minute), time.Minute,
-	)
-	if len(readings) != 1 || readings[0].Temp != 0 || !readings[0].Unavailable {
-		t.Fatalf("reappeared disk reused stale state: %#v", readings)
+	if delay, retries := nextDiskCollection(false, 0, interval, retryDelay); delay != interval || retries != 0 {
+		t.Fatalf("successful collection scheduled %v, retries=%d", delay, retries)
+	}
+	if delay, retries := nextDiskCollection(true, 0, interval, retryDelay); delay != retryDelay || retries != 1 {
+		t.Fatalf("first failure scheduled %v, retries=%d", delay, retries)
+	}
+	if delay, retries := nextDiskCollection(true, 1, interval, retryDelay); delay != retryDelay || retries != 2 {
+		t.Fatalf("first failed retry scheduled %v, retries=%d", delay, retries)
+	}
+	if delay, retries := nextDiskCollection(true, 2, interval, retryDelay); delay != interval || retries != 0 {
+		t.Fatalf("second failed retry scheduled %v, retries=%d", delay, retries)
+	}
+	if delay, retries := nextDiskCollection(false, 1, interval, retryDelay); delay != interval || retries != 0 {
+		t.Fatalf("successful retry scheduled %v, retries=%d", delay, retries)
+	}
+	if collector := newDiskCollector("unused", time.Second); collector.retryDelay != time.Second {
+		t.Fatalf("short interval uses retry delay %v, want %v", collector.retryDelay, time.Second)
 	}
 }
 
@@ -173,10 +135,9 @@ func TestReadInventory(t *testing.T) {
 		t.Fatalf("inventory = %#v", disks)
 	}
 
-	tracker := make(diskStateTracker)
-	readings := tracker.apply(disks, []diskProbe{
+	readings := makeDiskReadings(disks, []diskProbe{
 		{temperature: 35}, {standby: true}, {temperature: 48},
-	}, time.Now(), time.Minute)
+	})
 	if len(readings) != 3 || readings[0].Temp != 35 || readings[1].Temp != 0 || readings[2].Temp != 48 {
 		t.Fatalf("readings: %#v", readings)
 	}
@@ -361,18 +322,6 @@ func TestBlockedDiskCollectionDoesNotStopSnapshotPublication(t *testing.T) {
 	case <-refreshDone:
 	case <-time.After(time.Second):
 		t.Fatal("blocked disk collection did not finish after releasing the FIFO")
-	}
-}
-
-func TestDiskCollectorExpiresFailedReadingAtGraceDeadline(t *testing.T) {
-	collector := newDiskCollector("unused", time.Minute)
-	collector.err = nil
-	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
-	collector.updatedAt = time.Now()
-	collector.state["serial"] = diskState{failedSince: time.Now().Add(-collector.grace - time.Second)}
-	readings, err := collector.snapshot()
-	if err != nil || len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
-		t.Fatalf("expired failed reading = %#v, %v", readings, err)
 	}
 }
 

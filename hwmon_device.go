@@ -98,6 +98,9 @@ func encodeHWMonSamples(out io.Writer, namespace, operation string, readings []h
 		}
 	}
 	for _, reading := range readings {
+		if operation == "commit" && reading.omitOnCommit {
+			continue
+		}
 		milliCelsius := int64(math.Round(reading.temperature * 1000))
 		if _, err := fmt.Fprintf(out, "sample\t%s\t%d\t%s\n", reading.sensor.id, milliCelsius, reading.sensor.label); err != nil {
 			return err

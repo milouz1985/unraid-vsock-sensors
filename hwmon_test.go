@@ -246,7 +246,7 @@ func TestMakeHWMonSamples(t *testing.T) {
 	}
 }
 
-func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
+func TestPublisherOmitsUnavailableDiskAndItsGroupFromCommit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "virt-temp")
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
@@ -275,13 +275,36 @@ func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "sample\tdisk:group:hdd\t100000\tHDD maximum\n" +
-		"sample\tdisk:1\t35000\tdisk1 (sda)\n" +
-		"sample\tdisk:2\t100000\tdisk2 (sdb)\n" +
+	want := "sample\tdisk:1\t35000\tdisk1 (sda)\n" +
 		"sample\tdisk:3\t46000\tcache (nvme0n1)\n" +
 		"commit\tdisk\n"
 	if got := string(data); got != want {
-		t.Fatalf("update = %q, want explicit disk and group failsafe %q", got, want)
+		t.Fatalf("update = %q, want failed disk and group omitted %q", got, want)
+	}
+}
+
+func TestPublisherConfiguresUnavailableDiskAndItsGroupAtFailsafe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "virt-temp")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	readings := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
+		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},
+		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
+	}})
+	if _, err := publishHWMonFamily(path, "disk", &hwmonInventory{}, readings); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "sample\tdisk:group:hdd\t100000\tHDD maximum\n" +
+		"sample\tdisk:1\t35000\tdisk1 (sda)\n" +
+		"sample\tdisk:2\t100000\tdisk2 (sdb)\n" +
+		"configure\tdisk\n"
+	if got := string(data); got != want {
+		t.Fatalf("configuration = %q, want failed disk and group at failsafe %q", got, want)
 	}
 }
 
@@ -299,6 +322,21 @@ func TestEncodeHWMonSamples(t *testing.T) {
 		"commit\tdisk\n"
 	if got := output.String(); got != want {
 		t.Fatalf("encoded snapshot = %q, want %q", got, want)
+	}
+}
+
+func TestEncodeHWMonSamplesAllowsEmptyCommitSubset(t *testing.T) {
+	readings := []hwmonSample{{
+		sensor:       hwmonSensor{id: "disk:1", label: "disk1 (sda)"},
+		temperature:  hwmonFailsafeTemp,
+		omitOnCommit: true,
+	}}
+	var output bytes.Buffer
+	if err := encodeHWMonSamples(&output, "disk", "commit", readings); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "commit\tdisk\n"; got != want {
+		t.Fatalf("encoded snapshot = %q, want empty subset %q", got, want)
 	}
 }
 

@@ -100,14 +100,14 @@ réellement été supprimé.
 Une erreur globale de lecture ne constitue pas une nouvelle topologie : les
 anciens périphériques restent alors en place et atteignent le failsafe. Une
 température de disque indisponible n'interrompt pas les autres
-mises à jour : ce disque et le maximum de sa catégorie reçoivent explicitement
-la température failsafe, tandis que les autres périphériques restent actualisés.
-L'agent Unraid collecte les températures SMART en arrière-plan. Il masque une
-erreur transitoire pendant l'intervalle SMART configuré augmenté de cinq
-secondes seulement lorsqu'une mesure valide antérieure existe. Un premier échec
-déclare immédiatement le disque indisponible. Un changement de label seul
-n'affecte pas l'identité, mais reconfigure la famille afin d'actualiser
-`temp1_label`, le nom hwmon et le cache.
+mises à jour : ce disque et le maximum de sa catégorie restent configurés mais
+sont omis des `commit`, tandis que les autres périphériques restent actualisés.
+Le noyau conserve donc leur dernière valeur jusqu'à l'expiration de
+`stale_timeout`, puis retourne `100 °C`. Une nouvelle configuration initialise
+directement les sondes indisponibles au failsafe. L'agent Unraid effectue un
+maximum de deux retries SMART espacés de deux secondes avant de reprendre
+l'intervalle normal. Un changement de label seul n'affecte pas l'identité, mais
+reconfigure la famille afin d'actualiser `temp1_label`, le nom hwmon et le cache.
 
 Si l'enregistrement d'une nouvelle topologie échoue, le pilote tente de
 réenregistrer l'inventaire précédent au lieu de laisser disparaître les sondes.
