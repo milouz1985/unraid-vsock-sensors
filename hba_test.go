@@ -15,7 +15,7 @@ import (
 )
 
 func TestMPT3CommandABI(t *testing.T) {
-	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, nil)
+	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, nil)
 	got := makeMPT3Command(3, request, 256, 0x11223344, 0x55667788)
 	var want [96]byte
 	binary.LittleEndian.PutUint32(want[0:4], 3)
@@ -29,6 +29,31 @@ func TestMPT3CommandABI(t *testing.T) {
 	copy(want[68:96], request[:])
 	if !slices.Equal(got[:], want[:]) {
 		t.Fatalf("command buffer = %x, want %x", got, want)
+	}
+}
+
+func TestMPT3ConfigRequestPageHeader(t *testing.T) {
+	for _, test := range []struct {
+		name                              string
+		pageType, pageNumber, pageVersion byte
+		want                              []byte
+	}{
+		{"Manufacturing 0", mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version, []byte{0x00, 0, 0, 0x09}},
+		{"Manufacturing 5", mpi2PageTypeManufacturing, 5, mpi2Manufacturing5Version, []byte{0x03, 0, 5, 0x09}},
+		{"IO Unit 7", mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, []byte{0x05, 0, 7, 0x00}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := mpt3ConfigRequest(mpi2ConfigPageHeader, test.pageType, test.pageNumber, test.pageVersion, nil)
+			if got := request[20:24]; !slices.Equal(got, test.want) {
+				t.Fatalf("CONFIG page header = %x, want %x", got, test.want)
+			}
+		})
+	}
+
+	returnedHeader := []byte{0x04, 0x08, 7, mpi2PageTypeIOUnit}
+	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, returnedHeader)
+	if got := request[20:24]; !slices.Equal(got, returnedHeader) {
+		t.Fatalf("CONFIG read header = %x, want returned header %x", got, returnedHeader)
 	}
 }
 

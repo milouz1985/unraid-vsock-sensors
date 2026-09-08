@@ -365,6 +365,15 @@ strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
 Fahrenheit sont converties puis validées dans la plage `0..150 °C`. Chaque
 collecte native lit aussi les pages de fabrication pour associer la température
 à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC.
+
+Comme les fonctions CONFIG internes du pilote `mpt3sas`, chaque lecture native
+s'effectue en deux requêtes. La requête `PAGE_HEADER` indique la version MPI
+attendue de la page (`0x00` pour Manufacturing 0, `0x03` pour Manufacturing 5
+et `0x05` pour IO Unit 7). L'en-tête renvoyé par le firmware, notamment sa
+version et sa longueur, est ensuite repris intégralement dans la requête
+`PAGE_READ_CURRENT`. Le backend ne met en œuvre ni séquence alternative propre
+à un firmware ni repli contournant cette procédure du noyau.
+
 L'agent actualise ce relevé en arrière-plan sans bloquer la publication VSOCK.
 Lorsque le backend StorCLI est sélectionné,
 la température ROC fournie par sa sortie JSON est utilisée à la place.
