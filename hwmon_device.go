@@ -29,7 +29,7 @@ func publishHWMonFamilyWithWriter(
 	current []hwmonSample,
 	write func(string, string, string, []hwmonSample) error,
 ) (bool, error) {
-	if !inventory.initialized || !sameHWMonTopology(inventory.sensors, current) {
+	if !inventory.initialized || !sameHWMonConfiguration(inventory.sensors, current) {
 		if err := write(path, namespace, "configure", current); err != nil {
 			return false, err
 		}

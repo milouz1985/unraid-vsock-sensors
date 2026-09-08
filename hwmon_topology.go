@@ -93,16 +93,17 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 	return diskSamples, hbaSamples
 }
 
-func sameHWMonTopology(expected []hwmonSensor, current []hwmonSample) bool {
+func sameHWMonConfiguration(expected []hwmonSensor, current []hwmonSample) bool {
 	if len(expected) != len(current) {
 		return false
 	}
-	currentIDs := make(map[string]struct{}, len(current))
+	currentLabels := make(map[string]string, len(current))
 	for _, sample := range current {
-		currentIDs[sample.sensor.id] = struct{}{}
+		currentLabels[sample.sensor.id] = sample.sensor.label
 	}
 	for _, sensor := range expected {
-		if _, found := currentIDs[sensor.id]; !found {
+		label, found := currentLabels[sensor.id]
+		if !found || label != sensor.label {
 			return false
 		}
 	}

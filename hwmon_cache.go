@@ -10,8 +10,8 @@ import (
 )
 
 // cachedHWMonInventory is the versioned on-disk representation of the virtual
-// hwmon topology. A nil family means that it has never been initialized, which
-// is different from an initialized family containing no sensors.
+// hwmon configuration. A nil family means that it has never been initialized,
+// which is different from an initialized family containing no sensors.
 type cachedHWMonInventory struct {
 	Version int                `json:"version"`
 	Disks   *cachedHWMonFamily `json:"disks,omitempty"`
@@ -26,7 +26,7 @@ type cachedHWMonFamily struct {
 	Sensors []cachedHWMonSensor `json:"readings"`
 }
 
-// cachedHWMonSensor contains only the stable metadata needed to recreate a
+// cachedHWMonSensor contains the metadata needed to recreate a
 // virtual sensor. Temperatures are deliberately not persisted: restored sensors
 // start at the failsafe temperature until fresh data arrives from the guest.
 type cachedHWMonSensor struct {
@@ -34,7 +34,7 @@ type cachedHWMonSensor struct {
 	Label string `json:"label"`
 }
 
-// restore loads the last known topology and recreates its virtual hwmon
+// restore loads the last known configuration and recreates its virtual hwmon
 // devices at the failsafe temperature. Families are applied in order, so a
 // family restored before a later validation failure remains usable.
 func (publisher *hwmonPublisher) restore(device string) error {
@@ -72,7 +72,7 @@ func (publisher *hwmonPublisher) restore(device string) error {
 
 // saveCache atomically persists every initialized family. The temporary file,
 // its contents, and the containing directory are synced so a successful return
-// means the new topology survives a crash or power loss.
+// means the new configuration survives a crash or power loss.
 func (publisher *hwmonPublisher) saveCache() error {
 	cached := cachedHWMonInventory{Version: 1}
 	if publisher.disks.initialized {
@@ -126,7 +126,7 @@ func syncDirectory(path string) (err error) {
 	return directory.Sync()
 }
 
-// sensorsToCache copies the stable topology fields out of the live inventory.
+// sensorsToCache copies the configuration fields out of the live inventory.
 func sensorsToCache(sensors []hwmonSensor) []cachedHWMonSensor {
 	cached := make([]cachedHWMonSensor, 0, len(sensors))
 	for _, sensor := range sensors {
@@ -135,8 +135,8 @@ func sensorsToCache(sensors []hwmonSensor) []cachedHWMonSensor {
 	return cached
 }
 
-// samplesFromCache converts cached topology into publishable samples. Every
-// restored sample starts at the failsafe temperature because cached topology
+// samplesFromCache converts a cached configuration into publishable samples.
+// Every restored sample starts at the failsafe temperature because cached data
 // must never be mistaken for a fresh reading from the guest.
 func samplesFromCache(cached []cachedHWMonSensor) []hwmonSample {
 	readings := make([]hwmonSample, 0, len(cached))

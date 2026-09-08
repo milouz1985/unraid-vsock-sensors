@@ -90,7 +90,7 @@ les périphériques à `100 °C` avant que la VM réponde. Un logiciel de ventil
 peut donc les découvrir dès le boot de Proxmox.
 
 Chaque ID stable possède son propre périphérique et reste toujours `temp1`.
-Lorsqu'un snapshot modifie l'inventaire, `configure` recrée tous les
+Lorsqu'un snapshot modifie l'inventaire ou un label, `configure` recrée tous les
 périphériques de la famille. Leurs noms platform et leurs identités restent
 stables, mais leurs numéros dynamiques `hwmonX` peuvent changer. Un ID absent du
 nouvel inventaire est retiré du cache et aucune autre sonde ne récupère son
@@ -106,7 +106,8 @@ L'agent Unraid collecte les températures SMART en arrière-plan. Il masque une
 erreur transitoire pendant l'intervalle SMART configuré augmenté de cinq
 secondes seulement lorsqu'une mesure valide antérieure existe. Un premier échec
 déclare immédiatement le disque indisponible. Un changement de label seul
-n'affecte pas l'identité.
+n'affecte pas l'identité, mais reconfigure la famille afin d'actualiser
+`temp1_label`, le nom hwmon et le cache.
 
 Si l'enregistrement d'une nouvelle topologie échoue, le pilote tente de
 réenregistrer l'inventaire précédent au lieu de laisser disparaître les sondes.

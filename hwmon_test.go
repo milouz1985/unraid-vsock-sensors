@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
@@ -575,7 +576,7 @@ func TestParseRestartUnits(t *testing.T) {
 	}
 }
 
-func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
+func TestPublisherReconfiguresWhenLabelChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "virt-temp")
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
@@ -589,15 +590,63 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sdb)", 35)}
-	if _, err := publishHWMonFamily(path, "disk", &inventory, changed); err != nil {
-		t.Fatalf("a label change must not change sensor identity: %v", err)
+	reconfigured, err := publishHWMonFamily(path, "disk", &inventory, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reconfigured {
+		t.Fatal("a label change must reconfigure the hwmon family")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "sample\tdisk:serial\t35000\tdisk1 (sdb)\ncommit\tdisk\n"; got != want {
-		t.Fatalf("update = %q, want current label %q", got, want)
+	if got, want := string(data), "sample\tdisk:serial\t35000\tdisk1 (sdb)\nconfigure\tdisk\n"; got != want {
+		t.Fatalf("update = %q, want replacement configuration %q", got, want)
+	}
+	if got, want := inventory.sensors[0].label, "disk1 (sdb)"; got != want {
+		t.Fatalf("configured label = %q, want %q", got, want)
+	}
+}
+
+func TestPublisherCachesChangedLabel(t *testing.T) {
+	directory := t.TempDir()
+	device := filepath.Join(directory, "virt-temp")
+	if err := os.WriteFile(device, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &hwmonPublisher{
+		cachePath: filepath.Join(directory, "inventory.json"),
+		disks: hwmonInventory{initialized: true, sensors: []hwmonSensor{
+			{id: "disk:serial", label: "disk1 (sda)"},
+		}},
+		hbas: hwmonInventory{initialized: true},
+	}
+	state := sensors.Response{
+		Disks: []sensors.Disk{{ID: "serial", Name: "disk1", Device: "sdb", Temp: 35}},
+		HBAs:  []sensors.HBA{},
+	}
+
+	reconfigured, err := publisher.publish(device, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reconfigured {
+		t.Fatal("a label change must be reported as a reconfiguration")
+	}
+	data, err := os.ReadFile(publisher.cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cached cachedHWMonInventory
+	if err := json.Unmarshal(data, &cached); err != nil {
+		t.Fatal(err)
+	}
+	if cached.Disks == nil || len(cached.Disks.Sensors) != 1 {
+		t.Fatalf("cached disks = %#v, want one sensor", cached.Disks)
+	}
+	if got, want := cached.Disks.Sensors[0].Label, "disk1 (sdb)"; got != want {
+		t.Fatalf("cached label = %q, want %q", got, want)
 	}
 }
 
@@ -606,7 +655,7 @@ func TestPublisherReconfiguresAfterStaleCommit(t *testing.T) {
 		initialized: true,
 		sensors:     []hwmonSensor{{id: "disk:serial", label: "disk1 (sda)"}},
 	}
-	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sdb)", 35)}
+	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sda)", 35)}
 	var operations []string
 	write := func(_, _, operation string, readings []hwmonSample) error {
 		operations = append(operations, operation)

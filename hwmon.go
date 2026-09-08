@@ -54,7 +54,7 @@ func hwmon(args []string) error {
 	port := fs.Uint("port", defaultPort, "vsock port")
 	device := fs.String("device", virtTempDevicePath, "virt-temp control device")
 	cache := fs.String("cache", defaultHWMonCache, "persistent hwmon inventory cache")
-	restartUnitsFlag := fs.String("restart-units", "", "comma-separated systemd units restarted after a topology change")
+	restartUnitsFlag := fs.String("restart-units", "", "comma-separated systemd units restarted after hwmon reconfiguration")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

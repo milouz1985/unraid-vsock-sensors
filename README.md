@@ -166,7 +166,7 @@ UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 - `UNRAID_VSOCK_CACHE` conserve les périphériques des sondes entre deux démarrages ;
 - `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
   des virgules. Les unités actives sont redémarrées après le premier snapshot
-  valide, puis après un changement de topologie, afin qu'elles rescannent les
+  valide, puis après une reconfiguration hwmon, afin qu'elles rescannent les
   hwmon.
 
 Pour CoolerControl :
@@ -307,16 +307,18 @@ cache existait déjà, StorCLI effectue ensuite une unique nouvelle tentative.
 Les deux backends produisent en priorité le même ID `sas:<adresse>` ; l'adresse
 PCI puis le numéro de série servent de replis lorsqu'elle est indisponible.
 Le label HBA est construit à partir du modèle et de l'adresse PCI, avec l'ID
-stable comme repli, puis conservé tant que cet ID reste présent.
+stable comme repli. Si ce label change sans que l'ID change, la famille est
+reconfigurée afin d'actualiser l'affichage et le cache.
 
 Pendant l'exécution :
 
 - chaque ID stable possède son propre périphérique et reste donc `temp1` sans
   dépendre de l'ordre des autres sondes. Une modification de l'ensemble des ID
-  recrée tous les périphériques de la famille ; leurs noms platform et leurs
-  identités restent stables, mais leurs numéros dynamiques `hwmonX` peuvent
-  changer. La composition d'un maximum HDD, SSD ou NVMe ne fait que modifier sa
-  valeur. Un ID retiré ne réaffecte jamais l'identité d'une autre sonde ;
+  ou d'un label recrée tous les périphériques de la famille ; leurs noms
+  platform et leurs identités restent stables, mais leurs numéros dynamiques
+  `hwmonX` peuvent changer. La composition d'un maximum HDD, SSD ou NVMe ne fait
+  que modifier sa valeur. Un ID retiré ne réaffecte jamais l'identité d'une
+  autre sonde ;
 - une erreur globale de lecture, y compris une section active de `disks.ini`
   sans ID ou périphérique, ne modifie jamais le cache et laisse toute la famille
   disque atteindre le failsafe ; après une éventuelle grâce de spin-up, une
@@ -328,13 +330,13 @@ Pendant l'exécution :
   sa correspondance en cache échoue ;
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
   automatiquement la famille hwmon concernée et met à jour le cache ;
-- un changement de `/dev/sdX`, de nom affiché ou d'index IOC ne modifie pas
-  l'identité si l'ID stable reste identique. Le label est fixé lors de la
-  configuration et les relevés suivants sont appliqués par ID ;
+- un changement de `/dev/sdX`, de nom affiché, d'adresse PCI ou d'index IOC ne
+  modifie pas l'identité si l'ID stable reste identique. Lorsqu'il modifie le
+  label, la famille est reconfigurée pour maintenir l'affichage à jour ;
 - les consommateurs configurés dans `UNRAID_VSOCK_RESTART_UNITS` sont relancés
-  une première fois dès que la VM répond, même si la topologie restaurée depuis
-  le cache est inchangée, puis après chaque reconfiguration afin de découvrir
-  les nouveaux périphériques.
+  une première fois dès que la VM répond, même si la configuration restaurée
+  depuis le cache est inchangée, puis après chaque reconfiguration afin de
+  découvrir les nouveaux périphériques.
 
 ## Failsafe et fraîcheur des mesures
 
