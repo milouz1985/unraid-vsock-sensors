@@ -35,8 +35,8 @@ type cachedHWMonSensor struct {
 }
 
 // restore loads the last known configuration and recreates its virtual hwmon
-// devices at the failsafe temperature. Families are applied in order, so a
-// family restored before a later validation failure remains usable.
+// devices at the failsafe temperature. Families are restored independently, so
+// one invalid family does not prevent the other from remaining usable.
 func (publisher *hwmonPublisher) restore(device string) error {
 	data, err := os.ReadFile(publisher.cachePath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -54,17 +54,21 @@ func (publisher *hwmonPublisher) restore(device string) error {
 	if cached.Version != 1 {
 		return fmt.Errorf("unsupported cache version %d", cached.Version)
 	}
+	var diskErr, hbaErr error
 	if cached.Disks != nil {
 		readings := samplesFromCache(cached.Disks.Sensors)
 		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings); err != nil {
-			return fmt.Errorf("restore disks: %w", err)
+			diskErr = fmt.Errorf("restore disks: %w", err)
 		}
 	}
 	if cached.HBAs != nil {
 		readings := samplesFromCache(cached.HBAs.Sensors)
 		if _, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings); err != nil {
-			return fmt.Errorf("restore HBA: %w", err)
+			hbaErr = fmt.Errorf("restore HBA: %w", err)
 		}
+	}
+	if err := errors.Join(diskErr, hbaErr); err != nil {
+		return err
 	}
 	log.Printf("restored cached hwmon inventory from %s", publisher.cachePath)
 	return nil

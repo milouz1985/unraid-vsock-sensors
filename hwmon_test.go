@@ -563,6 +563,31 @@ func TestPublisherReportsPartialCacheRestore(t *testing.T) {
 	}
 }
 
+func TestPublisherContinuesCacheRestoreAfterDiskFailure(t *testing.T) {
+	directory := t.TempDir()
+	device := filepath.Join(directory, "virt-temp")
+	cache := filepath.Join(directory, "inventory.json")
+	if err := os.WriteFile(device, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"version":1,"disks":{"readings":[{"id":"invalid","label":"disk1"}]},"hbas":{"readings":[{"id":"hba:sas:1234","label":"SAS3008"}]}}`
+	if err := os.WriteFile(cache, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := (&hwmonPublisher{cachePath: cache}).restore(device)
+	if err == nil || !strings.Contains(err.Error(), "restore disks") {
+		t.Fatalf("err=%v", err)
+	}
+	contents, readErr := os.ReadFile(device)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if got, want := string(contents), "sample\thba:sas:1234\t100000\tSAS3008\nconfigure\thba\n"; got != want {
+		t.Fatalf("restored HBA inventory = %q, want %q", got, want)
+	}
+}
+
 func TestParseRestartUnits(t *testing.T) {
 	units, err := parseRestartUnits("coolercontrold.service, fan2go.service,coolercontrold.service")
 	if err != nil {
