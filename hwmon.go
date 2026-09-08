@@ -219,7 +219,7 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 	var diskErr, hbaErr error
 	reconfigured := false
 	// A non-nil empty inventory is authoritative and removes the last cached
-	// disk instead of leaving a permanent failsafe device behind.
+	// family instead of leaving a permanent failsafe device behind.
 	if state.Error != "" {
 		diskErr = fmt.Errorf("disks: %s", state.Error)
 	} else if state.Disks == nil {
@@ -234,6 +234,8 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 	}
 	if state.HBAError != "" {
 		hbaErr = fmt.Errorf("HBA: %s", state.HBAError)
+	} else if state.HBAs == nil {
+		hbaErr = errors.New("HBA: inventory is missing; waiting for sensors")
 	} else if changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
 	} else {

@@ -452,6 +452,50 @@ func TestPublisherDistinguishesMissingAndEmptyDiskInventory(t *testing.T) {
 	}
 }
 
+func TestPublisherDistinguishesMissingAndEmptyHBAInventory(t *testing.T) {
+	directory := t.TempDir()
+	device := filepath.Join(directory, "virt-temp")
+	if err := os.WriteFile(device, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &hwmonPublisher{
+		cachePath: filepath.Join(directory, "inventory.json"),
+		disks:     hwmonInventory{initialized: true},
+		hbas: hwmonInventory{initialized: true, sensors: []hwmonSensor{
+			{id: "hba:sas:1234", label: "SAS3008 (0000:06:10.0)"},
+		}},
+	}
+
+	_, err := publisher.publish(device, sensors.Response{Disks: []sensors.Disk{}})
+	if err == nil || !strings.Contains(err.Error(), "HBA: inventory is missing") {
+		t.Fatalf("missing inventory error = %v", err)
+	}
+	if len(publisher.hbas.sensors) != 1 {
+		t.Fatal("missing inventory changed the configured HBA")
+	}
+
+	changed, err := publisher.publish(device, sensors.Response{
+		Disks: []sensors.Disk{}, HBAs: []sensors.HBA{},
+	})
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if len(publisher.hbas.sensors) != 0 {
+		t.Fatalf("HBA inventory = %#v, want empty", publisher.hbas.sensors)
+	}
+
+	if err := os.Truncate(device, 0); err != nil {
+		t.Fatal(err)
+	}
+	restored := &hwmonPublisher{cachePath: publisher.cachePath}
+	if err := restored.restore(device); err != nil {
+		t.Fatal(err)
+	}
+	if !restored.hbas.initialized || len(restored.hbas.sensors) != 0 {
+		t.Fatalf("restored HBA inventory = %#v, want initialized and empty", restored.hbas)
+	}
+}
+
 func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 	directory := t.TempDir()
 	device := filepath.Join(directory, "virt-temp")
