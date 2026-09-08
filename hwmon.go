@@ -101,47 +101,50 @@ func hwmon(args []string) error {
 	}()
 
 	updateLog := stickyErrorLog{context: "hwmon update"}
-	restartPending := false
 	seenGuestSnapshot := false
-	restartAfter := time.Time{}
+	tryRestartConsumers := func() <-chan time.Time {
+		if err := restartSystemdUnits(ctx, restartUnits); err != nil {
+			log.Printf("topology consumer restart warning: %s; retrying in %s", err, restartRetryDelay)
+			return time.After(restartRetryDelay)
+		}
+		if len(restartUnits) != 0 {
+			log.Printf("restarted topology consumers: %s", strings.Join(restartUnits, ", "))
+		}
+		return nil
+	}
+	// A nil channel disables the retry case until a failed attempt schedules it.
+	var restartRetry <-chan time.Time
+	// Main hwmon event loop. The select blocks while no event is ready, so this
+	// loop does not poll or run continuously. It wakes only for guest snapshots,
+	// receiver failures, deferred consumer restart retries, or context cancellation.
+	// A successful consumer restart only disables its retry; only a receiver
+	// failure or context cancellation stops the hwmon service.
 	for {
-		var err error
 		select {
 		case snapshot := <-snapshots:
 			if snapshot.expired(time.Now()) {
-				err = fmt.Errorf("discard snapshot queued for %s", time.Since(snapshot.receivedAt).Round(time.Millisecond))
-				break
+				updateLog.update(fmt.Errorf("discard snapshot queued for %s", time.Since(snapshot.receivedAt).Round(time.Millisecond)))
+				continue
 			}
 			reconfigured, publishErr := publisher.publish(*device, snapshot.response)
-			err = publishErr
 			firstGuestSnapshot := !seenGuestSnapshot
 			seenGuestSnapshot = true
 			// A guest-backed snapshot is authoritative even when it
 			// matches the cache, so consumers must discard stale disk entries.
-			if reconfigured || firstGuestSnapshot {
-				restartPending = true
+			if (reconfigured || firstGuestSnapshot) && restartRetry == nil {
+				restartRetry = tryRestartConsumers()
 			}
-		case err = <-backgroundErrors:
+			updateLog.update(publishErr)
+		case err := <-backgroundErrors:
 			if err == nil && ctx.Err() != nil {
 				return nil
 			}
 			return err
+		case <-restartRetry:
+			restartRetry = tryRestartConsumers()
 		case <-ctx.Done():
 			return nil
 		}
-		if restartPending && !time.Now().Before(restartAfter) {
-			if restartErr := restartSystemdUnits(ctx, restartUnits); restartErr != nil {
-				restartAfter = time.Now().Add(restartRetryDelay)
-				log.Printf("topology consumer restart warning: %s", restartErr)
-			} else {
-				restartPending = false
-				restartAfter = time.Time{}
-				if len(restartUnits) != 0 {
-					log.Printf("restarted topology consumers: %s", strings.Join(restartUnits, ", "))
-				}
-			}
-		}
-		updateLog.update(err)
 	}
 }
 
@@ -264,10 +267,10 @@ func parseRestartUnits(value string) ([]string, error) {
 	seen := make(map[string]struct{})
 	for _, item := range strings.Split(value, ",") {
 		unit := strings.TrimSpace(item)
-		if unit == "" || strings.HasPrefix(unit, "-") || strings.ContainsAny(unit, " \t\r\n/") {
+		if unit == "" || strings.HasPrefix(unit, "-") || strings.ContainsAny(unit, " \t\r\n/*?[]") {
 			return nil, fmt.Errorf("invalid systemd unit %q", unit)
 		}
-		if unit == "unraid-vsock-hwmon.service" {
+		if unit == "unraid-vsock-hwmon" || unit == "unraid-vsock-hwmon.service" {
 			return nil, errors.New("unraid-vsock-hwmon.service cannot restart itself")
 		}
 		if _, duplicate := seen[unit]; duplicate {

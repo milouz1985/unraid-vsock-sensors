@@ -139,8 +139,13 @@ UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
 UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
 ```
 
+Les motifs systemd ne sont pas acceptés et le récepteur ne peut pas se désigner
+lui-même dans cette liste.
+
 Le récepteur utilise `systemctl try-restart` : une unité absente ou inactive n'est
-pas démarrée. La valeur reste vide par défaut.
+pas démarrée. Si `systemctl` ne parvient pas à mettre la demande en file
+d'attente, une nouvelle tentative est programmée 30 secondes après chaque
+échec. La valeur reste vide par défaut.
 
 Chaque collecteur Unraid invalide son cache après son intervalle normal augmenté
 du délai maximal de collecte. Le snapshot signale alors une erreur et le

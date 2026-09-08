@@ -596,8 +596,27 @@ func TestParseRestartUnits(t *testing.T) {
 	if want := []string{"coolercontrold.service", "fan2go.service"}; !reflect.DeepEqual(units, want) {
 		t.Fatalf("units = %#v, want %#v", units, want)
 	}
-	if _, err := parseRestartUnits("--no-block"); err == nil {
-		t.Fatal("option-like unit must be rejected")
+	for _, value := range []string{
+		"--no-block",
+		"coolercontrold*",
+		"fan?go.service",
+		"[cf]an.service",
+	} {
+		t.Run("reject "+value, func(t *testing.T) {
+			if _, err := parseRestartUnits(value); err == nil {
+				t.Fatalf("invalid unit %q accepted", value)
+			}
+		})
+	}
+	for _, value := range []string{
+		"unraid-vsock-hwmon",
+		"unraid-vsock-hwmon.service",
+	} {
+		t.Run("reject self "+value, func(t *testing.T) {
+			if _, err := parseRestartUnits(value); err == nil || !strings.Contains(err.Error(), "cannot restart itself") {
+				t.Fatalf("self-restart unit %q returned %v", value, err)
+			}
+		})
 	}
 }
 

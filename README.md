@@ -167,7 +167,10 @@ UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 - `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
   des virgules. Les unités actives sont redémarrées après le premier snapshot
   valide, puis après une reconfiguration hwmon, afin qu'elles rescannent les
-  hwmon.
+  hwmon. Les motifs systemd ne sont pas acceptés et le récepteur ne peut pas se
+  désigner lui-même. Si `systemctl` ne parvient pas à mettre la demande en file
+  d'attente, une nouvelle tentative est programmée 30 secondes après chaque
+  échec.
 
 Pour CoolerControl :
 
