@@ -54,6 +54,14 @@ pve() {
     "${PVE_SSH[@]}" "$@"
 }
 
+timing() {
+    local now elapsed
+    now="$(date +%s%3N)"
+    elapsed=$((now - LAST_TIMING_MS))
+    printf 'TIMING %-25s %6d ms\n' "$1" "$elapsed"
+    LAST_TIMING_MS="$now"
+}
+
 shell_quote() {
     local value="$1"
     printf "'%s'" "${value//\'/\'\\\'\'}"
@@ -145,15 +153,19 @@ SOURCE_SHA256="$(sha256sum "$WORK_DIR/source.sha256" | awk '{print $1}')"
     printf 'VM test suite: %s\n' "$VM_TEST_SUITE"
 } > "$WORK_DIR/uvss-test-metadata"
 
+LAST_TIMING_MS="$(date +%s%3N)"
 echo "Cloning Proxmox template $TEMPLATE_VMID -> $VMID"
 pve qm clone "$TEMPLATE_VMID" "$VMID" --name "uvss-test-$VMID" --full 0
 CREATED=1
+timing "clone"
 pve qm set "$VMID" --tags uvss-test-run --ciupgrade 0
 echo "Adding virtual HDDs"
 pve qm set "$VMID" --sata1 "${PVE_STORAGE}:${TEST_DISK_SIZE_GIB},serial=UVSSDISK1"
 pve qm set "$VMID" --sata2 "${PVE_STORAGE}:${TEST_DISK_SIZE_GIB},serial=UVSSDISK2"
+timing "attach disks"
 echo "Starting VM"
 pve qm start "$VMID"
+timing "qm start"
 
 echo "Waiting for QEMU Guest Agent"
 deadline=$((SECONDS + BOOT_TIMEOUT))
@@ -161,6 +173,7 @@ until pve qm guest cmd "$VMID" ping >/dev/null 2>&1; do
     (( SECONDS < deadline )) || die "Timed out waiting for QEMU Guest Agent on VM $VMID"
     sleep 3
 done
+timing "boot -> QGA"
 
 echo "Discovering guest IP"
 deadline=$((SECONDS + BOOT_TIMEOUT))
@@ -191,6 +204,7 @@ for interface in interfaces:
 done
 [[ -n "$GUEST_IP" ]] || die "QEMU Guest Agent did not report a usable IPv4 address"
 echo "Guest IP: $GUEST_IP"
+timing "QGA -> IP"
 
 GUEST_TARGET="${GUEST_USER}@${GUEST_IP}"
 GUEST_KNOWN_HOSTS="$WORK_DIR/known_hosts"
@@ -210,8 +224,11 @@ until guest true >/dev/null 2>&1; do
     (( SECONDS < deadline )) || die "Timed out waiting for SSH on $GUEST_TARGET"
     sleep 3
 done
+timing "IP -> SSH"
 wait_for_cloud_init
+timing "Cloud-Init"
 verify_guest_template
+timing "template verification"
 
 echo "Uploading working tree"
 guest 'rm -rf /var/tmp/uvss-source && mkdir -p /var/tmp/uvss-source'
@@ -221,12 +238,14 @@ rsync -a --from0 --files-from="$WORK_DIR/files" -e "$RSYNC_SSH" \
 rsync -a -e "$RSYNC_SSH" "$WORK_DIR/uvss-test-metadata" "$WORK_DIR/source.sha256" \
     "$GUEST_TARGET:/var/tmp/"
 guest_exec 60 "test \"\$(sha256sum /var/tmp/source.sha256 | awk '{print \$1}')\" = '$SOURCE_SHA256'; cd /var/tmp/uvss-source; sha256sum -c /var/tmp/source.sha256"
+timing "source upload"
 
 echo "Running VM test suite: $VM_TEST_SUITE"
 TEST_PASSED=0
 if guest_exec "$TEST_TIMEOUT" "cd /var/tmp/uvss-source; bash tests/vm/guest-tests.sh '$VM_TEST_SUITE' 2>&1 | tee /var/tmp/uvss-tests.log"; then
     TEST_PASSED=1
 fi
+timing "tests"
 
 mkdir -p "$REPO_DIR/dist"
 LOG_FILE="$(mktemp "$REPO_DIR/dist/vm-tests-${VMID}.XXXXXX.log")"
@@ -236,6 +255,7 @@ if rsync -a -e "$RSYNC_SSH" "$GUEST_TARGET:/var/tmp/uvss-tests.log" "$LOG_FILE";
 else
     echo "Unable to download /var/tmp/uvss-tests.log" >&2
 fi
+timing "log download"
 (( TEST_PASSED )) || die "VM tests failed"
 
 if (( ! KEEP )); then
@@ -251,5 +271,6 @@ if (( ! KEEP )); then
     echo "Destroying VM $VMID"
     pve qm destroy "$VMID" --purge
     CREATED=0
+    timing "shutdown + destroy"
 fi
 echo "PASS"

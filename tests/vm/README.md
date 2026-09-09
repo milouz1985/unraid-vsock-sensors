@@ -207,6 +207,17 @@ bash tests/vm/run.sh --keep
 make test-vm TEST_VM_KEEP=1
 ```
 
+Dans une VM conservée, les phases de démarrage et Cloud-Init peuvent être
+analysées directement avec :
+
+```sh
+systemd-analyze time
+systemd-analyze critical-chain
+systemd-analyze blame
+sudo cloud-init analyze blame
+sudo cloud-init analyze show
+```
+
 `make test-vm` exécute le parcours complet.
 `make test-vm-core` couvre uniquement le module, hwmon et SMART ;
 `make test-vm-package` couvre uniquement le paquet Debian et DKMS.
@@ -305,12 +316,16 @@ physique. Aucun module UVSS n'est compilé, installé ou chargé sur l'hôte.
 
 Les tests unitaires du protocole, de la logique métier et des erreurs
 matérielles restent utiles et continuent de tourner localement avec `make check`.
-Le détecteur de courses s'exécute séparément avec `make test-race` ou `make all` ; ces
-contrôles ne sont pas rejoués dans la VM.
+Le détecteur de courses s'exécute séparément avec `make test-race` ou
+`make all` ; ces contrôles ne sont pas rejoués dans la VM.
 Chaque journal indique le commit Git, l'état du working tree, le SHA256 de
 son manifeste, le noyau PVE, la version du template, la version de Go et le
 parcours exécuté. `make lint-shell` lance ShellCheck sur tous les scripts Bash
 lorsque l'outil est installé sur la machine de développement ou dans la CI.
+Le runner affiche également la durée de chaque phase sous la forme `TIMING` :
+clone, ajout des disques, démarrage, disponibilité QGA/IP/SSH, Cloud-Init,
+validation du template, transfert des sources, tests, téléchargement du journal
+et suppression de la VM.
 
 Références : [personnalisation libguestfs](https://libguestfs.org/virt-customize.1.html),
 [agrandissement de l'image](https://libguestfs.org/virt-resize.1.html),
