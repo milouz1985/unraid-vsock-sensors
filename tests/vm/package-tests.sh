@@ -53,10 +53,13 @@ check_unregistered() {
 }
 
 echo "Building and installing the Debian package on kernel $kernel"
+start_timing
 for version in 0.0.0-vmtest.1 0.0.0-vmtest.2; do
     make hwmon-package VERSION="$version"
 done
+timing "package: builds"
 install_version 0.0.0-vmtest.1
+timing "package: install"
 printf '\n# VM test: preserve this configuration across upgrades and remove\n' >> "$config"
 cp -- "$config" /var/tmp/uvss-expected-config
 mkdir -p -- "$(dirname -- "$cache")"
@@ -64,6 +67,7 @@ printf '{"version":1}\n' > "$cache"
 
 echo "Checking package upgrade and DKMS replacement"
 install_version 0.0.0-vmtest.2
+timing "package: upgrade"
 cmp -- "$config" /var/tmp/uvss-expected-config
 check_unregistered 0.0.0-vmtest.1
 
@@ -77,11 +81,14 @@ fi
 check_unregistered 0.0.0-vmtest.2
 cmp -- "$config" /var/tmp/uvss-expected-config
 [[ -f "$cache" ]]
+timing "package: remove"
 
 echo "Checking reinstall preserves configuration, then purge removes it"
 install_version 0.0.0-vmtest.2
+timing "package: reinstall"
 cmp -- "$config" /var/tmp/uvss-expected-config
 apt-get purge -y "$package"
 [[ ! -e "$config" && ! -e "$cache" && ! -d /sys/module/virt_temp ]]
 check_unregistered 0.0.0-vmtest.2
+timing "package: purge"
 echo "Package and DKMS lifecycle checks passed on $kernel"

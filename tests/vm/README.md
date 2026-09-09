@@ -325,7 +325,9 @@ lorsque l'outil est installé sur la machine de développement ou dans la CI.
 Le runner affiche également la durée de chaque phase sous la forme `TIMING` :
 clone, ajout des disques, démarrage, disponibilité QGA/IP/SSH, Cloud-Init,
 validation du template, transfert des sources, tests, téléchargement du journal
-et suppression de la VM.
+et suppression de la VM. Le journal invité détaille aussi la compilation du
+module, le téléchargement des modules Go, les tests d'intégration et chaque
+étape du cycle de vie du paquet.
 
 Références : [personnalisation libguestfs](https://libguestfs.org/virt-customize.1.html),
 [agrandissement de l'image](https://libguestfs.org/virt-resize.1.html),

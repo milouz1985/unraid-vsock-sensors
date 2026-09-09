@@ -54,14 +54,6 @@ pve() {
     "${PVE_SSH[@]}" "$@"
 }
 
-timing() {
-    local now elapsed
-    now="$(date +%s%3N)"
-    elapsed=$((now - LAST_TIMING_MS))
-    printf 'TIMING %-25s %6d ms\n' "$1" "$elapsed"
-    LAST_TIMING_MS="$now"
-}
-
 shell_quote() {
     local value="$1"
     printf "'%s'" "${value//\'/\'\\\'\'}"
@@ -153,7 +145,7 @@ SOURCE_SHA256="$(sha256sum "$WORK_DIR/source.sha256" | awk '{print $1}')"
     printf 'VM test suite: %s\n' "$VM_TEST_SUITE"
 } > "$WORK_DIR/uvss-test-metadata"
 
-LAST_TIMING_MS="$(date +%s%3N)"
+start_timing
 echo "Cloning Proxmox template $TEMPLATE_VMID -> $VMID"
 pve qm clone "$TEMPLATE_VMID" "$VMID" --name "uvss-test-$VMID" --full 0
 CREATED=1

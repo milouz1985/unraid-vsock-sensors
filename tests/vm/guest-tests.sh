@@ -28,10 +28,16 @@ export GOTOOLCHAIN=local
 cat /var/tmp/uvss-test-metadata
 uname -a
 go version
+start_timing
 if [[ "$suite" == core || "$suite" == all ]]; then
     make -C virt-temp/module
+    timing "core: module build"
+    go mod download
+    timing "core: module download"
     go test -tags=integration -count=1 -timeout=120s -v -run '^TestVM' .
+    timing "core: integration tests"
 fi
 if [[ "$suite" == package || "$suite" == all ]]; then
     bash tests/vm/package-tests.sh
+    timing "package suite"
 fi

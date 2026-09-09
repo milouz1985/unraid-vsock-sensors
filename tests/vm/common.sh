@@ -5,6 +5,18 @@ readonly UVSS_TEST_IMAGE_VERSION=2
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+start_timing() {
+    LAST_TIMING_MS="$(date +%s%3N)"
+}
+
+timing() {
+    local now elapsed
+    now="$(date +%s%3N)"
+    elapsed=$((now - LAST_TIMING_MS))
+    printf 'TIMING %-25s %6d ms\n' "$1" "$elapsed"
+    LAST_TIMING_MS="$now"
+}
+
 positive_integer() {
     [[ "$2" =~ ^[1-9][0-9]{0,6}$ ]] || die "$1 must be a positive integer (at most 7 digits)"
 }
