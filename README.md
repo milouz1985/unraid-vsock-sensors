@@ -411,10 +411,15 @@ apt purge unraid-vsock-sensors-hwmon
 
 ## Compiler et tester
 
-Go 1.27.0 ou plus récent est nécessaire sur la machine de développement.
+Go 1.27.0 ou plus récent et ShellCheck sont nécessaires sur la machine de
+développement. Sous Debian ou Ubuntu, installer ShellCheck avec :
 
 ```sh
-make check          # vérifie le Go, les scripts, la page PHP et le script rc
+sudo apt install shellcheck
+```
+
+```sh
+make check          # vérifie le Go, ShellCheck, la page PHP et le script rc
 make test-race      # exécute les tests Go avec le détecteur de courses
 make build          # crée bin/unraid-vsock-sensors
 make unraid-package # crée le .txz et le .plg Unraid

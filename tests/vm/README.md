@@ -322,8 +322,9 @@ Le détecteur de courses s'exécute séparément avec `make test-race` ou
 `make all` ; ces contrôles ne sont pas rejoués dans la VM.
 Chaque journal indique le commit Git, l'état du working tree, le SHA256 de
 son manifeste, le noyau PVE, la version du template, la version de Go et le
-parcours exécuté. `make lint-shell` lance ShellCheck sur tous les scripts Bash
-lorsque l'outil est installé sur la machine de développement ou dans la CI.
+parcours exécuté. `make check` lance ShellCheck sur tous les scripts Bash et
+POSIX ; l'outil doit donc être installé sur la machine de développement et dans
+la CI.
 Le runner affiche également la durée de chaque phase sous la forme `TIMING` :
 clone, ajout des disques, démarrage, disponibilité QGA/IP/SSH, Cloud-Init,
 validation du template, transfert des sources, tests, téléchargement du journal

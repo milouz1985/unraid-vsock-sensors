@@ -94,7 +94,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
 	bash unraid-plugin/rc_test.sh
 
-check: vet test check-scripts ## Vérifie le projet sans créer d'artefacts
+check: vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
 
 all: check test-race build unraid-package hwmon-package ## Vérifie, compile et crée tous les paquets
 
