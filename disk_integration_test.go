@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,71 @@ import (
 	"testing"
 	"time"
 )
+
+type vmTestDisk struct {
+	name   string
+	path   string
+	serial string
+}
+
+func discoverVMTestDisks(t *testing.T) []vmTestDisk {
+	t.Helper()
+	wanted := []vmTestDisk{
+		{name: "disk1", serial: "UVSSDISK1"},
+		{name: "disk2", serial: "UVSSDISK2"},
+	}
+	wantedSerials := make(map[string]struct{}, len(wanted))
+	for _, disk := range wanted {
+		wantedSerials[disk.serial] = struct{}{}
+	}
+
+	blockDevices, err := filepath.Glob("/sys/class/block/sd*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := make(map[string]string, len(wanted))
+	var observed []string
+	for _, sysfsPath := range blockDevices {
+		if _, err := os.Stat(filepath.Join(sysfsPath, "partition")); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inspect block device %s: %v", sysfsPath, err)
+		}
+		devicePath := filepath.Join("/dev", filepath.Base(sysfsPath))
+		output, runErr := exec.Command("/usr/sbin/smartctl", "--json", "-i", devicePath).Output()
+		var identity struct {
+			SerialNumber string `json:"serial_number"`
+			Smartctl     struct {
+				ExitStatus *int `json:"exit_status"`
+			} `json:"smartctl"`
+		}
+		if err := json.Unmarshal(output, &identity); err != nil {
+			continue
+		}
+		if identity.SerialNumber != "" {
+			observed = append(observed, fmt.Sprintf("%s=%s", devicePath, identity.SerialNumber))
+		}
+		if _, ok := wantedSerials[identity.SerialNumber]; !ok {
+			continue
+		}
+		if runErr != nil && (identity.Smartctl.ExitStatus == nil || *identity.Smartctl.ExitStatus&smartctlCommandErrorMask != 0) {
+			t.Fatalf("identify test disk %s at %s: %v", identity.SerialNumber, devicePath, runErr)
+		}
+		if previous := found[identity.SerialNumber]; previous != "" {
+			t.Fatalf("serial %s found on both %s and %s", identity.SerialNumber, previous, devicePath)
+		}
+		found[identity.SerialNumber] = devicePath
+	}
+
+	for index := range wanted {
+		wanted[index].path = found[wanted[index].serial]
+		if wanted[index].path == "" {
+			t.Fatalf("QEMU SATA disk %s not found through SMART; observed: %v", wanted[index].serial, observed)
+		}
+		t.Logf("discovered QEMU SATA disk %s at %s", wanted[index].serial, wanted[index].path)
+	}
+	return wanted
+}
 
 func TestVMQEMUSMARTCollector(t *testing.T) {
 	if os.Geteuid() != 0 || os.Getenv("UVSS_VM_TEST") != "1" {
@@ -24,12 +90,7 @@ func TestVMQEMUSMARTCollector(t *testing.T) {
 		}
 	}
 
-	devices := []struct {
-		name, path, serial string
-	}{
-		{name: "disk1", path: "/dev/sdb", serial: "UVSSDISK1"},
-		{name: "disk2", path: "/dev/sdc", serial: "UVSSDISK2"},
-	}
+	devices := discoverVMTestDisks(t)
 	for _, disk := range devices {
 		info, err := os.Stat(disk.path)
 		if err != nil || info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
@@ -39,26 +100,26 @@ func TestVMQEMUSMARTCollector(t *testing.T) {
 		if err != nil || strings.TrimSpace(string(rotational)) != "1" {
 			t.Fatalf("%s ROTA = %q, err=%v; want 1", disk.path, rotational, err)
 		}
-		serial, err := os.ReadFile("/sys/class/block/" + filepath.Base(disk.path) + "/device/serial")
-		if err != nil || strings.TrimSpace(string(serial)) != disk.serial {
-			t.Fatalf("%s serial = %q, err=%v; want %s", disk.path, serial, err, disk.serial)
-		}
 	}
 
-	shim := `#!/usr/bin/env bash
+	var shim strings.Builder
+	shim.WriteString(`#!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
-    disk1) device=/dev/sdb ;;
-    disk2) device=/dev/sdc ;;
+`)
+	for _, disk := range devices {
+		fmt.Fprintf(&shim, "    %s) device=%q ;;\n", disk.name, disk.path)
+	}
+	shim.WriteString(`
     *) echo "unknown UVSS test disk: $1" >&2; exit 2 ;;
 esac
 read -r -a options <<< "$2"
 exec /usr/sbin/smartctl "${options[@]}" "$device"
-`
+`)
 	if _, err := os.Stat(smartctlTypePath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("refusing to replace existing %s", smartctlTypePath)
 	}
-	if err := os.WriteFile(smartctlTypePath, []byte(shim), 0755); err != nil {
+	if err := os.WriteFile(smartctlTypePath, []byte(shim.String()), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(smartctlTypePath) })
@@ -67,6 +128,7 @@ exec /usr/sbin/smartctl "${options[@]}" "$device"
 		cmd := exec.Command("/usr/sbin/smartctl", "--json", "-i", "-A", disk.path)
 		output, runErr := cmd.Output()
 		var report struct {
+			SerialNumber string `json:"serial_number"`
 			SmartSupport struct {
 				Available bool `json:"available"`
 				Enabled   bool `json:"enabled"`
@@ -74,6 +136,9 @@ exec /usr/sbin/smartctl "${options[@]}" "$device"
 		}
 		if err := json.Unmarshal(output, &report); err != nil {
 			t.Fatalf("decode real SMART JSON for %s: %v; command error=%v", disk.path, err, runErr)
+		}
+		if report.SerialNumber != disk.serial {
+			t.Fatalf("SMART serial for %s = %q, want %s", disk.path, report.SerialNumber, disk.serial)
 		}
 		if !report.SmartSupport.Available || !report.SmartSupport.Enabled {
 			t.Fatalf("SMART support for %s = %#v", disk.path, report.SmartSupport)
@@ -86,23 +151,19 @@ exec /usr/sbin/smartctl "${options[@]}" "$device"
 
 	directory := t.TempDir()
 	inventory := filepath.Join(directory, "disks.ini")
-	ini := `["disk1"]
-id="UVSSDISK1"
-device="sdb"
+	var ini strings.Builder
+	for _, disk := range devices {
+		fmt.Fprintf(&ini, `[%q]
+id=%q
+device=%q
 status="DISK_OK"
 rotational="1"
 transport="ata"
 spundown="0"
 
-["disk2"]
-id="UVSSDISK2"
-device="sdc"
-status="DISK_OK"
-rotational="1"
-transport="ata"
-spundown="0"
-`
-	if err := os.WriteFile(inventory, []byte(ini), 0600); err != nil {
+`, disk.name, disk.serial, filepath.Base(disk.path))
+	}
+	if err := os.WriteFile(inventory, []byte(ini.String()), 0600); err != nil {
 		t.Fatal(err)
 	}
 	collector := newDiskCollector(inventory, time.Minute)
@@ -116,7 +177,7 @@ spundown="0"
 	}
 	for index, disk := range readings {
 		want := devices[index]
-		if disk.Name != want.name || disk.Device != strings.TrimPrefix(want.path, "/dev/") ||
+		if disk.Name != want.name || disk.Device != filepath.Base(want.path) ||
 			disk.ID != want.serial || disk.Transport != "ata" || !disk.Rotational ||
 			disk.Unavailable || disk.Temp != 31 {
 			t.Fatalf("collector disk %d = %#v", index, disk)
