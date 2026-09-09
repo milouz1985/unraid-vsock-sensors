@@ -48,7 +48,8 @@ done
 [[ "$VMID" != "$TEMPLATE_VMID" ]] || die "TEST_VMID must differ from TEMPLATE_VMID"
 
 PVE_TARGET="${PVE_SSH_USER}@${PVE_HOST}"
-PVE_SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 -- "$PVE_TARGET")
+PVE_SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -- "$PVE_TARGET")
 pve() {
     "${PVE_SSH[@]}" "$@"
 }
