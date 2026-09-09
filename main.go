@@ -157,7 +157,7 @@ func serve(args []string) error {
 	}
 	disks := newDiskCollector(*disksINIPath, *diskInterval)
 	log.Printf("starting unraid-vsock-sensors v%s; pushing to host VSOCK port %d", version, *port)
-	log.Printf("disk SMART refresh interval is %s; failure grace is %s", disks.interval, disks.grace)
+	log.Printf("disk SMART refresh interval is %s; up to %d retries follow failures every %s", disks.interval, maxDiskRetries, disks.retryDelay)
 	if *diskInterval > maximumRecommendedDiskInterval {
 		log.Printf("warning: disk-interval=%s exceeds the recommended maximum of %s; disk temperatures may be too stale for reliable fan control", *diskInterval, maximumRecommendedDiskInterval)
 	}

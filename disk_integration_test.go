@@ -205,8 +205,11 @@ spundown="0"
 	}
 	requireVMHWMonTemp(t, "disk", "disk:group:hdd", "31000")
 
-	t.Log("a persistent SMART failure reaches disk and group failsafe")
+	t.Log("a persistent SMART failure lets the failed disk and its group expire")
 	collector.grace = 500 * time.Millisecond
+	if err := os.WriteFile("/sys/module/virt_temp/parameters/stale_timeout", []byte("1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(failureMarker, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -220,10 +223,20 @@ spundown="0"
 		failedReadings[1].Unavailable || failedReadings[1].Temp != 31 {
 		t.Fatalf("collector readings after SMART failure = %#v", failedReadings)
 	}
-	publish(failedReadings, false)
-	requireVMHWMonTemp(t, "disk", "disk:"+devices[0].serial, "100000")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		publish(failedReadings, false)
+		failedTemp := readVMHWMonTemp(t, "disk", "disk:"+devices[0].serial)
+		groupTemp := readVMHWMonTemp(t, "disk", "disk:group:hdd")
+		if failedTemp == "100000" && groupTemp == "100000" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("failed disk/group did not expire: disk=%s group=%s", failedTemp, groupTemp)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	requireVMHWMonTemp(t, "disk", "disk:"+devices[1].serial, "31000")
-	requireVMHWMonTemp(t, "disk", "disk:group:hdd", "100000")
 
 	t.Log("a successful SMART read recovers disk and group temperatures")
 	if err := os.Remove(failureMarker); err != nil {

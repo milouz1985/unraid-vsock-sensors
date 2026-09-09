@@ -20,8 +20,17 @@ func publishHWMonFamily(
 	inventory *hwmonInventory,
 	current []hwmonSample,
 ) (bool, error) {
-	if !inventory.initialized || !sameHWMonTopology(inventory.sensors, current) {
-		if err := writeHWMonSamples(path, namespace, "configure", current); err != nil {
+	return publishHWMonFamilyWithWriter(path, namespace, inventory, current, writeHWMonSamples)
+}
+
+func publishHWMonFamilyWithWriter(
+	path, namespace string,
+	inventory *hwmonInventory,
+	current []hwmonSample,
+	write func(string, string, string, []hwmonSample) error,
+) (bool, error) {
+	if !inventory.initialized || !sameHWMonConfiguration(inventory.sensors, current) {
+		if err := write(path, namespace, "configure", current); err != nil {
 			return false, err
 		}
 		inventory.initialized = true
@@ -29,11 +38,11 @@ func publishHWMonFamily(
 		return true, nil
 	}
 
-	if err := writeHWMonSamples(path, namespace, "commit", current); err != nil {
+	if err := write(path, namespace, "commit", current); err != nil {
 		if !errors.Is(err, syscall.ESTALE) {
 			return false, err
 		}
-		if configureErr := writeHWMonSamples(path, namespace, "configure", current); configureErr != nil {
+		if configureErr := write(path, namespace, "configure", current); configureErr != nil {
 			return false, fmt.Errorf("reconfigure stale %s inventory: %w", namespace, configureErr)
 		}
 		inventory.sensors = sensorsFromSamples(current)
@@ -42,6 +51,8 @@ func publishHWMonFamily(
 	return false, nil
 }
 
+// Each operation needs a fresh file: virt_temp stages records per open session
+// and accepts only one configure or commit on that session.
 func writeHWMonSamples(path, namespace, operation string, readings []hwmonSample) (err error) {
 	device, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {
@@ -87,6 +98,9 @@ func encodeHWMonSamples(out io.Writer, namespace, operation string, readings []h
 		}
 	}
 	for _, reading := range readings {
+		if operation == "commit" && reading.omitOnCommit {
+			continue
+		}
 		milliCelsius := int64(math.Round(reading.temperature * 1000))
 		if _, err := fmt.Fprintf(out, "sample\t%s\t%d\t%s\n", reading.sensor.id, milliCelsius, reading.sensor.label); err != nil {
 			return err

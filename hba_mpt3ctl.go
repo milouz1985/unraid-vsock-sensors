@@ -65,6 +65,11 @@ const (
 	mpi2ConfigPageReadCurrent = 0x01
 	mpi2PageTypeIOUnit        = 0x00
 	mpi2PageTypeManufacturing = 0x09
+	// Keep these values aligned with the MPI2_*_PAGEVERSION definitions in
+	// mpi2_cnfg.h used by the in-kernel mpt3sas CONFIG helpers.
+	mpi2Manufacturing0Version = 0x00
+	mpi2Manufacturing5Version = 0x03
+	mpi2IOUnit7Version        = 0x05
 	mpi2IOCStatusMask         = 0x7fff
 	temperatureNotPresent     = 0x00
 	temperatureFahrenheit     = 0x01
@@ -135,12 +140,18 @@ func (d *mpt3Device) iocInfo(ioc int) ([]byte, error) {
 	return buffer, nil
 }
 
-func mpt3ConfigRequest(action, pageType, pageNumber byte, header []byte) [28]byte {
+func mpt3ConfigRequest(action, pageType, pageNumber, pageVersion byte, header []byte) [28]byte {
 	var request [28]byte
 	request[0], request[3] = action, mpi2FunctionConfig
 	if header == nil {
-		request[22], request[23] = pageNumber, pageType
+		// Like the in-kernel mpt3sas helpers, PAGE_HEADER requests include the
+		// version expected by the driver instead of relying on a zero-filled
+		// PageVersion. This matters for pages whose declared version is nonzero.
+		request[20], request[22], request[23] = pageVersion, pageNumber, pageType
 	} else {
+		// PAGE_READ_CURRENT must use the complete header returned by the
+		// preceding PAGE_HEADER request, including the firmware's PageVersion
+		// and PageLength.
 		copy(request[20:24], header)
 	}
 	return request
@@ -211,11 +222,11 @@ func validateMPT3ConfigReply(reply []byte, action, pageType, pageNumber byte) er
 	return nil
 }
 
-func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber byte) ([]byte, error) {
+func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber, pageVersion byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	reply, _, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageHeader, pageType, pageNumber, nil), 0)
+	reply, _, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageHeader, pageType, pageNumber, pageVersion, nil), 0)
 	if err != nil {
 		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
@@ -230,7 +241,7 @@ func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, page
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, pageType, pageNumber, header), pageSize)
+	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, pageType, pageNumber, pageVersion, header), pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
@@ -261,11 +272,11 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 			return nil, fmt.Errorf("mpt3ctl IOC %d discovery: %w", ioc, err)
 		}
 		pci, model, sasAddress := parseMPT3PCIAddress(info), "", ""
-		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 0); pageErr == nil {
+		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version); pageErr == nil {
 			model = parseMPT3Model(page)
 		}
 		page5Failed := false
-		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 5); pageErr == nil {
+		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 5, mpi2Manufacturing5Version); pageErr == nil {
 			sasAddress = parseMPT3SASAddress(page)
 		} else {
 			page5Failed = true
@@ -278,7 +289,7 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 			return nil, fmt.Errorf("mpt3ctl IOCs %d and %d have duplicate identity %q", previous, ioc, id)
 		}
 		identities[id] = ioc
-		page, err := device.readConfigPage(ctx, ioc, mpi2PageTypeIOUnit, 7)
+		page, err := device.readConfigPage(ctx, ioc, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version)
 		if err != nil {
 			return nil, fmt.Errorf("mpt3ctl IOC %d temperature: %w", ioc, err)
 		}

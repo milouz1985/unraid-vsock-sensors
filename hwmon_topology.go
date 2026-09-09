@@ -17,8 +17,9 @@ type hwmonSensor struct {
 }
 
 type hwmonSample struct {
-	sensor      hwmonSensor
-	temperature float64
+	sensor       hwmonSensor
+	temperature  float64
+	omitOnCommit bool
 }
 
 type hwmonInventory struct {
@@ -55,12 +56,16 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 		if count < minHWMonGroupSize {
 			continue
 		}
+		// If any member is unavailable, the true maximum is unknown. Keep the
+		// group in the topology but stop refreshing it so virt_temp applies its
+		// stale timeout. A configure still starts it at the failsafe temperature.
 		if unavailable {
 			maximum = hwmonFailsafeTemp
 		}
 		diskSamples = append(diskSamples, hwmonSample{
-			sensor:      hwmonSensor{id: "disk:group:" + string(group.kind), label: group.label},
-			temperature: maximum,
+			sensor:       hwmonSensor{id: "disk:group:" + string(group.kind), label: group.label},
+			temperature:  maximum,
+			omitOnCommit: unavailable,
 		})
 	}
 
@@ -73,7 +78,8 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 			sensor: hwmonSensor{
 				id: "disk:" + disk.ID, label: fmt.Sprintf("%s (%s)", disk.Name, disk.Device),
 			},
-			temperature: temperature,
+			temperature:  temperature,
+			omitOnCommit: disk.Unavailable,
 		})
 	}
 	for _, hba := range state.HBAs {
@@ -93,16 +99,19 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 	return diskSamples, hbaSamples
 }
 
-func sameHWMonTopology(expected []hwmonSensor, current []hwmonSample) bool {
+// Labels are configuration data: virt_temp commit updates temperatures only,
+// so changing a label requires a full configure operation.
+func sameHWMonConfiguration(expected []hwmonSensor, current []hwmonSample) bool {
 	if len(expected) != len(current) {
 		return false
 	}
-	currentIDs := make(map[string]struct{}, len(current))
+	currentLabels := make(map[string]string, len(current))
 	for _, sample := range current {
-		currentIDs[sample.sensor.id] = struct{}{}
+		currentLabels[sample.sensor.id] = sample.sensor.label
 	}
 	for _, sensor := range expected {
-		if _, found := currentIDs[sensor.id]; !found {
+		label, found := currentLabels[sensor.id]
+		if !found || label != sensor.label {
 			return false
 		}
 	}

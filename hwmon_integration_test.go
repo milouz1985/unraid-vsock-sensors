@@ -55,14 +55,13 @@ func TestVMHWMon(t *testing.T) {
 		t.Fatalf("HBA hwmon name = %q, want unraid_vm_hba_a", got)
 	}
 
-	t.Log("commit preserves the configured label and device identity")
-	initialPath := vmHWMonPaths(t, "disk", "disk:vm-a")[0]
+	t.Log("a label change reconfigures the family")
 	diskSamples[0].temperature = 35.125
 	diskSamples[0].sensor.label = "New label"
-	publish("disk", &disks, diskSamples, false)
+	publish("disk", &disks, diskSamples, true)
 	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
-	if vmHWMonPaths(t, "disk", "disk:vm-a")[0] != initialPath || readVMHWMonAttribute(t, "disk", "disk:vm-a", "temp1_label") != "VM disk A" {
-		t.Fatal("commit changed the device identity or its configured label")
+	if readVMHWMonAttribute(t, "disk", "disk:vm-a", "temp1_label") != "New label" {
+		t.Fatal("reconfiguration did not apply the new label")
 	}
 
 	t.Log("a session closed without commit has no effect")

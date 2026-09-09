@@ -166,8 +166,11 @@ UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 - `UNRAID_VSOCK_CACHE` conserve les périphériques des sondes entre deux démarrages ;
 - `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
   des virgules. Les unités actives sont redémarrées après le premier snapshot
-  valide, puis après un changement de topologie, afin qu'elles rescannent les
-  hwmon.
+  valide, puis après une reconfiguration hwmon, afin qu'elles rescannent les
+  hwmon. Les motifs systemd ne sont pas acceptés et le récepteur ne peut pas se
+  désigner lui-même. Si `systemctl` ne parvient pas à mettre la demande en file
+  d'attente, une nouvelle tentative est programmée 30 secondes après chaque
+  échec.
 
 Pour CoolerControl :
 
@@ -265,13 +268,19 @@ le code par défaut `2` peut aussi signaler un échec d'ouverture ou
 d'identification. Le code `3` n'est accepté comme veille que si le JSON indique
 `STANDBY` ou `SLEEP`. Les NVMe sont interrogés sans l'option `-n standby`.
 
-Une erreur SMART transitoire conserve la dernière température valide pendant
-l'intervalle de collecte augmenté de cinq secondes. Si aucune mesure valide
-n'existe encore, le disque est immédiatement déclaré indisponible. Si l'erreur
-persiste après la grâce, il l'est également. Dans les deux cas, le disque et le
-maximum de sa catégorie passent explicitement au failsafe de `100 °C`. Cet
-intervalle appartient au service, vaut `30s` par défaut et ne dépend plus du
-réglage Unraid **Tunable (poll_attributes)**.
+Après une erreur SMART, l'agent marque le disque indisponible et effectue jusqu'à
+deux nouvelles tentatives espacées de deux secondes, ou de l'intervalle de
+collecte configuré s'il est inférieur. Une erreur persistante ne crée donc pas
+de boucle de lectures rapprochées : après ces tentatives, l'agent reprend son
+intervalle normal, fixé à `30s` par défaut et indépendant du réglage Unraid
+**Tunable (poll_attributes)**.
+
+Le disque reste présent dans l'inventaire hwmon, mais les `commit` cessent
+d'actualiser sa valeur et celle du maximum de sa catégorie. `virt_temp` conserve
+alors leur dernière valeur avant de les faire passer à `100 °C` après son délai
+de dix secondes. Si un retry réussit assez vite, ce délai n'expire pas. Une
+nouvelle configuration crée néanmoins toute sonde déjà indisponible directement
+au failsafe afin de ne jamais présenter `0 °C` comme une mesure valide.
 
 Le récepteur ferme une connexion qui ne fournit aucun snapshot pendant environ
 trois secondes afin de permettre une reconnexion propre. Ce délai de transport
@@ -307,34 +316,36 @@ cache existait déjà, StorCLI effectue ensuite une unique nouvelle tentative.
 Les deux backends produisent en priorité le même ID `sas:<adresse>` ; l'adresse
 PCI puis le numéro de série servent de replis lorsqu'elle est indisponible.
 Le label HBA est construit à partir du modèle et de l'adresse PCI, avec l'ID
-stable comme repli, puis conservé tant que cet ID reste présent.
+stable comme repli. Si ce label change sans que l'ID change, la famille est
+reconfigurée afin d'actualiser l'affichage et le cache.
 
 Pendant l'exécution :
 
 - chaque ID stable possède son propre périphérique et reste donc `temp1` sans
   dépendre de l'ordre des autres sondes. Une modification de l'ensemble des ID
-  recrée tous les périphériques de la famille ; leurs noms platform et leurs
-  identités restent stables, mais leurs numéros dynamiques `hwmonX` peuvent
-  changer. La composition d'un maximum HDD, SSD ou NVMe ne fait que modifier sa
-  valeur. Un ID retiré ne réaffecte jamais l'identité d'une autre sonde ;
+  ou d'un label recrée tous les périphériques de la famille ; leurs noms
+  platform et leurs identités restent stables, mais leurs numéros dynamiques
+  `hwmonX` peuvent changer. La composition d'un maximum HDD, SSD ou NVMe ne fait
+  que modifier sa valeur. Un ID retiré ne réaffecte jamais l'identité d'une
+  autre sonde ;
 - une erreur globale de lecture, y compris une section active de `disks.ini`
   sans ID ou périphérique, ne modifie jamais le cache et laisse toute la famille
-  disque atteindre le failsafe ; après une éventuelle grâce de spin-up, une
-  température indisponible ou invalide place son disque et le maximum de sa
-  catégorie au failsafe ;
+  disque atteindre le failsafe. Une température indisponible ou invalide cesse
+  d'actualiser son disque et le maximum de sa catégorie ; jusqu'à deux retries
+  SMART peuvent les rétablir avant l'expiration du délai noyau ;
 - une erreur HBA invalide le relevé complet : l'inventaire précédent reste
   configuré sans être actualisé et atteint donc le failsafe. StorCLI tente
   auparavant une redécouverte et une nouvelle lecture lorsque celle fondée sur
   sa correspondance en cache échoue ;
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
   automatiquement la famille hwmon concernée et met à jour le cache ;
-- un changement de `/dev/sdX`, de nom affiché ou d'index IOC ne modifie pas
-  l'identité si l'ID stable reste identique. Le label est fixé lors de la
-  configuration et les relevés suivants sont appliqués par ID ;
+- un changement de `/dev/sdX`, de nom affiché, d'adresse PCI ou d'index IOC ne
+  modifie pas l'identité si l'ID stable reste identique. Lorsqu'il modifie le
+  label, la famille est reconfigurée pour maintenir l'affichage à jour ;
 - les consommateurs configurés dans `UNRAID_VSOCK_RESTART_UNITS` sont relancés
-  une première fois dès que la VM répond, même si la topologie restaurée depuis
-  le cache est inchangée, puis après chaque reconfiguration afin de découvrir
-  les nouveaux périphériques.
+  une première fois dès que la VM répond, même si la configuration restaurée
+  depuis le cache est inchangée, puis après chaque reconfiguration afin de
+  découvrir les nouveaux périphériques.
 
 ## Failsafe et fraîcheur des mesures
 
@@ -351,8 +362,9 @@ La température des disques vient d'une collecte SMART directe, exécutée en
 arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.
 Le snapshot VSOCK réutilise ce relevé entre deux collectes et permet à Proxmox
 de continuer à alimenter le module `virt-temp`. Pour une régulation thermique
-réactive, une
-valeur de 30 à 60 secondes est recommandée. Cinq minutes constitue une limite
+réactive, une erreur déclenche jusqu'à deux nouvelles collectes espacées de deux
+secondes ; après leur échec, le cycle normal reprend. Une valeur de 30 à 60
+secondes est recommandée. Cinq minutes constitue une limite
 haute raisonnable ; au-delà, une température peut rester ancienne trop
 longtemps pour piloter efficacement les ventilateurs. L'agent accepte une
 valeur plus longue passée en ligne de commande, mais écrit alors un
@@ -363,6 +375,15 @@ strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
 Fahrenheit sont converties puis validées dans la plage `0..150 °C`. Chaque
 collecte native lit aussi les pages de fabrication pour associer la température
 à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC.
+
+Comme les fonctions CONFIG internes du pilote `mpt3sas`, chaque lecture native
+s'effectue en deux requêtes. La requête `PAGE_HEADER` indique la version MPI
+attendue de la page (`0x00` pour Manufacturing 0, `0x03` pour Manufacturing 5
+et `0x05` pour IO Unit 7). L'en-tête renvoyé par le firmware, notamment sa
+version et sa longueur, est ensuite repris intégralement dans la requête
+`PAGE_READ_CURRENT`. Le backend ne met en œuvre ni séquence alternative propre
+à un firmware ni repli contournant cette procédure du noyau.
+
 L'agent actualise ce relevé en arrière-plan sans bloquer la publication VSOCK.
 Lorsque le backend StorCLI est sélectionné,
 la température ROC fournie par sa sortie JSON est utilisée à la place.
