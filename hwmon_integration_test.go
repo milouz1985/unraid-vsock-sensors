@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"unraid-vsock-sensors/internal/sensors"
 )
 
 // This test owns the module for its entire lifetime. It must never run on the
@@ -92,6 +94,19 @@ func TestVMHWMon(t *testing.T) {
 			t.Fatalf("publish %s: changed=%v, want %v; err=%v", namespace, changed, wantChanged, err)
 		}
 	}
+	t.Log("publish an initially empty HBA family")
+	emptyPublisher := &hwmonPublisher{cachePath: filepath.Join(t.TempDir(), "empty-inventory.json")}
+	changed, err := emptyPublisher.publish(device, sensors.Response{
+		Disks: []sensors.Disk{},
+		HBAs:  []sensors.HBA{},
+	})
+	if err != nil || !changed || !emptyPublisher.hbas.initialized || len(emptyPublisher.hbas.sensors) != 0 {
+		t.Fatalf("publish empty HBA family: changed=%v, HBA=%#v, err=%v", changed, emptyPublisher.hbas, err)
+	}
+	if len(paths("hba", "hba:vm-a")) != 0 {
+		t.Fatal("empty HBA inventory created a device")
+	}
+
 	t.Log("configure disk/HBA families and read real sysfs temperatures")
 	publish("disk", &disks, diskSamples, true)
 	publish("hba", &hbas, hbaSamples, true)
@@ -127,7 +142,7 @@ func TestVMHWMon(t *testing.T) {
 
 	t.Log("a real ENOSPC write error is propagated without changing inventory")
 	before := append([]hwmonSensor(nil), disks.sensors...)
-	changed, err := publishHWMonFamily("/dev/full", "disk", &disks, diskSamples)
+	changed, err = publishHWMonFamily("/dev/full", "disk", &disks, diskSamples)
 	if changed || !errors.Is(err, syscall.ENOSPC) || strings.Contains(err.Error(), "reconfigure") || !reflect.DeepEqual(before, disks.sensors) {
 		t.Fatalf("changed=%v, err=%v, inventory=%v", changed, err, disks.sensors)
 	}
@@ -154,6 +169,12 @@ func TestVMHWMon(t *testing.T) {
 	}
 	wantTemp("hba", "hba:vm-a", "48000")
 	publish("disk", &disks, diskSamples, true)
+	publish("hba", &hbas, nil, true)
+	if len(paths("hba", "hba:vm-a")) != 0 {
+		t.Fatal("removed HBA still exists in sysfs")
+	}
+	wantTemp("disk", "disk:vm-a", "35125")
+	publish("hba", &hbas, hbaSamples, true)
 
 	t.Log("kernel timeout reaches failsafe, then fresh data recovers")
 	if err := os.WriteFile("/sys/module/virt_temp/parameters/stale_timeout", []byte("1\n"), 0600); err != nil {

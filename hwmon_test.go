@@ -534,51 +534,6 @@ func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
 	}
 }
 
-func TestPublisherPublishesEmptyHBAInventory(t *testing.T) {
-	directory := t.TempDir()
-	path := filepath.Join(directory, "virt-temp")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	publisher := &hwmonPublisher{
-		cachePath: filepath.Join(directory, "inventory.json"),
-		disks:     hwmonInventory{initialized: true},
-	}
-	changed, err := publisher.publish(path, sensors.Response{Disks: []sensors.Disk{}, HBAs: []sensors.HBA{}})
-	if err != nil || !changed {
-		t.Fatalf("changed=%v err=%v", changed, err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(data), "configure\thba\n"; got != want {
-		t.Fatalf("configuration = %q, want %q", got, want)
-	}
-
-	publisher.hbas = hwmonInventory{
-		initialized: true,
-		sensors:     []hwmonSensor{{id: "hba:sas:1234", label: "HBA"}},
-	}
-	if err := os.Truncate(path, 0); err != nil {
-		t.Fatal(err)
-	}
-	changed, err = publisher.publish(path, sensors.Response{Disks: []sensors.Disk{}, HBAs: []sensors.HBA{}})
-	if err != nil || !changed {
-		t.Fatalf("changed=%v err=%v", changed, err)
-	}
-	if len(publisher.hbas.sensors) != 0 {
-		t.Fatalf("HBA inventory = %#v, want empty", publisher.hbas.sensors)
-	}
-	data, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(data), "configure\thba\n"; got != want {
-		t.Fatalf("cleared configuration = %q, want %q", got, want)
-	}
-}
-
 func makeDiskSamples(state sensors.Response) []hwmonSample {
 	disks, _ := makeHWMonSamples(state)
 	return disks
