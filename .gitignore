@@ -1,3 +1,12 @@
 /bin/
 /dist/
 /TODO*.md
+/tests/vm/template.env
+/tests/vm/*.pub
+/virt-temp/module/*.o
+/virt-temp/module/*.ko
+/virt-temp/module/*.mod
+/virt-temp/module/*.mod.c
+/virt-temp/module/.*.cmd
+/virt-temp/module/Module.symvers
+/virt-temp/module/modules.order

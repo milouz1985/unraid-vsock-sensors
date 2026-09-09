@@ -426,6 +426,37 @@ commit courant n'est pas exactement tagué. Une version explicite s'écrit sans
 le préfixe `v`, par exemple `make all VERSION=1.4.2` ; le tag Git correspondant
 peut ensuite s'appeler `v1.4.2`.
 
+### Tests d'intégration dans une VM
+
+Le dossier [`tests/vm`](tests/vm/README.md) contient le constructeur d'un
+template Debian pour Proxmox et le lanceur des tests dans un clone jetable :
+
+```sh
+# Sur le nœud Proxmox, en root, après configuration de tests/vm/template.env :
+make vm-template    # préparation initiale du template
+make test-vm        # tests du module et du paquet dans une VM sous noyau PVE
+```
+
+Le test d'intégration utilise `/dev/virt-temp` et sysfs pour vérifier les
+températures, le failsafe et la récupération après rechargement du module.
+Il remplace la simulation de l'erreur `ESTALE` et permet de retirer le writer
+injecté uniquement pour les tests. Les tests unitaires restent accessibles
+avec `make check`. La VM est supprimée après succès et conservée après échec.
+
+Le template démarre le noyau Proxmox exact demandé, avec ses headers. Par
+défaut, la cible est le noyau courant de l'hôte ; `PVE_KERNEL_RELEASE` permet
+de la fixer. Le builder et le lanceur vérifient la version effectivement
+démarrée dans la VM. La compilation et le chargement de `virt-temp`, les
+tests hwmon et le cycle installation/mise à jour/remove/purge du paquet DKMS
+se déroulent entièrement dans le clone. Aucun module UVSS n'est compilé ou
+chargé sur l'hôte.
+
+Après une mise à jour du noyau de l'hôte, reconstruire le template pour la
+nouvelle cible. Les anciens templates Debian doivent également être
+reconstruits. Les tests du transport VSOCK entre hôte et invité, d'Unraid et
+des contrôleurs physiques restent à réaliser dans leurs environnements
+respectifs.
+
 ### Tester manuellement un paquet Unraid de développement
 
 Pour tester rapidement une modification sur une machine où le plugin a déjà

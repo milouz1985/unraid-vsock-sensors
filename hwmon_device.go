@@ -20,17 +20,8 @@ func publishHWMonFamily(
 	inventory *hwmonInventory,
 	current []hwmonSample,
 ) (bool, error) {
-	return publishHWMonFamilyWithWriter(path, namespace, inventory, current, writeHWMonSamples)
-}
-
-func publishHWMonFamilyWithWriter(
-	path, namespace string,
-	inventory *hwmonInventory,
-	current []hwmonSample,
-	write func(string, string, string, []hwmonSample) error,
-) (bool, error) {
 	if !inventory.initialized || !sameHWMonTopology(inventory.sensors, current) {
-		if err := write(path, namespace, "configure", current); err != nil {
+		if err := writeHWMonSamples(path, namespace, "configure", current); err != nil {
 			return false, err
 		}
 		inventory.initialized = true
@@ -38,11 +29,11 @@ func publishHWMonFamilyWithWriter(
 		return true, nil
 	}
 
-	if err := write(path, namespace, "commit", current); err != nil {
+	if err := writeHWMonSamples(path, namespace, "commit", current); err != nil {
 		if !errors.Is(err, syscall.ESTALE) {
 			return false, err
 		}
-		if configureErr := write(path, namespace, "configure", current); configureErr != nil {
+		if configureErr := writeHWMonSamples(path, namespace, "configure", current); configureErr != nil {
 			return false, fmt.Errorf("reconfigure stale %s inventory: %w", namespace, configureErr)
 		}
 		inventory.sensors = sensorsFromSamples(current)

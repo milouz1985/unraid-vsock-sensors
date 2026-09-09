@@ -11,7 +11,9 @@ LDFLAGS = -s -w -X main.version=$(VERSION)
 BASH_SCRIPTS := version.sh unraid-plugin/package.sh \
 	unraid-plugin/rc.unraid-vsock-sensors unraid-plugin/rc_test.sh \
 	unraid-plugin/service.sh \
-	virt-temp/package.sh virt-temp/prepare-dkms.sh
+	virt-temp/package.sh virt-temp/prepare-dkms.sh \
+	tests/vm/build-template.sh tests/vm/common.sh tests/vm/run.sh \
+	tests/vm/guest-tests.sh tests/vm/package-tests.sh
 POSIX_SCRIPTS := virt-temp/debian/postinst.in virt-temp/debian/prerm.in \
 	virt-temp/debian/postrm.in
 
@@ -35,6 +37,14 @@ vet: ## Recherche les erreurs Go courantes
 
 test: ## Exécute tous les tests Go
 	$(GO) test ./...
+
+.PHONY: vm-template test-vm
+
+vm-template: ## Prépare le template Debian de test (root sur Proxmox)
+	bash tests/vm/build-template.sh
+
+test-vm: ## Teste le module et le paquet sous noyau PVE dans une VM jetable
+	bash tests/vm/run.sh
 
 check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	for script in $(BASH_SCRIPTS); do \
