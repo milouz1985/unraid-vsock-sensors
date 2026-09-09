@@ -1,6 +1,7 @@
 /bin/
 /dist/
 /TODO*.md
+/tests/vm/local.env
 /tests/vm/template.env
 /tests/vm/*.pub
 /virt-temp/module/*.o
