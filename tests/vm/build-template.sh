@@ -20,7 +20,7 @@ PVE_KEYRING_FILE="${PVE_KEYRING_FILE:-/usr/share/keyrings/proxmox-archive-keyrin
 PVE_REPO_COMPONENT="${PVE_REPO_COMPONENT:-pve-no-subscription}"
 
 CI_USER="${CI_USER:-uvss-test}"
-SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE:-${SCRIPT_DIR}/id_ed25519.pub}"
+SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE:-${HOME}/.ssh/id_ed25519.pub}"
 
 DISK_SIZE="${DISK_SIZE:-16G}"
 CORES="${CORES:-2}"
@@ -388,12 +388,7 @@ guest_exec 60 "
 log "Shutting down validation VM"
 qm shutdown "$VMID" --timeout 120
 
-shutdown_deadline=$((SECONDS + 180))
-while [[ "$(vm_status)" != "stopped" ]]; do
-    (( SECONDS < shutdown_deadline )) ||
-        die "VM ${VMID} did not stop in time"
-    sleep 2
-done
+wait_for_vm_stopped 180
 
 log "Converting VM ${VMID} to template"
 qm template "$VMID"
@@ -407,8 +402,8 @@ cat <<EOF
 
 Template ${VMID} is ready.
 
-Run project tests in a disposable clone:
-  bash ${SCRIPT_DIR}/run.sh
+Run project tests from the configured development checkout:
+  make test-vm
 
 Future rebuild:
   bash ${SCRIPT_DIR}/build-template.sh --replace

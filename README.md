@@ -432,11 +432,10 @@ Le dossier [`tests/vm`](tests/vm/README.md) contient le constructeur d'un
 template Debian pour Proxmox et le lanceur des tests dans un clone jetable :
 
 ```sh
-# Sur le nœud Proxmox, en root, après configuration de tests/vm/template.env :
-make vm-template    # préparation initiale du template
-make test-vm         # module, hwmon et SMART QEMU
-make test-vm-package # cycle du paquet Debian et de DKMS
-make test-vm-all     # les deux parcours dans le même clone
+# Une fois le template préparé sur Proxmox, depuis le poste de développement :
+make test-vm         # parcours complet dans une VM distante jetable
+make test-vm-core    # module, hwmon et SMART QEMU uniquement
+make test-vm-package # cycle du paquet Debian et de DKMS uniquement
 ```
 
 Le test d'intégration utilise `/dev/virt-temp` et sysfs pour vérifier les
@@ -450,9 +449,11 @@ défaut, la cible est le noyau courant de l'hôte ; `PVE_KERNEL_RELEASE` permet
 de la fixer. Le builder et le lanceur vérifient la version effectivement
 démarrée dans la VM. La compilation et le chargement de `virt-temp`, les
 tests hwmon/SMART et le cycle installation/mise à jour/remove/purge du paquet
-DKMS se déroulent entièrement dans le clone. Deux disques SATA QEMU jetables
-exercent le vrai `smartctl` et le collecteur disque. Aucun module UVSS n'est
-compilé ou chargé sur l'hôte.
+DKMS se déroulent entièrement dans le clone. Le runner pilote Proxmox par SSH,
+découvre l'adresse du clone avec QEMU Guest Agent et transfère directement le
+working tree par `rsync`. Deux disques SATA QEMU jetables exercent le vrai
+`smartctl` et le collecteur disque. Aucun module UVSS n'est compilé ou chargé
+sur l'hôte.
 
 Après une mise à jour du noyau de l'hôte, reconstruire le template pour la
 nouvelle cible. Les anciens templates Debian doivent également être

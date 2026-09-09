@@ -1,24 +1,26 @@
 # Tests avec le vrai module Linux
 
 Le builder prépare un template Debian 13 qui démarre le **noyau Proxmox
-cible**, avec ses headers. Le lanceur clone une VM dédiée et y exécute les
-sources actuelles du dépôt, y compris les modifications non commitées et les
-nouveaux fichiers non ignorés. La compilation du module, son chargement,
-les tests hwmon et le cycle de vie du paquet DKMS se font tous dans la VM.
+cible**, avec ses headers. Depuis le poste de développement, le lanceur pilote
+Proxmox par SSH, clone une VM dédiée et lui envoie directement le working tree
+avec `rsync`, y compris les modifications non commitées et les nouveaux
+fichiers non ignorés. La compilation du module, son chargement, les tests
+hwmon/SMART et le cycle de vie du paquet DKMS se font tous dans la VM.
 
-`build-template.sh` dépend de `common.sh`, placé dans le même répertoire.
-Pour utiliser le lanceur `run.sh`, copier ou cloner le dépôt complet sur le
-nœud Proxmox. Les scripts du dépôt utilisent des fins de ligne LF, imposées
-par `.gitattributes` ; un copier-coller via un éditeur externe peut les altérer.
+`build-template.sh` dépend de `common.sh`, placé dans le même répertoire, et
+s'exécute directement sur Proxmox pour la préparation initiale du template.
+Le runner n'exige aucune copie du dépôt sur le nœud Proxmox : seules les
+commandes `qm` et `pvesm` y sont exécutées par SSH. Les scripts du dépôt
+utilisent des fins de ligne LF, imposées par `.gitattributes`.
 
 ## Préparation sur Proxmox
 
-Exécuter les commandes depuis une copie de ce dépôt sur le nœud Proxmox,
-en root. Le nœud doit disposer d'un stockage acceptant les disques VM,
+Pour la préparation initiale uniquement, exécuter le builder sur le nœud
+Proxmox en root. Le nœud doit disposer d'un stockage acceptant les disques VM,
 d'un bridge et d'un accès aux téléchargements Debian et Go. Le template
 et les clones ont besoin du réseau pour Cloud-Init et les modules Go.
-Le lanceur utilise QEMU Guest Agent ; aucune connexion SSH à la VM n'est
-nécessaire pour les tests.
+Le lanceur utilise QEMU Guest Agent pour détecter l'état et l'adresse du clone,
+puis SSH pour la validation, le transfert et les tests.
 
 L'hôte fournit la version cible via `uname -r` et sa clé publique de dépôt
 `/usr/share/keyrings/proxmox-archive-keyring.gpg`. Il n'a besoin ni des headers
@@ -37,24 +39,61 @@ corriger les dépôts avant de continuer. Sinon :
 
 ```sh
 apt install --no-install-recommends libguestfs-tools
-cp tests/vm/template.env.example tests/vm/template.env
-# Éditer template.env : stockage, bridge, VMID libres et clé publique SSH.
 make vm-template
 ```
 
-`template.env` est un fichier shell local de confiance, ignoré par Git.
-Il configure notamment `VMID` (template), `TEST_VMID` (clone), `STORAGE`
-et `SSH_PUBLIC_KEY_FILE`. Fournir uniquement une clé **publique** à ce
-dernier emplacement. Les valeurs de l'exemple ne décrivent aucun serveur
-particulier.
+Le builder utilise ses variables `VMID`, `STORAGE`, `BRIDGE` et
+`SSH_PUBLIC_KEY_FILE`. Fournir uniquement une clé **publique** à ce dernier
+emplacement ; elle doit correspondre à la clé privée utilisée ensuite par le
+runner.
 
-Les valeurs locales prennent priorité sur les valeurs par défaut du builder.
+Sur le poste de développement, créer la configuration locale :
+
+```sh
+cp tests/vm/template.env.example tests/vm/template.env
+```
+
+`template.env` est un fichier shell local de confiance, ignoré par Git. Sa
+section runner contient notamment :
+
+```sh
+PVE_HOST=pve01.lan.home
+PVE_SSH_USER=root
+TEMPLATE_VMID=9000
+TEST_VMID=9900
+PVE_STORAGE=zfs-pve
+GUEST_USER=uvss-test
+GUEST_SSH_KEY="${HOME}/.ssh/id_ed25519"
+```
+
+Le poste doit disposer de `ssh`, `rsync`, `python3`, `git` et `sha256sum`.
+La connexion SSH au nœud Proxmox doit fonctionner sans interaction, tout
+comme la connexion du poste au compte invité avec `GUEST_SSH_KEY`.
+Si la clé privée est protégée par une passphrase, la charger dans `ssh-agent`
+avant le test :
+
+```sh
+eval "$(ssh-agent -s)" # seulement si aucun agent n'est déjà disponible
+ssh-add ~/.ssh/id_ed25519
+```
+
+Si la clé publique du poste n'est pas encore autorisée sur Proxmox, la mise en
+place initiale peut se faire avec :
+
+```sh
+ssh-copy-id -i ~/.ssh/id_ed25519.pub root@pve01.lan.home
+```
+
+Le même fichier public doit être fourni à `SSH_PUBLIC_KEY_FILE` lors de la
+construction du template afin que le clone accepte `GUEST_SSH_KEY`.
+
+Les valeurs locales prennent priorité sur les valeurs par défaut des scripts.
 Ne pas écraser un `template.env` déjà configuré lors d'une mise à jour.
 La version de Go du template possède une seule source de vérité :
 `tests/vm/go-version`.
 
 `PVE_KERNEL_RELEASE` vide (ou absent) sélectionne le noyau courant de l'hôte,
-au moment du build **et de chaque test**. Pour cibler une autre version,
+localement pendant le build et par SSH pendant chaque test. Pour cibler une autre version,
 renseigner la valeur exacte d'un `uname -r` Proxmox dans ce fichier.
 `PVE_REPO_COMPONENT` vaut `pve-no-subscription` par défaut ; `pve-test` est
 possible si le noyau cible vient de ce dépôt. `PVE_KEYRING_FILE` permet
@@ -106,25 +145,35 @@ le tag `uvss-test-template`. Le lancement normal refuse un VMID occupé.
 
 ```sh
 make test-vm
+make test-vm-core
 make test-vm-package
 make test-vm-all
 # Conserver aussi une VM dont les tests réussissent :
 bash tests/vm/run.sh --keep
+# Équivalent avec Make :
+make test-vm TEST_VM_KEEP=1
 ```
 
-`make test-vm` couvre le module, hwmon et SMART. `make test-vm-package` couvre
-le paquet Debian et DKMS. `make test-vm-all` enchaîne les deux dans un clone.
+`make test-vm` et `make test-vm-all` exécutent le parcours complet.
+`make test-vm-core` couvre uniquement le module, hwmon et SMART ;
+`make test-vm-package` couvre uniquement le paquet Debian et DKMS.
 
 Le lanceur refuse un `TEST_VMID` déjà utilisé et exige le tag
 `uvss-test-template` sur le template. Il conserve un verrou partagé sur ce
 dernier pendant tout le test ; le builder prend un verrou exclusif, ce qui
-interdit une reconstruction simultanée. Il crée ensuite un clone complet,
-attend l'agent et Cloud-Init, puis transfère une archive des fichiers listés
-par Git par blocs via l'agent. Il n'inclut ni `.git`, ni les fichiers locaux
+interdit une reconstruction simultanée. Ces verrous sont détenus par une
+session SSH persistante dans `/run/lock` sur Proxmox. Le verrou exclusif du
+clone se trouve au même endroit ; aucun verrou local ne prétend protéger les
+ressources de l'hyperviseur.
+
+Le runner crée ensuite un clone complet, attend QEMU Guest Agent, récupère son
+IPv4 avec `network-get-interfaces`, puis attend SSH et Cloud-Init. Les fichiers
+listés par Git sont envoyés directement du poste au clone par `rsync`. Le
+transfert n'utilise plus QGA, base64 ou une archive intermédiaire et ne copie
+jamais le dépôt sur `PVE_HOST`. Il n'inclut ni `.git`, ni les fichiers locaux
 ignorés. Les fichiers suivis mais supprimés localement sont aussi omis.
 Les fichiers ignorés nécessaires aux tests doivent être explicitement suivis.
-Le SHA256 de l'archive est calculé sur l'hôte puis vérifié dans la VM avant
-son extraction.
+Un manifeste SHA256 est vérifié dans la VM après le transfert.
 
 Avant le démarrage, deux volumes SATA de `TEST_DISK_SIZE_GIB` Gio sont ajoutés
 avec les numéros de série `UVSSDISK1` et `UVSSDISK2`. Ils doivent apparaître
@@ -133,8 +182,8 @@ la VM associe `disk1` et `disk2` à ces périphériques puis transmet les option
 au vrai `smartctl`. Le test vérifie SMART, le JSON normalisé, la température
 QEMU de 31 °C et le vrai `diskCollector` alimenté par un `disks.ini`.
 
-Avant le transfert, le lanceur vérifie le noyau démarré dans le clone et le
-marqueur du template contre `PVE_KERNEL_RELEASE`. Après une mise à jour du
+Avant les tests, le lanceur vérifie par SSH le noyau démarré dans le clone et
+le marqueur du template contre `PVE_KERNEL_RELEASE`. Après une mise à jour du
 noyau de l'hôte, reconstruire le template ou fixer explicitement la cible
 précédente. Un ancien template Debian est refusé : il doit être reconstruit.
 
@@ -166,22 +215,24 @@ retraits, et sa suppression lors de la purge. Le service écoute sur VSOCK
 avec `vsock_loopback` dans la VM ; ce contrôle de démarrage n'envoie pas de
 snapshots et ne prétend pas tester le transport entre deux machines.
 
-Après succès, le clone est arrêté puis supprimé. Après un échec ou avec
-`--keep`, il reste disponible. Le journal complet est récupéré par blocs dans
-`dist/vm-tests-<VMID>.<suffixe>.log` sur le nœud avant toute suppression du
+Après succès, le clone est arrêté puis supprimé à distance. Après un échec,
+avec `--keep` ou avec `TEST_VM_KEEP=1`, il reste disponible. Le journal complet
+est récupéré directement par `rsync` dans
+`dist/vm-tests-<VMID>.<suffixe>.log` sur le poste avant toute suppression du
 clone. Il reste aussi accessible dans une VM conservée :
 
 ```sh
-qm guest exec 9900 -- cat /var/tmp/uvss-tests.log
-qm terminal 9900
+ssh root@pve01.lan.home qm terminal 9900
+ssh -i ~/.ssh/id_ed25519 uvss-test@ADRESSE_IP \
+    sudo cat /var/tmp/uvss-tests.log
 # Après diagnostic, supprimer explicitement le clone conservé :
-qm shutdown 9900 --timeout 120
-qm destroy 9900 --purge
+ssh root@pve01.lan.home qm shutdown 9900 --timeout 120
+ssh root@pve01.lan.home qm destroy 9900 --purge
 ```
 
 Adapter `9900` à `TEST_VMID`. `TEST_TIMEOUT` borne les commandes de test
-dans la VM. Un timeout ou un résultat de l'agent sans code de sortie est un
-échec. Les opérations concurrentes des scripts sur le même VMID sont verrouillées.
+dans la VM. Un timeout ou une commande SSH en échec fait échouer le parcours.
+Les opérations concurrentes des scripts sur le même VMID sont verrouillées.
 
 ## Portée
 
@@ -201,7 +252,7 @@ physique. Aucun module UVSS n'est compilé, installé ou chargé sur l'hôte.
 Les tests unitaires du protocole, de la logique métier et des erreurs
 matérielles restent utiles et continuent de tourner avec `make check`.
 Chaque journal indique le commit Git, l'état du working tree, le SHA256 de
-l'archive, le noyau PVE, la version du template, la version de Go et le
+son manifeste, le noyau PVE, la version du template, la version de Go et le
 parcours exécuté. `make lint-shell` lance ShellCheck sur tous les scripts Bash
 lorsque l'outil est installé sur la machine de développement ou dans la CI.
 
