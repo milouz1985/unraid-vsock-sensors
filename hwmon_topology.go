@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"slices"
-	"sort"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
@@ -14,14 +12,14 @@ const (
 )
 
 type hwmonSensor struct {
-	id      string
-	label   string
-	members []string
+	id    string
+	label string
 }
 
 type hwmonSample struct {
-	sensor      hwmonSensor
-	temperature float64
+	sensor       hwmonSensor
+	temperature  float64
+	omitOnCommit bool
 }
 
 type hwmonInventory struct {
@@ -41,44 +39,37 @@ var hwmonDiskGroups = []hwmonDiskGroup{
 }
 
 func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSample) {
-	internalDisks := make([]sensors.Disk, 0, len(state.Disks))
-	for _, disk := range state.Disks {
-		if !disk.IsExternal() {
-			internalDisks = append(internalDisks, disk)
-		}
-	}
-
 	for _, group := range hwmonDiskGroups {
-		groupDisks := make([]sensors.Disk, 0, len(internalDisks))
-		members := make([]string, 0, len(internalDisks))
-		for _, disk := range internalDisks {
-			if disk.Kind() == group.kind {
-				groupDisks = append(groupDisks, disk)
-				members = append(members, "disk:"+disk.ID)
+		count := 0
+		maximum := 0.0
+		unavailable := false
+		for _, disk := range state.Disks {
+			if disk.Kind() != group.kind {
+				continue
 			}
+			if count == 0 || disk.Temp > maximum {
+				maximum = disk.Temp
+			}
+			unavailable = unavailable || disk.Unavailable
+			count++
 		}
-		if len(groupDisks) < minHWMonGroupSize {
+		if count < minHWMonGroupSize {
 			continue
 		}
-		sort.Strings(members)
-		maximum := sensors.MaxTemperature(groupDisks, func(disk sensors.Disk) float64 {
-			return disk.Temp
-		})
-		for _, disk := range groupDisks {
-			if disk.Unavailable {
-				maximum = hwmonFailsafeTemp
-				break
-			}
+		// If any member is unavailable, the true maximum is unknown. Keep the
+		// group in the topology but stop refreshing it so virt_temp applies its
+		// stale timeout. A configure still starts it at the failsafe temperature.
+		if unavailable {
+			maximum = hwmonFailsafeTemp
 		}
 		diskSamples = append(diskSamples, hwmonSample{
-			sensor: hwmonSensor{
-				id: "disk:group:" + string(group.kind), label: group.label, members: members,
-			},
-			temperature: maximum,
+			sensor:       hwmonSensor{id: "disk:group:" + string(group.kind), label: group.label},
+			temperature:  maximum,
+			omitOnCommit: unavailable,
 		})
 	}
 
-	for _, disk := range internalDisks {
+	for _, disk := range state.Disks {
 		temperature := disk.Temp
 		if disk.Unavailable {
 			temperature = hwmonFailsafeTemp
@@ -87,7 +78,8 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 			sensor: hwmonSensor{
 				id: "disk:" + disk.ID, label: fmt.Sprintf("%s (%s)", disk.Name, disk.Device),
 			},
-			temperature: temperature,
+			temperature:  temperature,
+			omitOnCommit: disk.Unavailable,
 		})
 	}
 	for _, hba := range state.HBAs {
@@ -107,17 +99,19 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 	return diskSamples, hbaSamples
 }
 
-func sameHWMonTopology(expected []hwmonSensor, current []hwmonSample) bool {
+// Labels are configuration data: virt_temp commit updates temperatures only,
+// so changing a label requires a full configure operation.
+func sameHWMonConfiguration(expected []hwmonSensor, current []hwmonSample) bool {
 	if len(expected) != len(current) {
 		return false
 	}
-	currentByID := make(map[string]hwmonSensor, len(current))
+	currentLabels := make(map[string]string, len(current))
 	for _, sample := range current {
-		currentByID[sample.sensor.id] = sample.sensor
+		currentLabels[sample.sensor.id] = sample.sensor.label
 	}
-	for _, reading := range expected {
-		other, found := currentByID[reading.id]
-		if !found || !slices.Equal(reading.members, other.members) {
+	for _, sensor := range expected {
+		label, found := currentLabels[sensor.id]
+		if !found || label != sensor.label {
 			return false
 		}
 	}
@@ -127,9 +121,7 @@ func sameHWMonTopology(expected []hwmonSensor, current []hwmonSample) bool {
 func sensorsFromSamples(samples []hwmonSample) []hwmonSensor {
 	sensors := make([]hwmonSensor, 0, len(samples))
 	for _, sample := range samples {
-		sensor := sample.sensor
-		sensor.members = append([]string(nil), sensor.members...)
-		sensors = append(sensors, sensor)
+		sensors = append(sensors, sample.sensor)
 	}
 	return sensors
 }

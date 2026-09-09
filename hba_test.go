@@ -5,22 +5,55 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
-	"unsafe"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
 
 func TestMPT3CommandABI(t *testing.T) {
-	var command mpt3Command
-	if got, want := unsafe.Offsetof(command.Request), uintptr(68); got != want {
-		t.Fatalf("MPI request offset = %d, want %d", got, want)
+	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, nil)
+	got := makeMPT3Command(3, request, 256, 0x11223344, 0x55667788)
+	var want [96]byte
+	binary.LittleEndian.PutUint32(want[0:4], 3)
+	binary.LittleEndian.PutUint32(want[8:12], 256)
+	binary.LittleEndian.PutUint32(want[12:16], mpt3FirmwareTimeout)
+	binary.LittleEndian.PutUint64(want[16:24], 0x11223344)
+	binary.LittleEndian.PutUint64(want[24:32], 0x55667788)
+	binary.LittleEndian.PutUint32(want[48:52], mpt3ReplyBufferSize)
+	binary.LittleEndian.PutUint32(want[52:56], 256)
+	binary.LittleEndian.PutUint32(want[64:68], 7)
+	copy(want[68:96], request[:])
+	if !slices.Equal(got[:], want[:]) {
+		t.Fatalf("command buffer = %x, want %x", got, want)
 	}
-	if got, want := unsafe.Sizeof(command), uintptr(96); got != want {
-		t.Fatalf("command buffer size = %d, want %d", got, want)
+}
+
+func TestMPT3ConfigRequestPageHeader(t *testing.T) {
+	for _, test := range []struct {
+		name                              string
+		pageType, pageNumber, pageVersion byte
+		want                              []byte
+	}{
+		{"Manufacturing 0", mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version, []byte{0x00, 0, 0, 0x09}},
+		{"Manufacturing 5", mpi2PageTypeManufacturing, 5, mpi2Manufacturing5Version, []byte{0x03, 0, 5, 0x09}},
+		{"IO Unit 7", mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, []byte{0x05, 0, 7, 0x00}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := mpt3ConfigRequest(mpi2ConfigPageHeader, test.pageType, test.pageNumber, test.pageVersion, nil)
+			if got := request[20:24]; !slices.Equal(got, test.want) {
+				t.Fatalf("CONFIG page header = %x, want %x", got, test.want)
+			}
+		})
+	}
+
+	returnedHeader := []byte{0x04, 0x08, 7, mpi2PageTypeIOUnit}
+	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, returnedHeader)
+	if got := request[20:24]; !slices.Equal(got, returnedHeader) {
+		t.Fatalf("CONFIG read header = %x, want returned header %x", got, returnedHeader)
 	}
 }
 
@@ -69,9 +102,9 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 	}
 }
 
-func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
+func TestHBACollectorSnapshotDoesNotWaitForRefresh(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
-	collector := newHBACollector(time.Minute, hbaModeEnabled)
+	collector := newTestHBACollector(time.Minute, hbaModeEnabled)
 	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
 		close(started)
 		<-release
@@ -81,7 +114,7 @@ func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 	go func() { collector.refresh(context.Background()); close(done) }()
 	<-started
 	readDone := make(chan struct{})
-	go func() { _, _ = collector.read(); close(readDone) }()
+	go func() { _, _ = collector.snapshot(); close(readDone) }()
 	select {
 	case <-readDone:
 	case <-time.After(100 * time.Millisecond):
@@ -92,7 +125,7 @@ func TestHBACollectorReadDoesNotWaitForRefresh(t *testing.T) {
 }
 
 func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
-	collector := newHBACollector(time.Minute, hbaModeEnabled)
+	collector := newTestHBACollector(time.Minute, hbaModeEnabled)
 	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
 		return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
 	})
@@ -101,7 +134,7 @@ func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 		return nil, errors.New("failed")
 	})
 	collector.refresh(context.Background())
-	readings, err := collector.read()
+	readings, err := collector.snapshot()
 	if len(readings) != 0 || err == nil {
 		t.Fatalf("failed refresh returned %#v, %v", readings, err)
 	}
@@ -109,14 +142,14 @@ func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 
 func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		collector := newHBACollector(time.Minute, hbaModeEnabled)
+		collector := newTestHBACollector(time.Minute, hbaModeEnabled)
 		collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
 			return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
 		})
 		collector.refresh(context.Background())
 		// The normal interval between collections must not expire the cache.
 		time.Sleep(collector.interval)
-		if readings, err := collector.read(); err != nil || len(readings) != 1 || readings[0].Temp != 42 {
+		if readings, err := collector.snapshot(); err != nil || len(readings) != 1 || readings[0].Temp != 42 {
 			t.Fatalf("between collections: readings=%v err=%v", readings, err)
 		}
 
@@ -128,19 +161,19 @@ func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
 		})
 		go collector.refresh(context.Background())
 		synctest.Wait()
-		if readings, err := collector.read(); err != nil || len(readings) != 1 || readings[0].Temp != 42 {
+		if readings, err := collector.snapshot(); err != nil || len(readings) != 1 || readings[0].Temp != 42 {
 			t.Fatalf("during collection: readings=%v err=%v", readings, err)
 		}
 
 		time.Sleep(hbaCollectionTimeout)
 		synctest.Wait()
-		if readings, err := collector.read(); len(readings) != 0 || !errors.Is(err, context.DeadlineExceeded) {
+		if readings, err := collector.snapshot(); len(readings) != 0 || err == nil {
 			t.Fatalf("blocked past deadline: readings=%v err=%v", readings, err)
 		}
 
 		release <- struct{}{}
 		synctest.Wait()
-		if readings, err := collector.read(); len(readings) != 0 || !errors.Is(err, context.DeadlineExceeded) {
+		if readings, err := collector.snapshot(); len(readings) != 0 || !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("late successful collection: readings=%v err=%v", readings, err)
 		}
 
@@ -148,21 +181,56 @@ func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
 			return []sensors.HBA{{ID: "sas:1234", Temp: 44}}, nil
 		})
 		collector.refresh(context.Background())
-		if readings, err := collector.read(); err != nil || len(readings) != 1 || readings[0].Temp != 44 {
+		if readings, err := collector.snapshot(); err != nil || len(readings) != 1 || readings[0].Temp != 44 {
 			t.Fatalf("after recovery: readings=%v err=%v", readings, err)
 		}
 	})
 }
 
+func TestBlockedHBACollectionDoesNotStopSnapshotPublication(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		collector := newTestHBACollector(time.Second, hbaModeEnabled)
+		collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
+			return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
+		})
+		collector.refresh(context.Background())
+
+		release := make(chan struct{})
+		collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
+			<-release // Simulate a synchronous ioctl ignoring its expired context.
+			return nil, context.DeadlineExceeded
+		})
+		go collector.refresh(context.Background())
+		synctest.Wait()
+		time.Sleep(collector.interval + hbaCollectionTimeout)
+		synctest.Wait()
+
+		frames := capturePublishedSnapshots(
+			t,
+			newDiskCollector("unused", time.Minute),
+			collector,
+			2,
+		)
+		for index, frame := range frames {
+			if frame.HBAError == "" {
+				t.Fatalf("frame %d did not publish the blocked HBA collection error: %#v", index, frame)
+			}
+		}
+
+		close(release)
+		synctest.Wait()
+	})
+}
+
 func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {
-	collector := newHBACollector(time.Millisecond, hbaModeDisabled)
+	collector := newTestHBACollector(time.Millisecond, hbaModeDisabled)
 	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
 		t.Fatal("disabled collector performed collection")
 		return nil, nil
 	})
 	collector.run(context.Background())
-	readings, err := collector.read()
-	if len(readings) != 0 || err != nil {
+	readings, err := collector.snapshot()
+	if readings == nil || len(readings) != 0 || err != nil {
 		t.Fatalf("got %#v, %v", readings, err)
 	}
 }
@@ -420,15 +488,5 @@ func TestStorCLIParsersRejectDuplicateControllerNumbers(t *testing.T) {
 	]}`)
 	if _, err := parseStorCLI(temperatures); err == nil || !strings.Contains(err.Error(), "appears more than once") {
 		t.Fatalf("duplicate temperature controllers returned %v", err)
-	}
-}
-
-func TestSelectHBAs(t *testing.T) {
-	hbas := []sensors.HBA{{ID: "sas:1234", Temp: 40}, {ID: "pci:0000:06:10.0", Temp: 50}}
-	if got := selectHBAs(hbas, "all"); len(got) != 2 {
-		t.Fatalf("all = %#v", got)
-	}
-	if got := selectHBAs(hbas, "PCI:0000:06:10.0"); len(got) != 1 || got[0].Temp != 50 {
-		t.Fatalf("PCI selector = %#v", got)
 	}
 }

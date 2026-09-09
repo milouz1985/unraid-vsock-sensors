@@ -14,17 +14,12 @@ import (
 
 const (
 	smartctlTypePath = "/usr/local/sbin/smartctl_type"
-	// The optional status in "-n standby,STATUS" is chosen by the caller.
-	// smartctl(8) recommends 3 as a unique low-power status because its default,
-	// 2, can also mean that opening or identifying the device failed. This is
-	// therefore our configured sentinel, not the usual meaning of status bits
-	// 0 and 1.
+	// smartctl returns a bitmask: 0x07 covers command, open/identify and SMART
+	// failures. For -n standby, use the recommended status 3 instead of the
+	// ambiguous default 2:
+	// https://github.com/smartmontools/smartmontools/blob/main/src/smartctl.8.in#L896-L915
 	smartctlStandbyExitStatus = 3
-	// smartctl(8) defines its exit status as a bitmask. Bits 0, 1 and 2
-	// respectively report an invalid command line, a device open/identify
-	// failure, and a failed SMART command or checksum. 0x07 selects those
-	// three command-related bits while leaving health/history bits untouched.
-	smartctlCommandErrorMask = 0x07
+	smartctlCommandErrorMask  = 0x07
 )
 
 type smartctlReport struct {
@@ -81,8 +76,8 @@ func parseSMARTTemperature(name string, output []byte, runErr error) (float64, b
 		return 0, false, fmt.Errorf("SMART report for %s contains invalid exit status %d", name, exitStatus)
 	}
 	mode := strings.ToUpper(report.PowerMode.Name)
-	// Recognize our configured low-power sentinel before applying the command
-	// error mask, because its numeric value also has bits 0 and 1 set.
+	// Trust status 3 only with its matching power_mode from the same JSON report;
+	// smartctl exposes no stronger discriminator.
 	if exitStatus == smartctlStandbyExitStatus && (mode == "STANDBY" || mode == "SLEEP") {
 		return 0, true, nil
 	}

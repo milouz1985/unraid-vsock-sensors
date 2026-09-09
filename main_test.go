@@ -1,215 +1,119 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
+	"context"
+	"errors"
 	"net"
-	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-func TestServerResponseMetadata(t *testing.T) {
-	server, client := net.Pipe()
-	done := make(chan struct{})
-	go func() {
-		handle(server, newDiskCollector("unused", time.Minute), newHBACollector(time.Minute, hbaModeDisabled))
-		close(done)
-	}()
-	if _, err := io.WriteString(client, "GET\n"); err != nil {
-		t.Fatal(err)
-	}
-	var response sensors.Response
-	if err := json.NewDecoder(client).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	client.Close()
-	<-done
+func TestPublishedSnapshotMetadata(t *testing.T) {
+	response := collectorSnapshot(
+		newDiskCollector("unused", time.Minute),
+		newTestHBACollector(time.Minute, hbaModeDisabled),
+	)
 
-	if response.Version != version {
-		t.Fatalf("got version %q, want %q", response.Version, version)
+	if response.Protocol != sensors.ProtocolVersion {
+		t.Fatalf("got protocol %d, want %d", response.Protocol, sensors.ProtocolVersion)
 	}
-	if !response.HBADisabled {
-		t.Fatal("disabled HBA collection was not reported")
+	if response.HBAs == nil || len(response.HBAs) != 0 || response.HBAError != "" {
+		t.Fatalf("disabled HBA snapshot = %#v, error %q", response.HBAs, response.HBAError)
+	}
+	if response.Error == "" {
+		t.Fatal("uncollected disks were reported as available")
 	}
 }
 
-func TestHandleRejectsInvalidRequest(t *testing.T) {
-	for name, request := range map[string]string{
-		"invalid command": "POST\n",
-		// The first 1024 bytes trim to GET. Reading only 1024 bytes would
-		// therefore accept this request without noticing the final byte.
-		"oversized": "GET" + strings.Repeat(" ", maxRequestSize-len("GET")) + "X",
-	} {
-		t.Run(name, func(t *testing.T) {
-			server, client := net.Pipe()
-			disks := newDiskCollector("unused", time.Minute)
-			done := make(chan struct{})
-			go func() {
-				handle(server, disks, newHBACollector(time.Minute, hbaModeEnabled))
-				close(done)
-			}()
-
-			writeDone := make(chan error, 1)
-			go func() {
-				_, err := io.WriteString(client, request)
-				writeDone <- err
-			}()
-			response, err := io.ReadAll(client)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := <-writeDone; err != nil {
-				t.Fatal(err)
-			}
-			<-done
-			if len(response) != 0 {
-				t.Fatalf("invalid request returned %q", response)
-			}
+func capturePublishedSnapshots(
+	t *testing.T,
+	disks *diskCollector,
+	hbas *hbaCollector,
+	count int,
+) []sensors.Response {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server, client := net.Pipe()
+	defer server.Close()
+	dials := 0
+	done := make(chan error, 1)
+	go func() {
+		done <- publishSnapshotsWithDialer(ctx, disks, hbas, func(context.Context) (snapshotConnection, error) {
+			dials++
+			return client, nil
 		})
-	}
-}
-
-func TestHandleReadTimeout(t *testing.T) {
-	server, client := net.Pipe()
-	disks := newDiskCollector("unused", time.Minute)
-	done := make(chan struct{})
-	go func() {
-		handleWithTimeout(server, disks, newHBACollector(time.Minute, hbaModeEnabled), 20*time.Millisecond)
-		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		client.Close()
-		t.Fatal("silent client was not disconnected after the read timeout")
+	reader := sensors.NewFrameReader(server)
+	snapshots := make([]sensors.Response, 0, count)
+	for range count {
+		snapshot, err := reader.Read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshots = append(snapshots, snapshot)
 	}
-	client.Close()
-}
-
-func TestDiskErrorDoesNotBlockHBASelector(t *testing.T) {
-	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{ID: "sas:1234", Temp: 46}}}
-	var out bytes.Buffer
-	if err := writeResponse(&out, r, sensorTypeHBA, "sas:1234"); err != nil {
+	cancel()
+	_ = server.Close()
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); got != "46\n" {
-		t.Fatalf("got %q, want HBA temperature", got)
+	if dials != 1 {
+		t.Fatalf("dial count = %d, want 1", dials)
 	}
+	return snapshots
 }
 
-func TestDiskSelectorStillReturnsDiskError(t *testing.T) {
-	r := sensors.Response{Error: "disks.ini failed", HBAs: []sensors.HBA{{ID: "sas:1234", Temp: 46}}}
-	if err := writeResponse(&bytes.Buffer{}, r, sensorTypeDisk, "hdd"); err == nil || err.Error() != r.Error {
-		t.Fatalf("got %v, want disk error", err)
-	}
-}
+func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		firstServer, firstClient := net.Pipe()
+		secondServer, secondClient := net.Pipe()
+		connections := []snapshotConnection{firstClient, secondClient}
+		dials := 0
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-func TestDiskNamedLikeHBAIsSelectedAsDisk(t *testing.T) {
-	r := sensors.Response{Disks: []sensors.Disk{{Name: "hba1", Temp: 38}}}
-	var out bytes.Buffer
-	if err := writeResponse(&out, r, sensorTypeDisk, "hba1"); err != nil {
-		t.Fatal(err)
-	}
-	if got := out.String(); got != "38\n" {
-		t.Fatalf("got %q, want disk temperature", got)
-	}
-}
+		done := make(chan error, 1)
+		go func() {
+			done <- publishSnapshotsWithDialer(
+				ctx,
+				newDiskCollector("unused", time.Minute),
+				newTestHBACollector(time.Minute, hbaModeDisabled),
+				func(context.Context) (snapshotConnection, error) {
+					if dials >= len(connections) {
+						return nil, errors.New("unexpected extra dial")
+					}
+					conn := connections[dials]
+					dials++
+					return conn, nil
+				},
+			)
+		}()
 
-func TestDiskMaximumFailsSafeForUnavailableDisk(t *testing.T) {
-	r := sensors.Response{Disks: []sensors.Disk{
-		{Name: "disk1", Rotational: true, Temp: 38},
-		{Name: "disk2", Rotational: true, Unavailable: true},
-	}}
-	var out bytes.Buffer
-	if err := writeResponse(&out, r, sensorTypeDisk, "hdd"); err != nil {
-		t.Fatal(err)
-	}
-	if got := out.String(); got != "100\n" {
-		t.Fatalf("got %q, want group failsafe", got)
-	}
-}
-
-func TestWriteResponseSelectors(t *testing.T) {
-	response := sensors.Response{
-		Disks: []sensors.Disk{
-			{Name: "disk1", Device: "sdb", Rotational: true, Temp: 35},
-			{Name: "disk2", Device: "sdc", Rotational: true, Temp: 40},
-			{Name: "cache", Device: "sdd", Transport: "ata", Temp: 44.5},
-			{Name: "fast", Device: "nvme0n1", Transport: "nvme", Temp: 48},
-		},
-		HBAs: []sensors.HBA{{ID: "sas:1234", Temp: 49}, {ID: "pci:0000:06:10.0", Temp: 55}},
-	}
-	tests := []struct {
-		name     string
-		kind     sensorType
-		selector string
-		want     string
-	}{
-		{name: "HDD maximum", kind: sensorTypeDisk, selector: "hdd", want: "40\n"},
-		{name: "SSD maximum", kind: sensorTypeDisk, selector: "ssd", want: "44.5\n"},
-		{name: "NVMe maximum", kind: sensorTypeDisk, selector: "nvme", want: "48\n"},
-		{name: "all disks", kind: sensorTypeDisk, selector: "all", want: "48\n"},
-		{name: "disk name case insensitive", kind: sensorTypeDisk, selector: "DISK1", want: "35\n"},
-		{name: "device case insensitive", kind: sensorTypeDisk, selector: "SDD", want: "44.5\n"},
-		{name: "all HBAs", kind: sensorTypeHBA, selector: "all", want: "55\n"},
-		{name: "HBA ID case insensitive", kind: sensorTypeHBA, selector: "SAS:1234", want: "49\n"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var out bytes.Buffer
-			if err := writeResponse(&out, response, test.kind, test.selector); err != nil {
-				t.Fatal(err)
+		readFrames := func(conn net.Conn, count int) {
+			t.Helper()
+			reader := sensors.NewFrameReader(conn)
+			for range count {
+				if _, err := reader.Read(); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if got := out.String(); got != test.want {
-				t.Fatalf("got %q, want %q", got, test.want)
-			}
-		})
-	}
-}
+		}
 
-func TestWriteResponseRejectsUnavailableSelector(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		response sensors.Response
-		kind     sensorType
-		selector string
-		want     string
-	}{
-		{name: "unknown disk", kind: sensorTypeDisk, selector: "missing", want: `no available temperature for selector "missing"`},
-		{name: "unknown HBA", kind: sensorTypeHBA, selector: "sas:missing", want: `no available temperature for selector "sas:missing"`},
-		{name: "HBA collection error", response: sensors.Response{HBAError: "storcli failed"}, kind: sensorTypeHBA, selector: "all", want: "HBA temperature unavailable: storcli failed"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			err := writeResponse(&bytes.Buffer{}, test.response, test.kind, test.selector)
-			if err == nil || err.Error() != test.want {
-				t.Fatalf("got %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
-func TestGetRequiresExplicitSensorTypeAndSelector(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{name: "missing both", want: "a sensor type and selector are required (for example: disk hdd or hba all)"},
-		{name: "missing type", args: []string{"hdd"}, want: "a sensor type and selector are required (for example: disk hdd or hba all)"},
-		{name: "unknown type", args: []string{"fan", "all"}, want: `unknown sensor type "fan" (expected disk or hba)`},
-		{name: "JSON with arguments", args: []string{"--json", "disk", "all"}, want: "--json does not accept a sensor type or selector"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := get(test.args)
-			if err == nil || err.Error() != test.want {
-				t.Fatalf("got %v, want %q", err, test.want)
-			}
-		})
-	}
+		readFrames(firstServer, 2)
+		_ = firstServer.Close()
+		readFrames(secondServer, 2)
+		cancel()
+		_ = secondServer.Close()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if dials != 2 {
+			t.Fatalf("dial count = %d, want 2", dials)
+		}
+	})
 }

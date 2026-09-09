@@ -19,22 +19,17 @@ func publishHWMonFamily(
 	path, namespace string,
 	inventory *hwmonInventory,
 	current []hwmonSample,
-	allowEmpty bool,
 ) (bool, error) {
-	return publishHWMonFamilyWithWriter(path, namespace, inventory, current, allowEmpty, writeHWMonSamples)
+	return publishHWMonFamilyWithWriter(path, namespace, inventory, current, writeHWMonSamples)
 }
 
 func publishHWMonFamilyWithWriter(
 	path, namespace string,
 	inventory *hwmonInventory,
 	current []hwmonSample,
-	allowEmpty bool,
 	write func(string, string, string, []hwmonSample) error,
 ) (bool, error) {
-	if len(current) == 0 && !allowEmpty {
-		return false, errors.New("inventory is empty; waiting for sensors")
-	}
-	if !inventory.initialized {
+	if !inventory.initialized || !sameHWMonConfiguration(inventory.sensors, current) {
 		if err := write(path, namespace, "configure", current); err != nil {
 			return false, err
 		}
@@ -42,38 +37,8 @@ func publishHWMonFamilyWithWriter(
 		inventory.sensors = sensorsFromSamples(current)
 		return true, nil
 	}
-	if !sameHWMonTopology(inventory.sensors, current) {
-		if err := write(path, namespace, "configure", current); err != nil {
-			return false, err
-		}
-		inventory.sensors = sensorsFromSamples(current)
-		return true, nil
-	}
 
-	currentByID := make(map[string]hwmonSample, len(current))
-	for _, sample := range current {
-		currentByID[sample.sensor.id] = sample
-	}
-	updates := make([]hwmonSample, 0, len(inventory.sensors))
-	for _, expected := range inventory.sensors {
-		reading, found := currentByID[expected.id]
-		if !found {
-			continue
-		}
-		complete := true
-		for _, member := range expected.members {
-			if _, found := currentByID[member]; !found {
-				complete = false
-				break
-			}
-		}
-		if complete {
-			// Labels describe the fixed inventory and may contain volatile names.
-			reading.sensor = expected
-			updates = append(updates, reading)
-		}
-	}
-	if err := write(path, namespace, "commit", updates); err != nil {
+	if err := write(path, namespace, "commit", current); err != nil {
 		if !errors.Is(err, syscall.ESTALE) {
 			return false, err
 		}
@@ -86,6 +51,8 @@ func publishHWMonFamilyWithWriter(
 	return false, nil
 }
 
+// Each operation needs a fresh file: virt_temp stages records per open session
+// and accepts only one configure or commit on that session.
 func writeHWMonSamples(path, namespace, operation string, readings []hwmonSample) (err error) {
 	device, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {
@@ -131,6 +98,9 @@ func encodeHWMonSamples(out io.Writer, namespace, operation string, readings []h
 		}
 	}
 	for _, reading := range readings {
+		if operation == "commit" && reading.omitOnCommit {
+			continue
+		}
 		milliCelsius := int64(math.Round(reading.temperature * 1000))
 		if _, err := fmt.Fprintf(out, "sample\t%s\t%d\t%s\n", reading.sensor.id, milliCelsius, reading.sensor.label); err != nil {
 			return err

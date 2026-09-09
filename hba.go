@@ -16,13 +16,13 @@ import (
 )
 
 type hbaCollector struct {
-	interval        time.Duration
-	mode            hbaMode
-	mu              sync.RWMutex
-	readings        []sensors.HBA
-	err             error
-	refreshDeadline time.Time
-	reader          hbaSnapshotReader
+	interval  time.Duration
+	mode      hbaMode
+	mu        sync.RWMutex
+	readings  []sensors.HBA
+	err       error
+	updatedAt time.Time
+	reader    hbaSnapshotReader
 }
 
 type hbaMetadata struct {
@@ -108,6 +108,8 @@ func (r *storCLIReader) collect(ctx context.Context) ([]sensors.HBA, error) {
 		return readings, nil
 	}
 	r.metadata = nil
+	// Rediscover at most once per collection. If discovery already happened in
+	// this call, leave the metadata invalidated so the next collection retries.
 	if freshDiscovery {
 		return nil, err
 	}
@@ -165,10 +167,11 @@ func buildHBAReadings(temperatures map[int]float64, metadata map[int]hbaMetadata
 type hbaMode string
 
 const (
-	hbaModeEnabled       hbaMode = "enabled"
-	hbaModeDisabled      hbaMode = "disabled"
-	hbaCollectionTimeout         = 15 * time.Second
+	hbaModeEnabled  hbaMode = "enabled"
+	hbaModeDisabled hbaMode = "disabled"
 )
+
+const hbaCollectionTimeout = 15 * time.Second
 
 var (
 	errNoHBA                 = errors.New("no HBA controllers found")
@@ -210,45 +213,41 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, hbaCollectionTimeout)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
-	// A native ioctl may outlive its context. Readers enforce the deadline
-	// independently, while the previous snapshot remains usable until then.
-	c.mu.Lock()
-	c.refreshDeadline = deadline
-	c.mu.Unlock()
 
+	// Do not hold c.mu during backend I/O: a synchronous ioctl may outlive its
+	// context, while snapshots must remain readable and expire independently.
 	readings, err := c.reader.collect(ctx)
 	if !time.Now().Before(deadline) {
 		err = context.DeadlineExceeded
 	} else if err == nil {
+		// Do not accept a successful result if the parent was canceled while
+		// the collector was returning, before this collection deadline.
 		err = ctx.Err()
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.refreshDeadline = time.Time{}
 	c.err = err
 	if err != nil {
 		c.readings = nil
+		c.updatedAt = time.Time{}
 		return
 	}
 	c.readings = readings
+	c.updatedAt = time.Now()
 }
 
-func (c *hbaCollector) read() ([]sensors.HBA, error) {
+func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if !c.refreshDeadline.IsZero() && !time.Now().Before(c.refreshDeadline) {
-		return nil, context.DeadlineExceeded
+	if c.mode == hbaModeDisabled {
+		// Disabled is an authoritative empty inventory, not a missing snapshot.
+		return []sensors.HBA{}, nil
 	}
-	return slices.Clone(c.readings), c.err
-}
-
-func selectHBAs(hbas []sensors.HBA, selector string) []sensors.HBA {
-	selector = strings.ToLower(selector)
-	var matches []sensors.HBA
-	for _, sensor := range hbas {
-		if selector == "all" || strings.EqualFold(sensor.ID, selector) {
-			matches = append(matches, sensor)
-		}
+	if c.err != nil {
+		return nil, c.err
 	}
-	return matches
+	if !time.Now().Before(c.updatedAt.Add(c.interval + hbaCollectionTimeout)) {
+		return nil, errors.New("HBA temperature snapshot expired")
+	}
+	return slices.Clone(c.readings), nil
 }

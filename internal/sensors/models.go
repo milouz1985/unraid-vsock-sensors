@@ -1,10 +1,10 @@
-// Package sensors defines the shared sensor model and VSOCK client.
+// Package sensors defines the shared sensor model and transport protocol.
 package sensors
 
-import (
-	"strings"
-	"time"
-)
+import "strings"
+
+// ProtocolVersion identifies incompatible revisions of the VSOCK snapshot.
+const ProtocolVersion = 1
 
 // Disk describes an Unraid disk and its latest collected temperature.
 type Disk struct {
@@ -45,11 +45,6 @@ func (d Disk) Kind() DiskKind {
 	}
 }
 
-// IsExternal reports whether Unraid exposes the disk through USB transport.
-func (d Disk) IsExternal() bool {
-	return strings.EqualFold(d.Transport, "usb")
-}
-
 // HBA describes a host bus adapter by its backend-independent stable identity.
 type HBA struct {
 	ID         string  `json:"id"`
@@ -58,13 +53,13 @@ type HBA struct {
 	Temp       float64 `json:"temp_c"`
 }
 
-// Response contains a snapshot of every sensor exposed by the server.
+// Response contains a snapshot of every sensor exposed by the Unraid agent.
+// A nil disk or HBA inventory means missing or unavailable data; a non-nil
+// empty slice is authoritative and may remove that family's host sensors.
 type Response struct {
-	Version     string    `json:"version"`
-	Timestamp   time.Time `json:"timestamp"`
-	Disks       []Disk    `json:"disks"`
-	HBAs        []HBA     `json:"hbas,omitempty"`
-	HBADisabled bool      `json:"hba_disabled,omitempty"`
-	HBAError    string    `json:"hba_error,omitempty"`
-	Error       string    `json:"error,omitempty"`
+	Protocol int    `json:"protocol"`
+	Disks    []Disk `json:"disks"`
+	HBAs     []HBA  `json:"hbas"`
+	HBAError string `json:"hba_error,omitempty"`
+	Error    string `json:"error,omitempty"`
 }

@@ -8,7 +8,7 @@ consulter le [README principal](../README.md).
 
 Le paquet Debian `unraid-vsock-sensors-hwmon` installe :
 
-- `/usr/bin/unraid-vsock-sensors`, l'agent VSOCK ;
+- `/usr/bin/unraid-vsock-sensors`, le récepteur VSOCK et agent hwmon ;
 - `/usr/src/virt-temp-X.Y.Z`, les sources du module DKMS ;
 - `/usr/lib/systemd/system/unraid-vsock-hwmon.service` ;
 - `/usr/lib/modules-load.d/virt-temp.conf` ;
@@ -20,12 +20,17 @@ n'existe pas. Une configuration existante n'est jamais remplacée.
 L'inventaire persistant est stocké par défaut dans
 `/var/lib/unraid-vsock-sensors/hwmon-inventory.json`.
 
+L'agent Unraid ouvre une connexion VSOCK persistante vers ce récepteur. Il
+pousse chaque seconde son dernier snapshot complet, qui sert aussi de heartbeat.
+Le récepteur refuse les connexions qui ne viennent pas du CID configuré et
+maintient `/dev/virt-temp` à jour.
+
 ## Fonctionnement du pilote
 
-Le module crée `/dev/virt-temp`. L'agent y envoie séparément les familles
+Le module crée `/dev/virt-temp`. Le récepteur y envoie séparément les familles
 `disk` et `hba` :
 
-1. `configure` crée l'inventaire et les canaux d'une famille ;
+1. `configure` crée un périphérique hwmon par sonde de la famille ;
 2. `commit` actualise uniquement les identifiants déjà configurés ;
 3. une fermeture sans opération finale ne modifie rien.
 
@@ -43,7 +48,8 @@ Un ID doit contenir entre 1 et 63 octets et commencer par le nom de sa famille
 suivi de `:`. Un label doit contenir entre 1 et 95 octets. Une température doit
 être un entier compris entre `0` et `150000` milli°C inclus. Les seules familles
 acceptées sont `disk` et `hba`, et les seules opérations finales sont
-`configure` et `commit`.
+`configure` et `commit`. `configure` enregistre le label ; `commit` identifie
+les sondes uniquement par leur ID et ignore le label transmis.
 
 Chaque session accepte au maximum 1 024 enregistrements. Cette limite borne les
 allocations contrôlées depuis l'espace utilisateur ; elle ne correspond pas à
@@ -55,44 +61,67 @@ Au sein d'une famille, le mutex sérialise les `commit` avec un éventuel
 `configure`. Les lectures sysfs n'en ont pas besoin : la désinscription hwmon
 attend la fin des lectures en cours avant que l'ancien inventaire soit libéré.
 
-Le pilote expose au maximum deux périphériques hwmon :
+Le pilote expose un périphérique hwmon indépendant par sonde. Son nom lisible
+est dérivé du label, par exemple `unraid_disk1`, `unraid_hdd_maximum` ou
+`unraid_sas3008`. Son unique mesure est donc toujours `temp1_input`, accompagnée
+du label complet dans `temp1_label`. Le parent platform encode l'ID stable en
+hexadécimal : l'identité du périphérique ne dépend ni du nom hwmon, ni de
+`hwmonX`, ni de l'ordre des autres sondes. Pour un HBA, le label utilise le
+modèle et l'adresse PCI lorsqu'ils sont disponibles. Les indices locaux IOC et
+StorCLI ne font pas partie de l'identité publiée.
 
-- `unraid_storage`, avec les disques internes et leurs maximums de groupe ;
-- `unraid_hba`, avec les contrôleurs HBA transmis par la VM.
+Ce choix évite d'associer durablement une sonde à une position `tempN` dans un
+périphérique agrégé. Une modification de topologie pourrait autrement décaler
+les canaux et faire lire à un consommateur la température d'un autre disque.
+Réserver les anciens canaux empêcherait ce décalage, mais conserverait des
+sondes fantômes à `100 °C` après un retrait planifié. Avec un périphérique par
+ID, chaque sonde reste `temp1`, tandis qu'un ID retiré disparaît sans modifier
+l'identité des autres périphériques.
 
-Chaque sonde correspond à un canal `tempN_input` accompagné de
-`tempN_label`. Les ID stables restent internes au protocole ; sysfs expose le
-label configuré au démarrage. Pour un HBA, ce label utilise le modèle et
-l'adresse PCI lorsqu'ils sont disponibles. Les indices locaux IOC et StorCLI
-ne font pas partie de l'identité publiée.
+Ce modèle remplace les anciens périphériques agrégés `unraid_storage` et
+`unraid_hba`. La première mise à niveau nécessite donc de sélectionner les
+nouvelles sources dans CoolerControl ou d'adapter les `platform` fan2go.
 
 ## Inventaire persistant et failsafe
 
-Après un premier relevé valide, l'agent met en cache les ID, labels et groupes,
-mais jamais les températures. Au démarrage suivant, ce cache recrée les canaux
-à `100 °C` avant que la VM réponde. Un logiciel de ventilation peut donc les
-découvrir dès le boot de Proxmox.
+Après un premier relevé valide, le récepteur met en cache les ID, labels et
+groupes, mais jamais les températures. Au démarrage suivant, ce cache recrée
+les périphériques à `100 °C` avant que la VM réponde. Un logiciel de ventilation
+peut donc les découvrir dès le boot de Proxmox.
 
-Une réponse valide dont les ID diffèrent remplace automatiquement la famille
-concernée et le cache. Une erreur globale de lecture ne constitue pas une
-nouvelle topologie : les anciens canaux restent alors en place et atteignent le
-failsafe. Une température de disque indisponible n'interrompt pas les autres
-mises à jour : ce disque et le maximum de sa catégorie reçoivent explicitement
-la température failsafe, tandis que les autres canaux restent actualisés. Le
-serveur Unraid collecte les températures SMART en arrière-plan et masque une
-erreur transitoire pendant l'intervalle SMART configuré augmenté de cinq
-secondes, sans déclarer la sonde en panne avant le prochain relevé configuré.
-Un changement de label seul n'affecte pas l'identité.
+Chaque ID stable possède son propre périphérique et reste toujours `temp1`.
+Lorsqu'un snapshot modifie l'inventaire ou un label, `configure` recrée tous les
+périphériques de la famille. Leurs noms platform et leurs identités restent
+stables, mais leurs numéros dynamiques `hwmonX` peuvent changer. Un ID absent du
+nouvel inventaire est retiré du cache et aucune autre sonde ne récupère son
+identité. Un ancien périphérique restauré depuis le cache reste temporairement
+au failsafe jusqu'au premier snapshot valide, qui le retire si le matériel a
+réellement été supprimé.
+Une erreur globale de lecture ne constitue pas une nouvelle topologie : les
+anciens périphériques restent alors en place et atteignent le failsafe. Une
+température de disque indisponible n'interrompt pas les autres
+mises à jour : ce disque et le maximum de sa catégorie restent configurés mais
+sont omis des `commit`, tandis que les autres périphériques restent actualisés.
+Le noyau conserve donc leur dernière valeur jusqu'à l'expiration de
+`stale_timeout`, puis retourne `100 °C`. Une nouvelle configuration initialise
+directement les sondes indisponibles au failsafe. L'agent Unraid effectue un
+maximum de deux retries SMART espacés de deux secondes avant de reprendre
+l'intervalle normal. Un changement de label seul n'affecte pas l'identité, mais
+reconfigure la famille afin d'actualiser `temp1_label`, le nom hwmon et le cache.
 
-Si l'enregistrement d'une nouvelle topologie échoue, le pilote réenregistre
-l'inventaire précédent au lieu de laisser disparaître les sondes. L'erreur est
-retournée à l'agent, qui retente la nouvelle configuration, tandis que les
-anciens canaux non actualisés atteignent naturellement le failsafe.
+Si l'enregistrement d'une nouvelle topologie échoue, le pilote tente de
+réenregistrer l'inventaire précédent au lieu de laisser disparaître les sondes.
+L'erreur est retournée au récepteur, qui retente la nouvelle configuration,
+tandis que les anciens périphériques non actualisés atteignent naturellement le
+failsafe. Si cette restauration échoue également, les `commit` suivants
+retournent `ESTALE` afin de forcer une nouvelle configuration.
 
-Si le module `virt_temp` est déchargé puis rechargé sans redémarrer l'agent, le
-premier `commit` retourne `ESTALE` parce que le noyau a perdu son inventaire.
-L'agent répond par une unique opération `configure`, restaure les canaux et
-notifie les consommateurs comme lors de tout changement de topologie.
+Si le module `virt_temp` est déchargé puis rechargé sans redémarrer le
+récepteur, le premier `commit` retourne `ESTALE` parce que le noyau a perdu son
+inventaire.
+Le récepteur répond par une unique opération `configure`, restaure les
+périphériques et notifie les consommateurs comme lors de tout changement de
+topologie.
 
 Une erreur HBA invalide le relevé complet. L'inventaire précédent reste en
 place sans être actualisé et atteint donc le failsafe. StorCLI tente auparavant
@@ -110,12 +139,25 @@ UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
 UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
 ```
 
-L'agent utilise `systemctl try-restart` : une unité absente ou inactive n'est
-pas démarrée. La valeur reste vide par défaut.
+Les motifs systemd ne sont pas acceptés et le récepteur ne peut pas se désigner
+lui-même dans cette liste.
 
-Chaque canal retourne `100000` millidegrés Celsius après 10 secondes sans mise
-à jour. Le délai est un paramètre du module compris entre 1 et 300 secondes. Par
-exemple, pour utiliser 15 secondes de manière persistante :
+Le récepteur utilise `systemctl try-restart` : une unité absente ou inactive n'est
+pas démarrée. Si `systemctl` ne parvient pas à mettre la demande en file
+d'attente, une nouvelle tentative est programmée 30 secondes après chaque
+échec. La valeur reste vide par défaut.
+
+Chaque collecteur Unraid invalide son cache après son intervalle normal augmenté
+du délai maximal de collecte. Le snapshot signale alors une erreur et le
+récepteur cesse d'actualiser uniquement la famille concernée.
+
+Chaque canal applique un failsafe de `100000` millidegrés Celsius après
+10 secondes sans mise à jour. Ce délai, géré dans le module, couvre aussi une
+perte du flux VSOCK ou l'arrêt du récepteur. Il est configurable entre 1 et
+300 secondes. Le délai de lecture VSOCK de trois secondes sert uniquement à
+détecter une connexion interrompue et à permettre sa reconnexion ; il ne
+remplace pas ce failsafe thermique. Par exemple, pour utiliser 15 secondes de
+manière persistante :
 
 ```sh
 printf 'options virt-temp stale_timeout=15\n' \

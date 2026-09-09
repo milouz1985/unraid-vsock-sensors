@@ -7,92 +7,44 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-func newDiskStateTracker() diskStateTracker {
-	return diskStateTracker{
-		lastValid: make(map[string]float64), failedSince: make(map[string]time.Time),
-	}
-}
-
-func TestDiskStateAllowsTransientSMARTFailure(t *testing.T) {
-	disk := unraidDisk{id: "serial1", name: "disk1", device: "sdb", rotational: true}
-	tracker := newDiskStateTracker()
-	now := time.Unix(1000, 0)
-
-	readings := tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, 35*time.Second)
-	if readings[0].Temp != 35 || readings[0].Unavailable {
-		t.Fatalf("initial reading = %#v", readings)
-	}
-	readings = tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}}, now, 35*time.Second)
-	if readings[0].Temp != 35 || readings[0].Unavailable {
-		t.Fatalf("failure grace reading = %#v", readings)
-	}
-	readings = tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("still unavailable")}}, now.Add(35*time.Second), 35*time.Second)
-	if !readings[0].Unavailable {
-		t.Fatalf("expired failure reused stale temperature: %#v", readings)
-	}
-	readings = tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 40}}, now.Add(36*time.Second), 35*time.Second)
-	if readings[0].Temp != 40 || readings[0].Unavailable {
-		t.Fatalf("recovered reading = %#v", readings)
-	}
-}
-
-func TestDiskStateIsolatesTimedOutSMARTProbe(t *testing.T) {
+func TestMakeDiskReadingsIsolatesFailedSMARTProbe(t *testing.T) {
 	disks := []unraidDisk{
 		{id: "serial1", name: "disk1", rotational: true},
 		{id: "serial2", name: "disk2", rotational: true},
 	}
-	tracker := newDiskStateTracker()
-	now := time.Unix(1000, 0)
-	grace := 35 * time.Second
-
-	tracker.apply(disks, []diskProbe{{temperature: 35}, {temperature: 40}}, now, grace)
-	readings := tracker.apply(disks, []diskProbe{
+	readings := makeDiskReadings(disks, []diskProbe{
 		{err: context.DeadlineExceeded},
 		{temperature: 42},
-	}, now.Add(30*time.Second), grace)
-	if readings[0].Temp != 35 || readings[0].Unavailable {
-		t.Fatalf("timed out disk during grace = %#v", readings[0])
+	})
+	if readings[0].Temp != 0 || !readings[0].Unavailable {
+		t.Fatalf("failed disk = %#v", readings[0])
 	}
 	if readings[1].Temp != 42 || readings[1].Unavailable {
 		t.Fatalf("successful disk affected by peer timeout = %#v", readings[1])
 	}
-
-	readings = tracker.apply(disks, []diskProbe{
-		{err: context.DeadlineExceeded},
-		{temperature: 43},
-	}, now.Add(65*time.Second), grace)
-	if !readings[0].Unavailable {
-		t.Fatalf("timed out disk did not expire = %#v", readings[0])
-	}
-	if readings[1].Temp != 43 || readings[1].Unavailable {
-		t.Fatalf("successful disk affected after peer grace = %#v", readings[1])
-	}
 }
 
-func TestDiskStateGraceWithoutPreviousTemperatureAvoidsFailsafe(t *testing.T) {
-	tracker := newDiskStateTracker()
+func TestFailedDiskConfiguresAtFailsafe(t *testing.T) {
 	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true}
-	readings := tracker.apply(
-		[]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}}, time.Now(), time.Minute,
-	)
-	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
-		t.Fatalf("initial grace reading = %#v", readings)
+	readings := makeDiskReadings([]unraidDisk{disk}, []diskProbe{{err: errors.New("spin-up")}})
+	if len(readings) != 1 || readings[0].Temp != 0 || !readings[0].Unavailable {
+		t.Fatalf("failed reading = %#v", readings)
 	}
-	if samples := makeDiskSamples(sensors.Response{Disks: readings}); len(samples) != 1 || samples[0].temperature == hwmonFailsafeTemp {
-		t.Fatalf("initial grace triggered hwmon failsafe: %#v", samples)
+	if samples := makeDiskSamples(sensors.Response{Disks: readings}); len(samples) != 1 || samples[0].temperature != hwmonFailsafeTemp || !samples[0].omitOnCommit {
+		t.Fatalf("initial failure did not trigger hwmon failsafe: %#v", samples)
 	}
 }
 
-func TestDiskStateReportsStandbyAsZero(t *testing.T) {
-	tracker := newDiskStateTracker()
+func TestMakeDiskReadingsReportsStandbyAsZero(t *testing.T) {
 	disk := unraidDisk{id: "serial1", name: "disk1", rotational: true, spundown: true}
-	readings := tracker.apply([]unraidDisk{disk}, []diskProbe{{standby: true}}, time.Now(), time.Minute)
+	readings := makeDiskReadings([]unraidDisk{disk}, []diskProbe{{standby: true}})
 	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
 		t.Fatalf("standby reading = %#v", readings)
 	}
@@ -105,26 +57,31 @@ func TestCollectDiskProbesSkipsKnownStandbyDisk(t *testing.T) {
 	}
 }
 
-func TestDiskStatePurgesDisappearedDisks(t *testing.T) {
-	tracker := newDiskStateTracker()
-	disk := unraidDisk{id: "serial1", name: "disk1"}
-	now := time.Unix(1000, 0)
-	tracker.apply([]unraidDisk{disk}, []diskProbe{{temperature: 35}}, now, time.Minute)
-	tracker.apply([]unraidDisk{disk}, []diskProbe{{err: errors.New("missing")}}, now, time.Minute)
-	tracker.apply(nil, nil, now, time.Minute)
-	if len(tracker.lastValid) != 0 || len(tracker.failedSince) != 0 {
-		t.Fatalf("state was not purged: lastValid=%v failedSince=%v", tracker.lastValid, tracker.failedSince)
-	}
+func TestNextDiskCollectionRetriesTwice(t *testing.T) {
+	interval := 30 * time.Second
+	retryDelay := 2 * time.Second
 
-	readings := tracker.apply(
-		[]unraidDisk{disk}, []diskProbe{{err: errors.New("missing")}}, now.Add(2*time.Minute), time.Minute,
-	)
-	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable {
-		t.Fatalf("reappeared disk reused stale state: %#v", readings)
+	if delay, retries := nextDiskCollection(false, 0, interval, retryDelay); delay != interval || retries != 0 {
+		t.Fatalf("successful collection scheduled %v, retries=%d", delay, retries)
+	}
+	if delay, retries := nextDiskCollection(true, 0, interval, retryDelay); delay != retryDelay || retries != 1 {
+		t.Fatalf("first failure scheduled %v, retries=%d", delay, retries)
+	}
+	if delay, retries := nextDiskCollection(true, 1, interval, retryDelay); delay != retryDelay || retries != 2 {
+		t.Fatalf("first failed retry scheduled %v, retries=%d", delay, retries)
+	}
+	if delay, retries := nextDiskCollection(true, 2, interval, retryDelay); delay != interval || retries != 0 {
+		t.Fatalf("second failed retry scheduled %v, retries=%d", delay, retries)
+	}
+	if delay, retries := nextDiskCollection(false, 1, interval, retryDelay); delay != interval || retries != 0 {
+		t.Fatalf("successful retry scheduled %v, retries=%d", delay, retries)
+	}
+	if collector := newDiskCollector("unused", time.Second); collector.retryDelay != time.Second {
+		t.Fatalf("short interval uses retry delay %v, want %v", collector.retryDelay, time.Second)
 	}
 }
 
-func TestReadInventoryAndSelect(t *testing.T) {
+func TestReadInventory(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "disks.ini")
 	data := strings.ReplaceAll(strings.TrimSpace(`
 		["disk1"]
@@ -155,8 +112,15 @@ func TestReadInventoryAndSelect(t *testing.T) {
 		device=""
 		status="DISK_NP"
 
-		["flash"]
+		["external"]
+		id="USB_external_serial"
 		device="sdi"
+		transport=" USB "
+		rotational="1"
+		spundown="0"
+
+		["flash"]
+		device="sdj"
 		transport="usb"
 		rotational="1"
 	`), "\n\t\t", "\n")
@@ -171,18 +135,69 @@ func TestReadInventoryAndSelect(t *testing.T) {
 		t.Fatalf("inventory = %#v", disks)
 	}
 
-	tracker := newDiskStateTracker()
-	readings := tracker.apply(disks, []diskProbe{
+	readings := makeDiskReadings(disks, []diskProbe{
 		{temperature: 35}, {standby: true}, {temperature: 48},
-	}, time.Now(), time.Minute)
-	if got := selectDisks(readings, "hdd"); len(got) != 2 || got[0].Temp != 35 || got[1].Temp != 0 {
-		t.Fatalf("hdd: %#v", got)
+	})
+	if len(readings) != 3 || readings[0].Temp != 35 || readings[1].Temp != 0 || readings[2].Temp != 48 {
+		t.Fatalf("readings: %#v", readings)
 	}
-	if got := selectDisks(readings, "nvme"); len(got) != 1 || got[0].Temp != 48 {
-		t.Fatalf("nvme: %#v", got)
+}
+
+func TestReadInventoryRejectsIncompleteActiveDisk(t *testing.T) {
+	complete := strings.TrimSpace(`
+		["disk1"]
+		id="serial1"
+		device="sda"
+		status="DISK_OK"
+
+		["disk3"]
+		id="serial3"
+		device="sdc"
+		status="DISK_OK"
+	`) + "\n"
+	for name, incomplete := range map[string]string{
+		"missing ID":     "[\"disk2\"]\ndevice=\"sdb\"\nstatus=\"DISK_OK\"\ntemp=\"65\"\n",
+		"missing device": "[\"disk2\"]\nid=\"serial2\"\nstatus=\"DISK_OK\"\ntemp=\"65\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "disks.ini")
+			data := strings.ReplaceAll(complete+incomplete, "\n\t\t", "\n")
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if disks, err := readDisks(path); err == nil || len(disks) != 0 {
+				t.Fatalf("partial inventory = %#v, %v; want no inventory and an error", disks, err)
+			}
+		})
 	}
-	if got := selectDisks(readings, "fast"); len(got) != 1 || got[0].Device != "nvme0n1" {
-		t.Fatalf("name: %#v", got)
+}
+
+func TestReadInventoryRejectsMissingSections(t *testing.T) {
+	for name, data := range map[string]string{
+		"empty":         "",
+		"comments only": "; inventory is being rewritten\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "disks.ini")
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if disks, err := readDisks(path); err == nil || len(disks) != 0 {
+				t.Fatalf("inventory = %#v, %v; want no inventory and an error", disks, err)
+			}
+		})
+	}
+}
+
+func TestReadInventoryAllowsNoAssignedDisks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	data := "[disk1]\nstatus=DISK_NP\n\n[flash]\ndevice=sda\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	disks, err := readDisks(path)
+	if err != nil || len(disks) != 0 {
+		t.Fatalf("inventory = %#v, %v; want a valid empty inventory", disks, err)
 	}
 }
 
@@ -208,12 +223,12 @@ func TestParseSMARTTemperature(t *testing.T) {
 			runErr:  &exec.ExitError{},
 			wantErr: true,
 		},
-		"standby": {
+		"exit three with matching standby mode": {
 			json:        `{"smartctl":{"exit_status":3},"power_mode":{"name":"STANDBY"}}`,
 			runErr:      &exec.ExitError{},
 			wantStandby: true,
 		},
-		"ambiguous exit three": {
+		"exit three without low-power mode": {
 			json:    `{"smartctl":{"exit_status":3}}`,
 			runErr:  &exec.ExitError{},
 			wantErr: true,
@@ -246,41 +261,107 @@ func TestParseSMARTTemperature(t *testing.T) {
 	}
 }
 
-func TestDiskCollectorRejectsExpiredSnapshot(t *testing.T) {
+func TestDiskCollectorExpiresStaleSnapshot(t *testing.T) {
 	collector := newDiskCollector("unused", time.Minute)
 	collector.err = nil
 	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
-	collector.validUntil = time.Now().Add(-time.Second)
-	if _, err := collector.read(); err == nil {
-		t.Fatal("expired snapshot was accepted")
+	collector.updatedAt = time.Now().Add(-collector.interval - diskCollectionTimeout)
+	readings, err := collector.snapshot()
+	if err == nil || len(readings) != 0 {
+		t.Fatalf("expired snapshot = %#v, %v", readings, err)
 	}
 }
 
-func TestDiskCollectorExpiresFailedReadingAtGraceDeadline(t *testing.T) {
-	collector := newDiskCollector("unused", time.Minute)
+func TestBlockedDiskCollectionDoesNotStopSnapshotPublication(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "disks.ini")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	collector := newDiskCollector(fifo, time.Minute)
 	collector.err = nil
-	collector.readings = []sensors.Disk{{ID: "serial", Temp: 35}}
-	collector.validUntil = time.Now().Add(time.Minute)
-	collector.failAfter = map[string]time.Time{"serial": time.Now().Add(-time.Second)}
-	readings, err := collector.read()
-	if err != nil || len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
-		t.Fatalf("expired failed reading = %#v, %v", readings, err)
+	collector.readings = []sensors.Disk{{ID: "serial", Name: "disk1", Device: "sda", Temp: 35}}
+	collector.updatedAt = time.Now()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	refreshDone := make(chan struct{})
+	go func() {
+		collector.refresh(ctx)
+		close(refreshDone)
+	}()
+
+	type openResult struct {
+		file *os.File
+		err  error
+	}
+	opened := make(chan openResult, 1)
+	go func() {
+		file, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+		opened <- openResult{file: file, err: err}
+	}()
+	writer := <-opened
+	if writer.err != nil {
+		t.Fatal(writer.err)
+	}
+
+	frames := capturePublishedSnapshots(
+		t,
+		collector,
+		newTestHBACollector(time.Minute, hbaModeDisabled),
+		2,
+	)
+	for index, frame := range frames {
+		if frame.Error != "" || len(frame.Disks) != 1 || frame.Disks[0].Temp != 35 {
+			t.Fatalf("frame %d was blocked or lost cached disk data: %#v", index, frame)
+		}
+	}
+
+	_, _ = writer.file.Write([]byte("[disk1]\nid=serial\ndevice=sda\n"))
+	_ = writer.file.Close()
+	select {
+	case <-refreshDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked disk collection did not finish after releasing the FIFO")
 	}
 }
 
-func TestSelectDisksExcludesExternalDisksFromKindSelectors(t *testing.T) {
-	disks := []sensors.Disk{
-		{Name: "internal", Device: "sdb", Transport: "ata", Rotational: true},
-		{Name: "external", Device: "sdc", Transport: "usb", Rotational: true},
+func TestDiskCollectorConcurrentRefreshAndSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	data := "[disk1]\nid=serial\ndevice=sda\nrotational=1\ntransport=ata\nspundown=1\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
 	}
+	collector := newDiskCollector(path, time.Minute)
+	collector.refresh(context.Background())
 
-	if got := selectDisks(disks, "hdd"); len(got) != 1 || got[0].Name != "internal" {
-		t.Fatalf("hdd: %#v", got)
-	}
-	if got := selectDisks(disks, "external"); len(got) != 1 || got[0].Name != "external" {
-		t.Fatalf("explicit name: %#v", got)
-	}
-	if got := selectDisks(disks, "all"); len(got) != 2 {
-		t.Fatalf("all should include external disks: %#v", got)
+	start := make(chan struct{})
+	done := make(chan error, 2)
+	go func() {
+		<-start
+		for range 100 {
+			collector.refresh(context.Background())
+		}
+		done <- nil
+	}()
+	go func() {
+		<-start
+		for range 100 {
+			readings, err := collector.snapshot()
+			if err != nil {
+				done <- err
+				return
+			}
+			if len(readings) != 1 || readings[0].ID != "serial" {
+				done <- errors.New("concurrent snapshot lost the disk reading")
+				return
+			}
+		}
+		done <- nil
+	}()
+	close(start)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
 	}
 }

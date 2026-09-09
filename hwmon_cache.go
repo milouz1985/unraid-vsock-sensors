@@ -1,19 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
 )
 
 // cachedHWMonInventory is the versioned on-disk representation of the virtual
-// hwmon topology. A nil family means that it has never been initialized, which
-// is different from an initialized family containing no sensors.
+// hwmon configuration. A nil family means that it has never been initialized,
+// which is different from an initialized family containing no sensors.
 type cachedHWMonInventory struct {
 	Version int                `json:"version"`
 	Disks   *cachedHWMonFamily `json:"disks,omitempty"`
@@ -28,18 +26,17 @@ type cachedHWMonFamily struct {
 	Sensors []cachedHWMonSensor `json:"readings"`
 }
 
-// cachedHWMonSensor contains only the stable metadata needed to recreate a
+// cachedHWMonSensor contains the metadata needed to recreate a
 // virtual sensor. Temperatures are deliberately not persisted: restored sensors
 // start at the failsafe temperature until fresh data arrives from the guest.
 type cachedHWMonSensor struct {
-	ID      string   `json:"id"`
-	Label   string   `json:"label"`
-	Members []string `json:"members,omitempty"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
-// restore loads the last known topology and recreates its virtual hwmon
-// channels at the failsafe temperature. Families are applied in order, so a
-// family restored before a later validation failure remains usable.
+// restore loads the last known configuration and recreates its virtual hwmon
+// devices at the failsafe temperature. Families are restored independently, so
+// one invalid family does not prevent the other from remaining usable.
 func (publisher *hwmonPublisher) restore(device string) error {
 	data, err := os.ReadFile(publisher.cachePath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -49,29 +46,29 @@ func (publisher *hwmonPublisher) restore(device string) error {
 		return err
 	}
 	var cached cachedHWMonInventory
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cached); err != nil {
+	// Ignore retired optional metadata so caches written by an older release
+	// remain usable when their cache version is still supported.
+	if err := json.Unmarshal(data, &cached); err != nil {
 		return fmt.Errorf("decode %s: %w", publisher.cachePath, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return fmt.Errorf("decode %s: unexpected data after inventory", publisher.cachePath)
 	}
 	if cached.Version != 1 {
 		return fmt.Errorf("unsupported cache version %d", cached.Version)
 	}
+	var diskErr, hbaErr error
 	if cached.Disks != nil {
 		readings := samplesFromCache(cached.Disks.Sensors)
-		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings, false); err != nil {
-			return fmt.Errorf("restore disks: %w", err)
+		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings); err != nil {
+			diskErr = fmt.Errorf("restore disks: %w", err)
 		}
 	}
 	if cached.HBAs != nil {
 		readings := samplesFromCache(cached.HBAs.Sensors)
-		if _, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings, true); err != nil {
-			return fmt.Errorf("restore HBA: %w", err)
+		if _, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings); err != nil {
+			hbaErr = fmt.Errorf("restore HBA: %w", err)
 		}
+	}
+	if err := errors.Join(diskErr, hbaErr); err != nil {
+		return err
 	}
 	log.Printf("restored cached hwmon inventory from %s", publisher.cachePath)
 	return nil
@@ -79,7 +76,7 @@ func (publisher *hwmonPublisher) restore(device string) error {
 
 // saveCache atomically persists every initialized family. The temporary file,
 // its contents, and the containing directory are synced so a successful return
-// means the new topology survives a crash or power loss.
+// means the new configuration survives a crash or power loss.
 func (publisher *hwmonPublisher) saveCache() error {
 	cached := cachedHWMonInventory{Version: 1}
 	if publisher.disks.initialized {
@@ -103,10 +100,6 @@ func (publisher *hwmonPublisher) saveCache() error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0600); err != nil {
-		temporary.Close()
-		return err
-	}
 	if _, err := temporary.Write(data); err != nil {
 		temporary.Close()
 		return err
@@ -137,29 +130,23 @@ func syncDirectory(path string) (err error) {
 	return directory.Sync()
 }
 
-// sensorsToCache copies the stable topology fields out of the live inventory.
-// Member slices are cloned so the persisted representation cannot alias mutable
-// publisher state.
+// sensorsToCache copies the configuration fields out of the live inventory.
 func sensorsToCache(sensors []hwmonSensor) []cachedHWMonSensor {
 	cached := make([]cachedHWMonSensor, 0, len(sensors))
 	for _, sensor := range sensors {
-		cached = append(cached, cachedHWMonSensor{
-			ID: sensor.id, Label: sensor.label, Members: append([]string(nil), sensor.members...),
-		})
+		cached = append(cached, cachedHWMonSensor{ID: sensor.id, Label: sensor.label})
 	}
 	return cached
 }
 
-// samplesFromCache converts cached topology into publishable samples. Every
-// restored sample starts at the failsafe temperature because cached topology
+// samplesFromCache converts a cached configuration into publishable samples.
+// Every restored sample starts at the failsafe temperature because cached data
 // must never be mistaken for a fresh reading from the guest.
 func samplesFromCache(cached []cachedHWMonSensor) []hwmonSample {
 	readings := make([]hwmonSample, 0, len(cached))
 	for _, reading := range cached {
 		readings = append(readings, hwmonSample{
-			sensor: hwmonSensor{
-				id: reading.ID, label: reading.Label, members: append([]string(nil), reading.Members...),
-			},
+			sensor:      hwmonSensor{id: reading.ID, label: reading.Label},
 			temperature: hwmonFailsafeTemp,
 		})
 	}

@@ -23,23 +23,3 @@ func TestDiskClassification(t *testing.T) {
 		})
 	}
 }
-
-func TestDiskIsExternal(t *testing.T) {
-	tests := []struct {
-		name string
-		disk Disk
-		want bool
-	}{
-		{name: "USB disk", disk: Disk{Transport: "USB"}, want: true},
-		{name: "SATA disk", disk: Disk{Transport: "ata"}},
-		{name: "NVMe disk", disk: Disk{Transport: "nvme"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.disk.IsExternal(); got != tt.want {
-				t.Errorf("IsExternal() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}

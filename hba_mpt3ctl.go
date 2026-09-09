@@ -25,10 +25,10 @@
 //
 // Only MPI CONFIG PAGE_HEADER and PAGE_READ_CURRENT requests are constructed.
 // No caller-provided MPI frame, data-out buffer, firmware write, reset or
-// diagnostic operation is exposed. The ioctl constants and structure layout
+// diagnostic operation is exposed. The ioctl constants and command layout
 // below are deliberately limited to Linux x86-64, the only architecture Unraid
-// supports. TestMPT3CommandABI locks the critical 68-byte request offset and
-// 96-byte userspace command-buffer size.
+// supports. The MPT3 command is encoded at fixed byte offsets instead of using
+// Go struct alignment. TestMPT3CommandABI locks that userspace ABI.
 package main
 
 import (
@@ -50,6 +50,14 @@ const (
 	mpt3ctlPath               = "/dev/mpt3ctl"
 	mpt3CommandIOCTL          = uintptr(0xc0484c14)
 	mpt3IOCInfoIOCTL          = uintptr(0xc05c4c11)
+	mpt3CommandSize           = 96
+	mpt3ReplyPointerOffset    = 16
+	mpt3DataInPointerOffset   = 24
+	mpt3MaxReplyBytesOffset   = 48
+	mpt3DataInSizeOffset      = 52
+	mpt3SGEOffset             = 64
+	mpt3RequestOffset         = 68
+	mpt3ReplyBufferSize       = 128
 	mpt3MaxIOC                = 31
 	mpt3FirmwareTimeout       = 10
 	mpi2FunctionConfig        = 0x04
@@ -57,6 +65,11 @@ const (
 	mpi2ConfigPageReadCurrent = 0x01
 	mpi2PageTypeIOUnit        = 0x00
 	mpi2PageTypeManufacturing = 0x09
+	// Keep these values aligned with the MPI2_*_PAGEVERSION definitions in
+	// mpi2_cnfg.h used by the in-kernel mpt3sas CONFIG helpers.
+	mpi2Manufacturing0Version = 0x00
+	mpi2Manufacturing5Version = 0x03
+	mpi2IOUnit7Version        = 0x05
 	mpi2IOCStatusMask         = 0x7fff
 	temperatureNotPresent     = 0x00
 	temperatureFahrenheit     = 0x01
@@ -65,12 +78,7 @@ const (
 	mpi2ConfigReplyDWords     = mpi2ConfigReplySize / 4
 )
 
-type mpt3Command struct {
-	IOCNumber, PortNumber, MaxDataSize, Timeout                      uint32
-	ReplyPointer, DataInPointer, DataOutPointer, SenseDataPointer    uintptr
-	MaxReplyBytes, DataInSize, DataOutSize, MaxSenseBytes, SGEOffset uint32
-	Request                                                          [28]byte
-}
+type mpt3Command [mpt3CommandSize]byte
 
 type mpt3Device struct{ file *os.File }
 
@@ -114,8 +122,6 @@ func openMPT3() (*mpt3Device, error) {
 	return &mpt3Device{file: file}, nil
 }
 
-func (d *mpt3Device) close() { _ = d.file.Close() }
-
 func mpt3IOCTL(fd, request uintptr, argument unsafe.Pointer) error {
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, request, uintptr(argument))
 	if errno != 0 {
@@ -134,31 +140,50 @@ func (d *mpt3Device) iocInfo(ioc int) ([]byte, error) {
 	return buffer, nil
 }
 
-func mpt3ConfigRequest(action, pageType, pageNumber byte, header []byte) [28]byte {
+func mpt3ConfigRequest(action, pageType, pageNumber, pageVersion byte, header []byte) [28]byte {
 	var request [28]byte
 	request[0], request[3] = action, mpi2FunctionConfig
 	if header == nil {
-		request[22], request[23] = pageNumber, pageType
+		// Like the in-kernel mpt3sas helpers, PAGE_HEADER requests include the
+		// version expected by the driver instead of relying on a zero-filled
+		// PageVersion. This matters for pages whose declared version is nonzero.
+		request[20], request[22], request[23] = pageVersion, pageNumber, pageType
 	} else {
+		// PAGE_READ_CURRENT must use the complete header returned by the
+		// preceding PAGE_HEADER request, including the firmware's PageVersion
+		// and PageLength.
 		copy(request[20:24], header)
 	}
 	return request
 }
 
+func makeMPT3Command(ioc int, request [28]byte, dataSize int, replyPointer, dataInPointer uintptr) mpt3Command {
+	var command mpt3Command
+	binary.LittleEndian.PutUint32(command[0:4], uint32(ioc))
+	binary.LittleEndian.PutUint32(command[8:12], uint32(max(dataSize, mpt3ReplyBufferSize)))
+	binary.LittleEndian.PutUint32(command[12:16], mpt3FirmwareTimeout)
+	binary.LittleEndian.PutUint64(command[mpt3ReplyPointerOffset:], uint64(replyPointer))
+	binary.LittleEndian.PutUint64(command[mpt3DataInPointerOffset:], uint64(dataInPointer))
+	binary.LittleEndian.PutUint32(command[mpt3MaxReplyBytesOffset:], mpt3ReplyBufferSize)
+	binary.LittleEndian.PutUint32(command[mpt3DataInSizeOffset:], uint32(dataSize))
+	binary.LittleEndian.PutUint32(command[mpt3SGEOffset:], 7)
+	copy(command[mpt3RequestOffset:], request[:])
+	return command
+}
+
 func (d *mpt3Device) command(ioc int, request [28]byte, dataSize int) ([]byte, []byte, error) {
-	reply, data := make([]byte, 128), make([]byte, dataSize)
-	command := mpt3Command{
-		IOCNumber: uint32(ioc), MaxDataSize: uint32(max(dataSize, len(reply))), Timeout: mpt3FirmwareTimeout,
-		ReplyPointer: uintptr(unsafe.Pointer(&reply[0])), MaxReplyBytes: uint32(len(reply)),
-		DataInSize: uint32(dataSize), SGEOffset: 7, Request: request,
-	}
+	reply, data := make([]byte, mpt3ReplyBufferSize), make([]byte, dataSize)
+	dataInPointer := uintptr(0)
 	if dataSize > 0 {
-		command.DataInPointer = uintptr(unsafe.Pointer(&data[0]))
+		dataInPointer = uintptr(unsafe.Pointer(&data[0]))
 	}
-	err := mpt3IOCTL(d.file.Fd(), mpt3CommandIOCTL, unsafe.Pointer(&command))
+	command := makeMPT3Command(ioc, request, dataSize,
+		uintptr(unsafe.Pointer(&reply[0])), dataInPointer)
+	err := mpt3IOCTL(d.file.Fd(), mpt3CommandIOCTL, unsafe.Pointer(&command[0]))
 	// The command stores userspace addresses as ABI integer fields. Keep their
 	// backing allocations live until the kernel has finished the ioctl, even on
 	// its error path.
+	runtime.KeepAlive(command)
 	runtime.KeepAlive(reply)
 	runtime.KeepAlive(data)
 	if err != nil {
@@ -197,11 +222,11 @@ func validateMPT3ConfigReply(reply []byte, action, pageType, pageNumber byte) er
 	return nil
 }
 
-func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber byte) ([]byte, error) {
+func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber, pageVersion byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	reply, _, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageHeader, pageType, pageNumber, nil), 0)
+	reply, _, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageHeader, pageType, pageNumber, pageVersion, nil), 0)
 	if err != nil {
 		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
@@ -216,7 +241,7 @@ func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, page
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, pageType, pageNumber, header), pageSize)
+	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, pageType, pageNumber, pageVersion, header), pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
@@ -231,11 +256,10 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer device.close()
+	defer device.file.Close()
 	readings, identities := make([]sensors.HBA, 0), make(map[string]int)
-	// Deliberately rescan every possible IOC and its identity pages. This keeps
-	// topology handling simple and runs off the VSOCK request path; if systems
-	// with many HBAs make it measurable, IOC metadata can be cached later.
+	// IOC IDs may contain holes, so scan the configured range. Missing IOCINFO
+	// calls do not query firmware; only discovered controllers trigger CONFIG reads.
 	for ioc := 0; ioc <= mpt3MaxIOC; ioc++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -248,11 +272,11 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 			return nil, fmt.Errorf("mpt3ctl IOC %d discovery: %w", ioc, err)
 		}
 		pci, model, sasAddress := parseMPT3PCIAddress(info), "", ""
-		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 0); pageErr == nil {
+		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version); pageErr == nil {
 			model = parseMPT3Model(page)
 		}
 		page5Failed := false
-		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 5); pageErr == nil {
+		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 5, mpi2Manufacturing5Version); pageErr == nil {
 			sasAddress = parseMPT3SASAddress(page)
 		} else {
 			page5Failed = true
@@ -265,7 +289,7 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 			return nil, fmt.Errorf("mpt3ctl IOCs %d and %d have duplicate identity %q", previous, ioc, id)
 		}
 		identities[id] = ioc
-		page, err := device.readConfigPage(ctx, ioc, mpi2PageTypeIOUnit, 7)
+		page, err := device.readConfigPage(ctx, ioc, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version)
 		if err != nil {
 			return nil, fmt.Errorf("mpt3ctl IOC %d temperature: %w", ioc, err)
 		}

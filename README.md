@@ -7,13 +7,16 @@ Sur Proxmox, ces températures peuvent être :
 
 - exposées comme sondes Linux `hwmon` natives pour CoolerControl, fan2go,
   fancontrol ou lm-sensors ;
-- interrogées directement en ligne de commande ;
 - utilisées sans réseau IP entre la VM et l'hôte.
 
-Le serveur lit l'inventaire et l'état de rotation d'Unraid, puis relève en
+L'agent Unraid lit l'inventaire et l'état de rotation, puis relève en
 arrière-plan la température des disques actifs avec le helper
 `smartctl_type`. Il ne consulte pas les disques déjà signalés en veille et
 utilise `smartctl -n standby` pour couvrir un changement d'état concurrent.
+Il maintient une connexion VSOCK vers Proxmox et y pousse chaque seconde le
+dernier snapshot complet. Cette publication périodique sert aussi de heartbeat.
+Chaque snapshot porte un numéro de protocole entier ; le récepteur refuse une
+version incompatible. La version logicielle reste indépendante de ce numéro.
 
 ## Architecture
 
@@ -26,7 +29,7 @@ VM Unraid                                      Hôte Proxmox
 │ unraid-vsock-sensors serve ├────────────────►│ /dev/virt-temp              │
 └────────────────────────────┘                 │            │                │
                                                │            ▼                │
-                                               │ unraid_storage / unraid_hba │
+                                               │ 1 périphérique hwmon/sonde  │
                                                └─────────────────────────────┘
 ```
 
@@ -36,7 +39,8 @@ Deux composants utilisent le même binaire :
 - le paquet Debian Proxmox lance la commande `hwmon` sur l'hôte et installe le
   module noyau DKMS `virt-temp`.
 
-Le CID VSOCK et le port doivent être identiques des deux côtés. Les exemples
+Le port doit être identique des deux côtés. Le récepteur Proxmox vérifie aussi
+que les snapshots viennent du CID configuré pour la VM Unraid. Les exemples
 ci-dessous utilisent le CID `3` et le port `990`, qui sont aussi les valeurs
 par défaut.
 
@@ -63,7 +67,7 @@ parmi les VM exécutées sur le même hôte.
 Arrêter puis redémarrer complètement la VM pour créer le périphérique. Un
 simple redémarrage de service dans Unraid ne suffit pas.
 
-### 2. Installer le serveur dans Unraid
+### 2. Installer l'agent dans Unraid
 
 Dans **Plugins → Install Plugin**, fournir l'URL du descripteur `.plg` publié :
 
@@ -82,12 +86,12 @@ Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 - **HBA refresh interval** : `15 seconds` avec `mpt3ctl` ou `30 seconds` avec
   StorCLI.
 
-Le plugin transmet ces deux intervalles au serveur. La collecte disque vaut
+Le plugin transmet ces deux intervalles à l'agent. La collecte disque vaut
 `30s` par défaut dans les deux cas. Pour le HBA, le plugin choisit `15s` avec
 `mpt3ctl` et `30s` avec StorCLI ; lancé manuellement sans option, le binaire
 utilise le défaut générique de `30s`, quel que soit le backend.
 
-Le serveur lit directement `/dev/mpt3ctl` pour les contrôleurs gérés par
+L'agent lit directement `/dev/mpt3ctl` pour les contrôleurs gérés par
 `mpt3sas` : aucun utilitaire supplémentaire n'est nécessaire. Le backend
 StorCLI exige que la commande `storcli` soit installée, directement avec son
 paquet ou avec le plugin Unraid
@@ -153,19 +157,20 @@ Le fichier `/etc/default/unraid-vsock-hwmon` contient :
 ```sh
 UNRAID_VSOCK_CID=3
 UNRAID_VSOCK_PORT=990
-UNRAID_VSOCK_INTERVAL=1s
 UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 # UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
 ```
 
 - `UNRAID_VSOCK_CID` désigne la VM Unraid configurée dans Proxmox ;
 - `UNRAID_VSOCK_PORT` doit correspondre au port du plugin Unraid ;
-- `UNRAID_VSOCK_INTERVAL` définit la fréquence de lecture du cache par l'agent
-  Proxmox. Il ne détermine pas la fréquence SMART d'Unraid ;
-- `UNRAID_VSOCK_CACHE` conserve la structure des canaux entre deux démarrages ;
+- `UNRAID_VSOCK_CACHE` conserve les périphériques des sondes entre deux démarrages ;
 - `UNRAID_VSOCK_RESTART_UNITS` accepte une liste d'unités systemd séparées par
-  des virgules. Les unités actives sont redémarrées après la restauration du
-  cache ou un changement de topologie, afin qu'elles rescannent les hwmon.
+  des virgules. Les unités actives sont redémarrées après le premier snapshot
+  valide, puis après une reconfiguration hwmon, afin qu'elles rescannent les
+  hwmon. Les motifs systemd ne sont pas acceptés et le récepteur ne peut pas se
+  désigner lui-même. Si `systemctl` ne parvient pas à mettre la demande en file
+  d'attente, une nouvelle tentative est programmée 30 secondes après chaque
+  échec.
 
 Pour CoolerControl :
 
@@ -207,72 +212,100 @@ Résultats attendus :
 - le paquet est `install ok installed` ;
 - DKMS indique `virt-temp/X.Y.Z ... installed` pour le noyau actif ;
 - le service est `active (running)` ;
-- `sensors` affiche `unraid_storage` et, si activé, `unraid_hba`.
-
-Pour afficher directement l'inventaire reçu sans passer par le module :
-
-```sh
-unraid-vsock-sensors get --cid 3 --port 990 --json
-```
+- `sensors` affiche un périphérique lisible par sonde, par exemple
+  `unraid_disk1`, `unraid_hdd_maximum` ou `unraid_sas3008`.
 
 ## Sondes publiées
 
-`unraid_storage` contient :
+Le module crée un périphérique hwmon indépendant avec un unique `temp1` pour :
 
-- un canal par disque interne ;
+- chaque disque interne ;
 - `HDD maximum`, `SATA SSD maximum` ou `NVMe SSD maximum` lorsqu'au moins deux
   disques appartiennent au groupe correspondant.
 
-`unraid_hba` contient un canal par contrôleur lorsque la collecte HBA est
-activée.
+Chaque contrôleur possède également son propre périphérique lorsque la collecte
+HBA est activée. Le nom hwmon est dérivé du label pour rester lisible ; la partie
+entre parenthèses, telle que le périphérique bloc ou l'adresse PCI, en est
+retirée. Le label complet reste disponible dans `temp1_label`.
 
-Les disques USB sont exposés dans le JSON et restent accessibles avec
-`disk all`, leur nom ou leur périphérique, mais ne créent aucun canal hwmon et
-ne participent pas aux groupes. Les slots Unraid non assignés (`DISK_NP`) et la
-clé USB de démarrage `flash` sont entièrement exclus. Les SSD internes utilisant
-un autre transport que SATA ou NVMe possèdent un canal individuel, mais ne
-créent pas de canal maximum dédié.
+### Pourquoi un périphérique par sonde ?
+
+Dans un périphérique agrégé, les fichiers `temp1`, `temp2`, etc. décrivent des
+positions, pas l'identité des sondes. L'ajout d'un maximum de groupe ou le
+retrait d'un disque peut donc décaler les numéros suivants et faire pointer une
+configuration CoolerControl ou fan2go vers une autre température. Conserver les
+anciens numéros éviterait ce décalage, mais laisserait après un retrait planifié
+des sondes fantômes au failsafe de `100 °C`.
+
+Un périphérique par ID stable évite les deux problèmes : chaque sonde reste
+toujours son propre `temp1`, et son retrait supprime son périphérique sans
+réaffecter l'identité des autres. Le numéro dynamique `hwmonX` et le nom hwmon
+lisible ne sont pas utilisés comme identité ; celle-ci vient du parent platform,
+dont le nom encode sans collision l'ID stable.
+
+Cette organisation remplace les anciens périphériques agrégés `unraid_storage`
+et `unraid_hba`. Lors de la première mise à niveau vers cette version, il faut
+donc sélectionner une fois les nouvelles sources dans CoolerControl ou adapter
+les `platform` configurées dans fan2go.
+
+L'agent Unraid exclut les disques USB avant toute lecture SMART et tout envoi
+VSOCK. Les slots non assignés (`DISK_NP`) et la clé USB de démarrage `flash`
+sont également exclus. Les SSD internes utilisant un autre transport que SATA
+ou NVMe possèdent un périphérique individuel, mais ne créent pas de maximum
+dédié.
 
 Un disque signalé en veille par `spundown="1"` est conservé dans l'inventaire
 avec une température de `0 °C`, sans exécuter de commande SMART. Cette valeur
 signifie que la sonde est inactive et évite de déclencher le failsafe pendant
 un spindown normal.
 
-Pour chaque disque actif, le serveur appelle le helper Unraid
+Pour chaque disque actif, l'agent appelle le helper Unraid
 `/usr/local/sbin/smartctl_type` avec `--json -n standby,3 -A`. Unraid résout
 ainsi le périphérique et les éventuels paramètres particuliers du contrôleur.
-Le second paramètre de `-n` demande explicitement à `smartctl` de retourner
-le code `3` lorsqu'il interrompt la lecture pour un mode basse consommation.
-La documentation de `smartctl` recommande cette valeur pour distinguer la
-veille du code par défaut `2`, qui peut aussi signaler un échec d'ouverture ou
-d'identification du périphérique. Le code `3` accompagné du mode `STANDBY` ou
-`SLEEP` est donc traité comme une veille normale. Les NVMe sont interrogés sans
-l'option `-n standby`.
+D'après la [documentation officielle de `smartctl` pour
+`-n`](https://github.com/smartmontools/smartmontools/blob/main/src/smartctl.8.in#L896-L915),
+le code par défaut `2` peut aussi signaler un échec d'ouverture ou
+d'identification. Le code `3` n'est accepté comme veille que si le JSON indique
+`STANDBY` ou `SLEEP`. Les NVMe sont interrogés sans l'option `-n standby`.
 
-Une erreur SMART transitoire conserve la dernière température valide pendant
-l'intervalle de collecte augmenté de cinq secondes, ou publie la sentinelle
-`0 °C` si aucune mesure précédente n'existe. Si l'erreur persiste à
-l'expiration, le disque et le maximum de sa catégorie passent explicitement au
-failsafe de `100 °C`. Cet intervalle appartient au service, vaut `30s` par
-défaut et ne dépend plus du réglage Unraid **Tunable (poll_attributes)**.
+Après une erreur SMART, l'agent marque le disque indisponible et effectue jusqu'à
+deux nouvelles tentatives espacées de deux secondes, ou de l'intervalle de
+collecte configuré s'il est inférieur. Une erreur persistante ne crée donc pas
+de boucle de lectures rapprochées : après ces tentatives, l'agent reprend son
+intervalle normal, fixé à `30s` par défaut et indépendant du réglage Unraid
+**Tunable (poll_attributes)**.
+
+Le disque reste présent dans l'inventaire hwmon, mais les `commit` cessent
+d'actualiser sa valeur et celle du maximum de sa catégorie. `virt_temp` conserve
+alors leur dernière valeur avant de les faire passer à `100 °C` après son délai
+de dix secondes. Si un retry réussit assez vite, ce délai n'expire pas. Une
+nouvelle configuration crée néanmoins toute sonde déjà indisponible directement
+au failsafe afin de ne jamais présenter `0 °C` comme une mesure valide.
+
+Le récepteur ferme une connexion qui ne fournit aucun snapshot pendant environ
+trois secondes afin de permettre une reconnexion propre. Ce délai de transport
+ne déclenche pas lui-même le failsafe thermique : celui-ci reste le
+`stale_timeout` de 10 secondes appliqué indépendamment par `virt_temp`.
 
 ## Inventaire persistant et changement de topologie
 
-Après le premier relevé valide, l'agent enregistre la structure des canaux dans
+Après le premier relevé valide, l'agent enregistre la liste des sondes dans
 `UNRAID_VSOCK_CACHE`. Au démarrage suivant, il la restaure immédiatement avec
 des températures failsafe de `100 °C`, sans attendre la VM Unraid. Les logiciels
-comme CoolerControl peuvent ainsi découvrir les canaux pendant le boot de
+comme CoolerControl peuvent ainsi découvrir les périphériques pendant le boot de
 Proxmox, même si Unraid met plusieurs minutes à démarrer.
 
-Sans cache, le premier relevé non vide de chaque famille configure ses canaux.
-Un relevé vide est ignoré afin de ne pas figer un démarrage incomplet d'Unraid
-ou du backend HBA. Seul le mode HBA explicitement `disabled` autorise un inventaire
-HBA vide.
+Sans cache, le premier relevé sans erreur configure sa famille, y compris avec
+un inventaire vide. Un snapshot portant `error` ou `hba_error` n'est pas
+autoritaire : il ne modifie jamais la topologie précédente et la laisse
+atteindre le failsafe. Sans erreur, l'inventaire reçu est autoritaire ; une
+liste vide retire donc les périphériques de la famille. Le mode HBA `disabled`
+est représenté naturellement par `hbas: []` sans `hba_error`.
 
 L'identité d'une sonde repose ensuite uniquement sur son ID stable : ID Unraid
 pour un disque, puis adresse SAS, adresse PCI ou numéro de série pour un HBA. Les
 indices locaux tels que l'IOC mpt3ctl ou le contrôleur StorCLI `/c0` ne sont
-exposés ni dans le JSON, ni dans les sélecteurs, ni dans le cache hwmon.
+pas conservés dans le cache hwmon.
 `mpt3ctl` relit l'identité et la température dans chaque relevé, mais conserve
 par adresse PCI la dernière identité SAS valide afin qu'une erreur transitoire
 de la page Manufacturing 5 ne renomme pas la sonde. StorCLI conserve
@@ -283,42 +316,57 @@ cache existait déjà, StorCLI effectue ensuite une unique nouvelle tentative.
 Les deux backends produisent en priorité le même ID `sas:<adresse>` ; l'adresse
 PCI puis le numéro de série servent de replis lorsqu'elle est indisponible.
 Le label HBA est construit à partir du modèle et de l'adresse PCI, avec l'ID
-stable comme repli, puis conservé tant que cet ID reste présent.
+stable comme repli. Si ce label change sans que l'ID change, la famille est
+reconfigurée afin d'actualiser l'affichage et le cache.
 
 Pendant l'exécution :
 
-- une erreur globale de lecture ne modifie jamais le cache et laisse toute la
-  famille disque atteindre le failsafe ; après une éventuelle grâce de spin-up,
-  une température indisponible ou invalide place son disque et le maximum de sa
-  catégorie au failsafe ;
+- chaque ID stable possède son propre périphérique et reste donc `temp1` sans
+  dépendre de l'ordre des autres sondes. Une modification de l'ensemble des ID
+  ou d'un label recrée tous les périphériques de la famille ; leurs noms
+  platform et leurs identités restent stables, mais leurs numéros dynamiques
+  `hwmonX` peuvent changer. La composition d'un maximum HDD, SSD ou NVMe ne fait
+  que modifier sa valeur. Un ID retiré ne réaffecte jamais l'identité d'une
+  autre sonde ;
+- une erreur globale de lecture, y compris une section active de `disks.ini`
+  sans ID ou périphérique, ne modifie jamais le cache et laisse toute la famille
+  disque atteindre le failsafe. Une température indisponible ou invalide cesse
+  d'actualiser son disque et le maximum de sa catégorie ; jusqu'à deux retries
+  SMART peuvent les rétablir avant l'expiration du délai noyau ;
 - une erreur HBA invalide le relevé complet : l'inventaire précédent reste
   configuré sans être actualisé et atteint donc le failsafe. StorCLI tente
   auparavant une redécouverte et une nouvelle lecture lorsque celle fondée sur
   sa correspondance en cache échoue ;
 - un inventaire Unraid valide contenant des ID ajoutés ou retirés remplace
   automatiquement la famille hwmon concernée et met à jour le cache ;
-- un changement de `/dev/sdX`, de nom affiché ou d'index IOC ne modifie pas
-  l'identité si l'ID stable reste identique ;
+- un changement de `/dev/sdX`, de nom affiché, d'adresse PCI ou d'index IOC ne
+  modifie pas l'identité si l'ID stable reste identique. Lorsqu'il modifie le
+  label, la famille est reconfigurée pour maintenir l'affichage à jour ;
 - les consommateurs configurés dans `UNRAID_VSOCK_RESTART_UNITS` sont relancés
-  une première fois dès que la VM répond, même si la topologie restaurée depuis
-  le cache est inchangée, puis après chaque reconfiguration afin de découvrir
-  les nouveaux canaux.
+  une première fois dès que la VM répond, même si la configuration restaurée
+  depuis le cache est inchangée, puis après chaque reconfiguration afin de
+  découvrir les nouveaux périphériques.
 
 ## Failsafe et fraîcheur des mesures
 
-Chaque canal non actualisé pendant 10 secondes retourne `100 °C`. Cela couvre
-l'arrêt du serveur ou de l'agent, une perte VSOCK, une erreur de lecture et la
-disparition d'une sonde attendue.
+Chaque collecteur Unraid invalide son propre cache après son intervalle normal
+augmenté du délai maximal de collecte. Un collecteur bloqué finit donc par
+publier une erreur pour sa famille ; Proxmox cesse de l'actualiser sans
+interrompre l'autre famille.
+
+Chaque canal du module `virt_temp` non actualisé pendant 10 secondes retourne
+`100 °C`. Ce garde-fou couvre aussi bien une famille en erreur qu'une perte du
+flux VSOCK ou l'arrêt du récepteur Proxmox.
 
 La température des disques vient d'une collecte SMART directe, exécutée en
 arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.
-Les requêtes VSOCK intermédiaires réutilisent ce relevé et n'attendent jamais
-une commande disque. Leur cadence d'une seconde reste indépendante : elle
-alimente le heartbeat du module `virt-temp`, dont le failsafe se déclenche après
-10 secondes sans mise à jour. Pour une régulation thermique réactive, une
-valeur de 30 à 60 secondes est recommandée. Cinq minutes constitue une limite
+Le snapshot VSOCK réutilise ce relevé entre deux collectes et permet à Proxmox
+de continuer à alimenter le module `virt-temp`. Pour une régulation thermique
+réactive, une erreur déclenche jusqu'à deux nouvelles collectes espacées de deux
+secondes ; après leur échec, le cycle normal reprend. Une valeur de 30 à 60
+secondes est recommandée. Cinq minutes constitue une limite
 haute raisonnable ; au-delà, une température peut rester ancienne trop
-longtemps pour piloter efficacement les ventilateurs. Le serveur accepte une
+longtemps pour piloter efficacement les ventilateurs. L'agent accepte une
 valeur plus longue passée en ligne de commande, mais écrit alors un
 avertissement dans son journal.
 
@@ -326,40 +374,26 @@ La température HBA vient de IO Unit Page 7, lue avec des commandes MPI CONFIG
 strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
 Fahrenheit sont converties puis validées dans la plage `0..150 °C`. Chaque
 collecte native lit aussi les pages de fabrication pour associer la température
-à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC. Le
-serveur actualise ce relevé en arrière-plan ; les requêtes VSOCK n'attendent
-jamais une commande du contrôleur. Lorsque le backend StorCLI est sélectionné,
+à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC.
+
+Comme les fonctions CONFIG internes du pilote `mpt3sas`, chaque lecture native
+s'effectue en deux requêtes. La requête `PAGE_HEADER` indique la version MPI
+attendue de la page (`0x00` pour Manufacturing 0, `0x03` pour Manufacturing 5
+et `0x05` pour IO Unit 7). L'en-tête renvoyé par le firmware, notamment sa
+version et sa longueur, est ensuite repris intégralement dans la requête
+`PAGE_READ_CURRENT`. Le backend ne met en œuvre ni séquence alternative propre
+à un firmware ni repli contournant cette procédure du noyau.
+
+L'agent actualise ce relevé en arrière-plan sans bloquer la publication VSOCK.
+Lorsque le backend StorCLI est sélectionné,
 la température ROC fournie par sa sortie JSON est utilisée à la place.
 
-Une collecte HBA dispose de 15 secondes. Au-delà, le serveur signale une erreur
+Une collecte HBA dispose de 15 secondes. Au-delà, l'agent signale une erreur
 HBA même si l'ioctl reste bloqué : l'ancien relevé cesse d'être publié et les
-canaux hwmon atteignent leur failsafe après leur délai de 10 secondes sans
+périphériques hwmon atteignent leur failsafe après leur délai de 10 secondes sans
 actualisation. Un résultat arrivé après l'échéance est rejeté ; une nouvelle
 collecte réussie rétablit les mesures. Le cache reste valide pendant l'intervalle
 normal entre deux collectes.
-
-## Utilisation en ligne de commande
-
-Les sélecteurs de groupe retournent la température maximale :
-
-```sh
-unraid-vsock-sensors get --cid 3 --port 990 disk hdd
-unraid-vsock-sensors get --cid 3 --port 990 disk ssd
-unraid-vsock-sensors get --cid 3 --port 990 disk nvme
-unraid-vsock-sensors get --cid 3 --port 990 hba all
-```
-
-Un disque ou un HBA peut être interrogé explicitement :
-
-```sh
-unraid-vsock-sensors get --cid 3 --port 990 disk disk1
-unraid-vsock-sensors get --cid 3 --port 990 disk sdb
-unraid-vsock-sensors get --cid 3 --port 990 hba sas:500605b00abc1234
-```
-
-Ces commandes écrivent uniquement un nombre en degrés Celsius et conviennent à
-une source `cmd` de fan2go. L'option `--json` affiche le snapshot complet avec
-les erreurs éventuelles de chaque famille.
 
 ## Mise à jour et désinstallation Unraid
 
@@ -440,6 +474,17 @@ upgradepkg --install-new --reinstall \
 /etc/rc.d/rc.unraid-vsock-sensors start
 ```
 
+Ne pas exécuter `upgradepkg` seul : cette commande remplace le fichier binaire,
+mais ne redémarre pas le processus. Le service continuerait alors à exécuter
+l'ancien binaire, y compris son ancien protocole VSOCK, tandis que la commande
+`/usr/local/sbin/unraid-vsock-sensors version` afficherait déjà la nouvelle
+version. La version réellement exécutée peut être vérifiée après le redémarrage :
+
+```sh
+pid=$(cat /var/run/unraid-vsock-sensors.pid)
+/proc/$pid/exe version
+```
+
 Cette opération remplace le binaire, la page Web et les scripts du plugin sans
 effacer la configuration persistante située dans
 `/boot/config/plugins/unraid-vsock-sensors/`.
@@ -483,9 +528,9 @@ make hwmon-package VERSION=X.Y.Z DEBIAN_REVISION=2
 
 ## Sécurité du transport
 
-AF_VSOCK n'est pas un mécanisme d'authentification général. Le serveur accepte
-uniquement le CID hôte standard `2`, une commande fixe `GET`, une requête limitée
-à 1 Kio et ne reçoit aucun chemin fourni par le client.
+AF_VSOCK n'est pas un mécanisme d'authentification général. L'agent Unraid se
+connecte uniquement au CID hôte standard `2`. Le récepteur Proxmox n'accepte
+que le CID de VM configuré et limite chaque snapshot encadré à 1 Mio.
 
 ## Références techniques et remerciements
 
@@ -504,7 +549,7 @@ virtuelle alimentée par les températures d'une VM a été inspirée par le pro
 GPL-2.0
 [`wxxsfxyzm/hdd-temp-monitor`](https://github.com/wxxsfxyzm/hdd-temp-monitor).
 Le présent projet étend cette idée avec AF_VSOCK, des inventaires dynamiques et
-persistants, plusieurs familles de sondes et une gestion explicite du failsafe.
+persistants, plusieurs familles de sondes et un failsafe indépendant du flux.
 
 ## Licence
 

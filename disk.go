@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -14,29 +15,23 @@ import (
 )
 
 const (
-	diskFailureMargin              = 5 * time.Second
 	defaultDiskInterval            = 30 * time.Second
+	diskRetryDelay                 = 2 * time.Second
+	maxDiskRetries                 = 2
 	maximumRecommendedDiskInterval = 5 * time.Minute
 	diskCollectionTimeout          = 15 * time.Second
 	maxConcurrentSMARTReads        = 4
 )
 
 type diskCollector struct {
-	path     string
-	interval time.Duration
-	grace    time.Duration
+	path       string
+	interval   time.Duration
+	retryDelay time.Duration
 
-	mu         sync.RWMutex
-	readings   []sensors.Disk
-	err        error
-	validUntil time.Time
-	failAfter  map[string]time.Time
-	state      diskStateTracker
-}
-
-type diskStateTracker struct {
-	lastValid   map[string]float64
-	failedSince map[string]time.Time
+	mu        sync.RWMutex
+	readings  []sensors.Disk
+	err       error
+	updatedAt time.Time
 }
 
 // unraidDisk is the inventory and power state read from Unraid's disks.ini.
@@ -53,84 +48,80 @@ type diskProbe struct {
 	err         error
 }
 
-func (d unraidDisk) sensor(temp float64, unavailable bool) sensors.Disk {
-	return sensors.Disk{
-		ID: d.id, Name: d.name, Device: d.device, Transport: d.transport,
-		Rotational: d.rotational, Temp: temp, Unavailable: unavailable,
-	}
-}
-
 func newDiskCollector(path string, interval time.Duration) *diskCollector {
 	return &diskCollector{
-		path: path, interval: interval, grace: interval + diskFailureMargin,
+		path: path, interval: interval, retryDelay: min(interval, diskRetryDelay),
 		err: errors.New("disk temperatures have not been collected yet"),
-		state: diskStateTracker{
-			lastValid: make(map[string]float64), failedSince: make(map[string]time.Time),
-		},
 	}
 }
 
 func (c *diskCollector) run(ctx context.Context) {
-	c.refresh(ctx)
-	timer := time.NewTimer(c.interval)
-	defer timer.Stop()
+	retries := 0
 	for {
+		failed := c.refresh(ctx)
+		// Give a transient failure two chances to recover before virt_temp's
+		// stale timeout, but never turn a persistent failure into a tight loop.
+		var delay time.Duration
+		delay, retries = nextDiskCollection(failed, retries, c.interval, c.retryDelay)
+
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
 		case <-timer.C:
-			c.refresh(ctx)
-			timer.Reset(c.interval)
 		}
 	}
 }
 
-func (c *diskCollector) refresh(parent context.Context) {
+func nextDiskCollection(failed bool, retries int, interval, retryDelay time.Duration) (time.Duration, int) {
+	if failed && retries < maxDiskRetries {
+		return retryDelay, retries + 1
+	}
+	return interval, 0
+}
+
+func (c *diskCollector) refresh(parent context.Context) bool {
 	ctx, cancel := context.WithTimeout(parent, diskCollectionTimeout)
 	defer cancel()
 
 	rawDisks, err := readDisks(c.path)
-	var readings []sensors.Disk
+	var probes []diskProbe
+	failed := err != nil
 	if err == nil {
-		probes := collectDiskProbes(ctx, rawDisks)
-		// A collection timeout belongs to each probe which did not finish.
-		// Successful probes remain usable and failed probes follow their own
-		// grace period instead of invalidating the complete disk snapshot.
-		readings = c.state.apply(rawDisks, probes, time.Now(), c.grace)
+		probes = collectDiskProbes(ctx, rawDisks)
+		for _, probe := range probes {
+			failed = failed || probe.err != nil
+		}
 	}
 
+	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.err = err
 	if err != nil {
 		c.readings = nil
-		c.validUntil = time.Time{}
-		c.failAfter = nil
-		return
+		c.updatedAt = time.Time{}
+		return failed
 	}
-	c.readings = readings
-	c.validUntil = time.Now().Add(c.interval + diskCollectionTimeout)
-	c.failAfter = c.state.failureDeadlines(c.grace)
+	// A collection timeout belongs to each probe which did not finish.
+	// Successful probes remain usable while failed probes are omitted from hwmon
+	// commits and retried twice before the normal collection interval resumes.
+	c.readings = makeDiskReadings(rawDisks, probes)
+	c.updatedAt = now
+	return failed
 }
 
-func (c *diskCollector) read() ([]sensors.Disk, error) {
+func (c *diskCollector) snapshot() ([]sensors.Disk, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.err != nil {
 		return nil, c.err
 	}
-	if time.Now().After(c.validUntil) {
+	if !time.Now().Before(c.updatedAt.Add(c.interval + diskCollectionTimeout)) {
 		return nil, errors.New("disk temperature snapshot expired")
 	}
-	readings := slices.Clone(c.readings)
-	now := time.Now()
-	for i := range readings {
-		if deadline, ok := c.failAfter[readings[i].ID]; ok && !now.Before(deadline) {
-			readings[i].Temp = 0
-			readings[i].Unavailable = true
-		}
-	}
-	return readings, nil
+	return slices.Clone(c.readings), nil
 }
 
 func collectDiskProbes(ctx context.Context, disks []unraidDisk) []diskProbe {
@@ -159,56 +150,21 @@ func collectDiskProbes(ctx context.Context, disks []unraidDisk) []diskProbe {
 	return probes
 }
 
-func (s *diskStateTracker) apply(disks []unraidDisk, probes []diskProbe, now time.Time, grace time.Duration) []sensors.Disk {
-	present := make(map[string]struct{}, len(disks))
+func makeDiskReadings(disks []unraidDisk, probes []diskProbe) []sensors.Disk {
 	readings := make([]sensors.Disk, 0, len(disks))
 	for i, disk := range disks {
-		present[disk.id] = struct{}{}
 		probe := probes[i]
-		temperature, unavailable := probe.temperature, false
-		switch {
-		case probe.standby:
+		temperature := probe.temperature
+		if probe.standby || probe.err != nil {
 			temperature = 0
-			delete(s.failedSince, disk.id)
-		case probe.err == nil:
-			s.lastValid[disk.id] = probe.temperature
-			delete(s.failedSince, disk.id)
-		default:
-			started, ok := s.failedSince[disk.id]
-			if !ok {
-				started = now
-				s.failedSince[disk.id] = started
-			}
-			if now.Sub(started) < grace {
-				// Avoid the hwmon failsafe during a normal spin-up or one missed
-				// SMART read. A persistent failure expires this grace explicitly.
-				temperature = s.lastValid[disk.id]
-			} else {
-				temperature = 0
-				unavailable = true
-			}
 		}
-		readings = append(readings, disk.sensor(temperature, unavailable))
-	}
-	for id := range s.lastValid {
-		if _, ok := present[id]; !ok {
-			delete(s.lastValid, id)
-		}
-	}
-	for id := range s.failedSince {
-		if _, ok := present[id]; !ok {
-			delete(s.failedSince, id)
-		}
+		readings = append(readings, sensors.Disk{
+			ID: disk.id, Name: disk.name, Device: disk.device,
+			Transport: disk.transport, Rotational: disk.rotational,
+			Temp: temperature, Unavailable: probe.err != nil,
+		})
 	}
 	return readings
-}
-
-func (s *diskStateTracker) failureDeadlines(grace time.Duration) map[string]time.Time {
-	deadlines := make(map[string]time.Time, len(s.failedSince))
-	for id, started := range s.failedSince {
-		deadlines[id] = started.Add(grace)
-	}
-	return deadlines
 }
 
 // readDisks reads inventory and power state from Unraid. smartctl_type uses the
@@ -220,54 +176,42 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 	}
 
 	var disks []unraidDisk
+	sections := 0
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
 		}
+		sections++
 		name := strings.Trim(section.Name(), "\"")
+		transport := strings.ToLower(strings.TrimSpace(section.Key("transport").String()))
 		id := strings.TrimSpace(section.Key("id").String())
 		device := strings.TrimSpace(section.Key("device").String())
 		status := strings.TrimSpace(section.Key("status").String())
 		// disks.ini contains sections for every possible array slot, including
-		// unassigned DISK_NP entries, plus the Unraid boot flash device.
-		if id == "" || device == "" || strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") {
+		// unassigned DISK_NP entries, the Unraid boot flash device and external
+		// USB disks. USB temperatures have no consumer in the push protocol.
+		if strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") ||
+			transport == "usb" {
 			continue
+		}
+		if id == "" {
+			return nil, fmt.Errorf("active disk %q has no stable ID", name)
+		}
+		if device == "" {
+			return nil, fmt.Errorf("active disk %q has no device", name)
 		}
 
 		disks = append(disks, unraidDisk{
 			id: id, name: name, device: device,
-			transport:  strings.ToLower(section.Key("transport").String()),
+			transport:  transport,
 			rotational: strings.TrimSpace(section.Key("rotational").String()) == "1",
 			spundown:   strings.TrimSpace(section.Key("spundown").String()) == "1",
 		})
 	}
+	if sections == 0 {
+		return nil, errors.New("disk inventory contains no sections")
+	}
 
 	sort.Slice(disks, func(i, j int) bool { return disks[i].name < disks[j].name })
 	return disks, nil
-}
-
-func selectDisks(disks []sensors.Disk, selector string) []sensors.Disk {
-	selector = strings.ToLower(selector)
-	var matches []sensors.Disk
-
-	for _, disk := range disks {
-		var match bool
-		switch selector {
-		case "all":
-			match = true
-		case "nvme":
-			match = !disk.IsExternal() && disk.Kind() == sensors.DiskKindNVMe
-		case "hdd":
-			match = !disk.IsExternal() && disk.Kind() == sensors.DiskKindHDD
-		case "ssd":
-			match = !disk.IsExternal() && disk.Kind() == sensors.DiskKindSATASSD
-		default:
-			match = strings.EqualFold(disk.Name, selector) || strings.EqualFold(disk.Device, selector)
-		}
-		if match {
-			matches = append(matches, disk)
-		}
-	}
-
-	return matches
 }

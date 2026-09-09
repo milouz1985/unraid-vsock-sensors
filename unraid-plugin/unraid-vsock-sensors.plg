@@ -15,13 +15,13 @@
         pluginURL="&pluginURL;" launch="Settings/UnraidVsockSensors"
         min="6.12.0" icon="icon.png">
 <DESCRIPTION>
-Exposes Unraid disk and HBA temperatures over AF_VSOCK to Proxmox guests and
+Pushes Unraid disk and HBA temperatures over AF_VSOCK to the Proxmox host and
 the CoolerControl plugin without querying sleeping disks.
 </DESCRIPTION>
 <CHANGES>
 ### &version;
 
-- Package the VSOCK sensor server as an Unraid plugin.
+- Package the VSOCK sensor publisher as an Unraid plugin.
 - Add service status, version, start, stop, restart, port and HBA cache settings.
 </CHANGES>
 

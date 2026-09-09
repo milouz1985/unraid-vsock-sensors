@@ -52,7 +52,7 @@ all: check build unraid-package hwmon-package ## Vérifie, compile et crée tous
 
 .PHONY: build
 
-build: ## Compile un binaire Linux statique
+build: | $(BIN_DIR) ## Compile un binaire Linux statique
 	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) .
 
 .PHONY: unraid-package hwmon-package
@@ -62,8 +62,6 @@ unraid-package: ## Crée le plugin serveur installable dans Unraid
 
 hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
 	GO="$(GO)" VERSION="$(VERSION)" DEBIAN_REVISION="$(DEBIAN_REVISION)" ./virt-temp/package.sh
-
-build: | $(BIN_DIR)
 
 $(BIN_DIR):
 	mkdir -p $@

@@ -1,6 +1,5 @@
 UNRAID_VSOCK_CID=3
 UNRAID_VSOCK_PORT=990
-UNRAID_VSOCK_INTERVAL=1s
 UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
-# Optional comma-separated consumers to rescan after a topology change.
+# Optional comma-separated consumers to rescan after hwmon reconfiguration.
 # UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
