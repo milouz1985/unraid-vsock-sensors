@@ -219,12 +219,13 @@ session SSH persistante dans `/run/lock` sur Proxmox. Le verrou exclusif du
 clone se trouve au même endroit ; aucun verrou local ne prétend protéger les
 ressources de l'hyperviseur.
 
-Le runner crée ensuite un clone complet, attend QEMU Guest Agent, récupère son
-IPv4 avec `network-get-interfaces`, puis attend SSH et Cloud-Init. Les fichiers
-listés par Git sont envoyés directement du poste au clone par `rsync`. Le
-transfert n'utilise plus QGA, base64 ou une archive intermédiaire et ne copie
-jamais le dépôt sur `PVE_HOST`. Il n'inclut ni `.git`, ni les fichiers locaux
-ignorés. Les fichiers suivis mais supprimés localement sont aussi omis.
+Le runner crée ensuite un clone lié du template, attend QEMU Guest Agent,
+récupère son IPv4 avec `network-get-interfaces`, puis attend SSH et Cloud-Init.
+Les fichiers listés par Git sont envoyés directement du poste au clone par
+`rsync`. Le transfert n'utilise plus QGA, base64 ou une archive intermédiaire
+et ne copie jamais le dépôt sur `PVE_HOST`. Il n'inclut ni `.git`, ni les
+fichiers locaux ignorés. Les fichiers suivis mais supprimés localement sont
+aussi omis.
 Les fichiers ignorés nécessaires aux tests doivent être explicitement suivis.
 Un manifeste SHA256 est vérifié dans la VM après le transfert.
 
