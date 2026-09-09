@@ -145,7 +145,7 @@ SOURCE_SHA256="$(sha256sum "$WORK_DIR/source.sha256" | awk '{print $1}')"
 } > "$WORK_DIR/uvss-test-metadata"
 
 echo "Cloning Proxmox template $TEMPLATE_VMID -> $VMID"
-pve qm clone "$TEMPLATE_VMID" "$VMID" --name "uvss-test-$VMID" --full 1
+pve qm clone "$TEMPLATE_VMID" "$VMID" --name "uvss-test-$VMID" --full 0
 CREATED=1
 pve qm set "$VMID" --tags uvss-test-run --ciupgrade 0
 echo "Adding virtual HDDs"
