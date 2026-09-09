@@ -432,11 +432,39 @@ Le dossier [`tests/vm`](tests/vm/README.md) contient le constructeur d'un
 template Debian pour Proxmox et le lanceur des tests dans un clone jetable :
 
 ```sh
-# Une fois le template préparé sur Proxmox, depuis le poste de développement :
+# Préparation initiale depuis le poste de développement :
+cp tests/vm/template.env.example tests/vm/template.env
+# Éditer tests/vm/template.env avant de continuer.
+ssh root@pve01.lan.home \
+    'install -d -m 700 /root/uvss-template-builder'
+rsync -av \
+    tests/vm/build-template.sh \
+    tests/vm/common.sh \
+    tests/vm/go-version \
+    tests/vm/template.env \
+    ~/.ssh/id_ed25519.pub \
+    root@pve01.lan.home:/root/uvss-template-builder/
+ssh -t root@pve01.lan.home \
+    'cd /root/uvss-template-builder && bash build-template.sh'
+
+# Tests usuels :
 make test-vm         # parcours complet dans une VM distante jetable
 make test-vm-core    # module, hwmon et SMART QEMU uniquement
 make test-vm-package # cycle du paquet Debian et de DKMS uniquement
 ```
+
+La construction requiert `libguestfs-tools` sur Proxmox. Pour remplacer un
+template existant après avoir renvoyé les fichiers du builder :
+
+```sh
+ssh -t root@pve01.lan.home \
+    'cd /root/uvss-template-builder && bash build-template.sh --replace'
+```
+
+Seuls les quatre fichiers du builder, sa configuration locale ignorée par Git
+et la clé publique sont copiés sur Proxmox. La procédure complète, notamment
+la vérification préalable de l'installation de `libguestfs-tools`, est décrite
+dans [`tests/vm/README.md`](tests/vm/README.md).
 
 Le test d'intégration utilise `/dev/virt-temp` et sysfs pour vérifier les
 températures, le failsafe et la récupération après rechargement du module.

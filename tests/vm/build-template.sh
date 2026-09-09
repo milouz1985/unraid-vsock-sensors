@@ -10,7 +10,7 @@ fi
 
 VMID="${VMID:-9000}"
 NAME="${NAME:-uvss-debian13-test-template}"
-STORAGE="${STORAGE:-local-lvm}"
+STORAGE="${STORAGE:-zfs-pve}"
 BRIDGE="${BRIDGE:-vmbr0}"
 
 DEBIAN_VERSION="${DEBIAN_VERSION:-13}"

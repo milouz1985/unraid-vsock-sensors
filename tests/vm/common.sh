@@ -18,10 +18,17 @@ resolve_pve_kernel() {
 verify_guest_template() {
     guest_exec 30 "
         actual=\$(uname -r)
+        test -r /etc/uvss-test-image-version || {
+            echo 'Template image version marker missing; rebuild the configured template' >&2
+            exit 1
+        }
         image_version=\$(cat /etc/uvss-test-image-version)
         echo \"Guest kernel: \$actual; expected: $PVE_KERNEL_RELEASE; image version: \$image_version\"
         test -f /etc/uvss-test-image
-        test \"\$image_version\" = '$UVSS_TEST_IMAGE_VERSION'
+        test \"\$image_version\" = '$UVSS_TEST_IMAGE_VERSION' || {
+            echo 'Template image version mismatch; expected $UVSS_TEST_IMAGE_VERSION' >&2
+            exit 1
+        }
         test \"\$actual\" = '$PVE_KERNEL_RELEASE'
         test \"\$(cat /etc/uvss-test-kernel)\" = '$PVE_KERNEL_RELEASE'
         test -r /lib/modules/\$actual/build/Makefile
@@ -94,7 +101,10 @@ recoverable = status.get("recoverable_errors", {})
 if set(recoverable) - {"DEPRECATED"}:
     sys.exit("Cloud-Init reported an unexpected recoverable error category")
 messages = recoverable.get("DEPRECATED", [])
-known = "'user' of type string is deprecated"
+known = (
+    "'user' of type string is deprecated in 22.2 and scheduled to be removed "
+    "in 27.2. Use 'users' list instead."
+)
 if any(message != known for message in messages) or (result.returncode == 2 and not messages):
     sys.exit("Cloud-Init reported unexpected recoverable errors; inspect the output above")
 if messages:

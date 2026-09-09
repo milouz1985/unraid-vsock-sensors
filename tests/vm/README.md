@@ -13,21 +13,56 @@ Le runner n'exige aucune copie du dépôt sur le nœud Proxmox : seules les
 commandes `qm` et `pvesm` y sont exécutées par SSH. Les scripts du dépôt
 utilisent des fins de ligne LF, imposées par `.gitattributes`.
 
-## Préparation sur Proxmox
+## Création du template Proxmox
 
-Pour la préparation initiale uniquement, exécuter le builder sur le nœud
-Proxmox en root. Le nœud doit disposer d'un stockage acceptant les disques VM,
-d'un bridge et d'un accès aux téléchargements Debian et Go. Le template
-et les clones ont besoin du réseau pour Cloud-Init et les modules Go.
-Le lanceur utilise QEMU Guest Agent pour détecter l'état et l'adresse du clone,
-puis SSH pour la validation, le transfert et les tests.
+Le builder s'exécute en root sur Proxmox, mais le dépôt complet n'a pas besoin
+d'y être cloné. Depuis le poste de développement, copier uniquement les
+scripts de construction, leur configuration et la clé **publique** dans un
+répertoire temporaire dédié :
+
+```sh
+cp tests/vm/template.env.example tests/vm/template.env
+# Éditer template.env avant la copie : stockage, bridge, réseau et VMID.
+
+ssh root@pve01.lan.home \
+    'install -d -m 700 /root/uvss-template-builder'
+
+rsync -av \
+    tests/vm/build-template.sh \
+    tests/vm/common.sh \
+    tests/vm/go-version \
+    tests/vm/template.env \
+    ~/.ssh/id_ed25519.pub \
+    root@pve01.lan.home:/root/uvss-template-builder/
+```
+
+La configuration copiée doit notamment contenir :
+
+```sh
+VMID=9000
+STORAGE=zfs-pve
+BRIDGE=vmbr0
+CI_USER=uvss-test
+SSH_PUBLIC_KEY_FILE="${SCRIPT_DIR}/id_ed25519.pub"
+IPCONFIG0="ip=dhcp,ip6=auto"
+NAMESERVER="192.168.50.1"
+SEARCHDOMAIN="lan.home"
+```
+
+La clé privée `~/.ssh/id_ed25519` reste exclusivement sur le poste de
+développement. Seul son fichier public `.pub` est envoyé au builder.
+
+Le nœud doit disposer d'un stockage acceptant les disques VM, d'un bridge et
+d'un accès aux téléchargements Debian, Proxmox et Go. Le template et les
+clones ont besoin du réseau pour Cloud-Init et les modules Go.
 
 L'hôte fournit la version cible via `uname -r` et sa clé publique de dépôt
 `/usr/share/keyrings/proxmox-archive-keyring.gpg`. Il n'a besoin ni des headers
 ni des outils de compilation du module. Le noyau et les headers sont installés
 uniquement dans l'image de la VM, via le dépôt Proxmox signé.
 
-Vérifier d'abord la transaction proposée pour les outils libguestfs :
+Sur Proxmox, vérifier d'abord la transaction proposée pour les outils
+libguestfs :
 
 ```sh
 apt update
@@ -35,26 +70,27 @@ apt -s install --no-install-recommends libguestfs-tools
 ```
 
 Si elle propose de supprimer `proxmox-ve` ou des composants Proxmox,
-corriger les dépôts avant de continuer. Sinon :
+corriger les dépôts avant de continuer. Sinon, installer le paquet puis lancer
+la première construction :
 
 ```sh
 apt install --no-install-recommends libguestfs-tools
-make vm-template
+cd /root/uvss-template-builder
+bash build-template.sh
+```
+
+Ces commandes peuvent aussi être lancées depuis le poste :
+
+```sh
+ssh -t root@pve01.lan.home \
+    'apt install --no-install-recommends libguestfs-tools'
+ssh -t root@pve01.lan.home \
+    'cd /root/uvss-template-builder && bash build-template.sh'
 ```
 
 Le builder utilise ses variables `VMID`, `STORAGE`, `BRIDGE` et
-`SSH_PUBLIC_KEY_FILE`. Fournir uniquement une clé **publique** à ce dernier
-emplacement ; elle doit correspondre à la clé privée utilisée ensuite par le
-runner.
-
-Sur le poste de développement, créer la configuration locale :
-
-```sh
-cp tests/vm/template.env.example tests/vm/template.env
-```
-
-`template.env` est un fichier shell local de confiance, ignoré par Git. Sa
-section runner contient notamment :
+`SSH_PUBLIC_KEY_FILE`. `template.env` est un fichier shell local de confiance,
+ignoré par Git. Sa section runner contient notamment :
 
 ```sh
 PVE_HOST=pve01.lan.home
@@ -93,8 +129,9 @@ La version de Go du template possède une seule source de vérité :
 `tests/vm/go-version`.
 
 `PVE_KERNEL_RELEASE` vide (ou absent) sélectionne le noyau courant de l'hôte,
-localement pendant le build et par SSH pendant chaque test. Pour cibler une autre version,
-renseigner la valeur exacte d'un `uname -r` Proxmox dans ce fichier.
+localement pendant le build et par SSH pendant chaque test. Pour cibler une
+autre version, renseigner la valeur exacte d'un `uname -r` Proxmox dans ce
+fichier.
 `PVE_REPO_COMPONENT` vaut `pve-no-subscription` par défaut ; `pve-test` est
 possible si le noyau cible vient de ce dépôt. `PVE_KEYRING_FILE` permet
 d'indiquer le chemin de la clé publique du dépôt sur l'hôte.
@@ -122,7 +159,8 @@ scripts invités partagent la constante de version dans `common.sh` ; une
 évolution incompatible du template impose ainsi sa reconstruction.
 Le builder et le lanceur acceptent le code `2` de Cloud-Init uniquement si
 son état JSON est `done`, sans erreur fatale, et si tous les avertissements
-correspondent à la dépréciation connue `'user' of type string is deprecated`.
+correspondent exactement à la dépréciation connue de la forme chaîne de
+`user`, annoncée depuis Cloud-Init 22.2 et prévue pour suppression en 27.2.
 Seule la catégorie `DEPRECATED` et ce message sont tolérés. Ils restent
 affichés. Toute autre catégorie, tout autre message, erreur ou timeout bloque
 le lancement. Un code `2` provenant d'une autre commande reste un échec.
@@ -132,14 +170,19 @@ L'image Debian utilise `latest` et APT utilise les dépôts courants : les
 reconstructions ne sont pas identiques bit à bit. `IMAGE_BASE_URL` permet
 de sélectionner une image datée ; cela ne fige pas les paquets APT.
 
-Pour reconstruire un template existant :
+Pour reconstruire un template existant, renvoyer d'abord les fichiers du
+builder avec la commande `rsync` précédente, puis exécuter :
 
 ```sh
-bash tests/vm/build-template.sh --replace
+ssh -t root@pve01.lan.home \
+    'cd /root/uvss-template-builder && bash build-template.sh --replace'
 ```
 
 Cette option détruit le VMID configuré. Elle n'accepte qu'une VM portant
-le tag `uvss-test-template`. Le lancement normal refuse un VMID occupé.
+le tag `uvss-test-template`. Le lancement normal refuse un VMID occupé. Le
+builder démarre une fois la VM, vérifie le noyau, les headers, Cloud-Init et
+`/etc/uvss-test-image-version`, nettoie son identité, puis la convertit en
+template. Une sortie `Template 9000 is ready` confirme la réussite.
 
 ## Exécution
 
