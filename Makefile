@@ -45,7 +45,7 @@ help: ## Affiche les commandes disponibles
 		$(MAKEFILE_LIST)
 
 
-.PHONY: fmt tidy vet test check-scripts check all
+.PHONY: fmt tidy vet test test-race check-scripts check all
 
 fmt: ## Formate tous les fichiers Go
 	$(GO) fmt ./...
@@ -58,6 +58,9 @@ vet: ## Recherche les erreurs Go courantes
 
 test: ## Exécute tous les tests Go
 	$(GO) test ./...
+
+test-race: ## Exécute tous les tests Go avec le détecteur de courses
+	$(GO) test -race ./...
 
 
 .PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package lint-shell
@@ -93,7 +96,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 
 check: vet test check-scripts ## Vérifie le projet sans créer d'artefacts
 
-all: check build unraid-package hwmon-package ## Vérifie, compile et crée tous les paquets
+all: check test-race build unraid-package hwmon-package ## Vérifie, compile et crée tous les paquets
 
 
 .PHONY: build

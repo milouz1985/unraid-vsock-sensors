@@ -29,8 +29,6 @@ cat /var/tmp/uvss-test-metadata
 uname -a
 go version
 if [[ "$suite" == core || "$suite" == all ]]; then
-    make vet check-scripts
-    go test -race ./...
     make -C virt-temp/module
     go test -tags=integration -count=1 -timeout=120s -v -run '^TestVM' .
 fi

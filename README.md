@@ -415,10 +415,11 @@ Go 1.27.0 ou plus récent est nécessaire sur la machine de développement.
 
 ```sh
 make check          # vérifie le Go, les scripts, la page PHP et le script rc
+make test-race      # exécute les tests Go avec le détecteur de courses
 make build          # crée bin/unraid-vsock-sensors
 make unraid-package # crée le .txz et le .plg Unraid
 make hwmon-package  # crée le .deb Proxmox
-make all            # exécute tous les contrôles et construit tous les artefacts
+make all            # exécute les contrôles locaux et construit tous les artefacts
 ```
 
 Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
@@ -464,7 +465,8 @@ Le test d'intégration utilise `/dev/virt-temp` et sysfs pour vérifier les
 températures, le failsafe et la récupération après rechargement du module.
 Il remplace la simulation de l'erreur `ESTALE` et permet de retirer le writer
 injecté uniquement pour les tests. Les tests unitaires restent accessibles
-avec `make check`. La VM est supprimée après succès et conservée après échec.
+avec `make check` et `make test-race`. La VM est supprimée après succès et
+conservée après échec.
 
 Le template démarre le noyau Proxmox exact demandé, avec ses headers. Par
 défaut, la cible est le noyau courant de l'hôte ; `PVE_KERNEL_RELEASE` permet

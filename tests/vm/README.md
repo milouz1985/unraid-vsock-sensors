@@ -244,10 +244,9 @@ précédente. Un ancien template Debian est refusé : il doit être reconstruit.
 
 Dans le parcours principal, `guest-tests.sh` lance :
 
-1. `go vet`, les contrôles de scripts et `go test -race ./...` ;
-2. la compilation de `virt-temp.ko` avec les headers du noyau actif ;
-3. `go test -tags=integration -count=1 -run '^TestVM' .` ;
-4. dans le parcours paquet, `package-tests.sh` construit deux versions du `.deb`, installation,
+1. la compilation de `virt-temp.ko` avec les headers du noyau actif ;
+2. `go test -tags=integration -count=1 -run '^TestVM' .` ;
+3. dans le parcours paquet, `package-tests.sh` construit deux versions du `.deb`, installation,
    mise à jour, remove, réinstallation et purge, avec le vrai DKMS et systemd.
 
 Le test charge le vrai module et vérifie la configuration disque/HBA, les
@@ -305,7 +304,9 @@ respectifs. Un disque QEMU ne garantit pas les fonctions SMART d'un disque
 physique. Aucun module UVSS n'est compilé, installé ou chargé sur l'hôte.
 
 Les tests unitaires du protocole, de la logique métier et des erreurs
-matérielles restent utiles et continuent de tourner avec `make check`.
+matérielles restent utiles et continuent de tourner localement avec `make check`.
+Le détecteur de courses s'exécute séparément avec `make test-race` ou `make all` ; ces
+contrôles ne sont pas rejoués dans la VM.
 Chaque journal indique le commit Git, l'état du working tree, le SHA256 de
 son manifeste, le noyau PVE, la version du template, la version de Go et le
 parcours exécuté. `make lint-shell` lance ShellCheck sur tous les scripts Bash
