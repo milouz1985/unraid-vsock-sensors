@@ -395,13 +395,9 @@ func TestPublisherDistinguishesMissingAndEmptyDiskInventory(t *testing.T) {
 	}
 }
 
-func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
+func TestPublisherSavesHWMonInventoryCache(t *testing.T) {
 	directory := t.TempDir()
-	device := filepath.Join(directory, "virt-temp")
 	cache := filepath.Join(directory, "inventory.json")
-	if err := os.WriteFile(device, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
 	publisher := &hwmonPublisher{
 		cachePath: cache,
 		disks: hwmonInventory{initialized: true, sensors: []hwmonSensor{
@@ -416,23 +412,42 @@ func TestPublisherRestoresCachedInventoryAtFailsafe(t *testing.T) {
 	} else if mode := info.Mode().Perm(); mode != 0600 {
 		t.Fatalf("cache mode = %04o, want 0600", mode)
 	}
+	data, err := os.ReadFile(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n" +
+		"  \"version\": 1,\n" +
+		"  \"disks\": {\n" +
+		"    \"readings\": [\n" +
+		"      {\n" +
+		"        \"id\": \"disk:serial\",\n" +
+		"        \"label\": \"disk1 (sda)\"\n" +
+		"      }\n" +
+		"    ]\n" +
+		"  }\n" +
+		"}\n"
+	if got := string(data); got != want {
+		t.Fatalf("cache = %q, want %q", got, want)
+	}
+}
+
+func TestLoadHWMonCacheSupportsRetiredFieldsAtFailsafe(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "inventory.json")
 	legacy := `{"version":1,"disks":{"readings":[{"id":"disk:serial","label":"disk1 (sda)","members":["disk:serial"]}]}}`
 	if err := os.WriteFile(cache, []byte(legacy), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Truncate(device, 0); err != nil {
-		t.Fatal(err)
-	}
-	restored := &hwmonPublisher{cachePath: cache}
-	if err := restored.restore(device); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(device)
+	cached, err := loadHWMonCache(cache)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "sample\tdisk:serial\t100000\tdisk1 (sda)\nconfigure\tdisk\n"; got != want {
-		t.Fatalf("restored inventory = %q, want failsafe inventory %q", got, want)
+	if cached == nil || cached.Disks == nil {
+		t.Fatalf("loaded cache = %#v, want disk inventory", cached)
+	}
+	want := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sda)", hwmonFailsafeTemp)}
+	if got := samplesFromCache(cached.Disks.Sensors); !reflect.DeepEqual(got, want) {
+		t.Fatalf("cached samples = %#v, want failsafe samples %#v", got, want)
 	}
 }
 

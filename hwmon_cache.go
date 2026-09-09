@@ -34,25 +34,33 @@ type cachedHWMonSensor struct {
 	Label string `json:"label"`
 }
 
-// restore loads the last known topology and recreates its virtual hwmon
-// devices at the failsafe temperature. Families are applied in order, so a
-// family restored before a later validation failure remains usable.
-func (publisher *hwmonPublisher) restore(device string) error {
-	data, err := os.ReadFile(publisher.cachePath)
+func loadHWMonCache(path string) (*cachedHWMonInventory, error) {
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var cached cachedHWMonInventory
 	// Ignore retired optional metadata so caches written by an older release
 	// remain usable when their cache version is still supported.
 	if err := json.Unmarshal(data, &cached); err != nil {
-		return fmt.Errorf("decode %s: %w", publisher.cachePath, err)
+		return nil, fmt.Errorf("decode %s: %w", path, err)
 	}
 	if cached.Version != 1 {
-		return fmt.Errorf("unsupported cache version %d", cached.Version)
+		return nil, fmt.Errorf("unsupported cache version %d", cached.Version)
+	}
+	return &cached, nil
+}
+
+// restore loads the last known topology and recreates its virtual hwmon
+// devices at the failsafe temperature. Families are applied in order, so a
+// family restored before a later validation failure remains usable.
+func (publisher *hwmonPublisher) restore(device string) error {
+	cached, err := loadHWMonCache(publisher.cachePath)
+	if err != nil || cached == nil {
+		return err
 	}
 	if cached.Disks != nil {
 		readings := samplesFromCache(cached.Disks.Sensors)
