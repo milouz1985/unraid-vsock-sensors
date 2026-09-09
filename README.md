@@ -432,20 +432,94 @@ apt purge unraid-vsock-sensors-hwmon
 
 ## Compiler et tester
 
-Go 1.27.0 ou plus récent est nécessaire sur la machine de développement.
+Go 1.27.0 ou plus récent et ShellCheck sont nécessaires sur la machine de
+développement. Sous Debian ou Ubuntu, installer ShellCheck avec :
 
 ```sh
-make check          # vérifie le Go, les scripts, la page PHP et le script rc
+sudo apt install shellcheck
+```
+
+```sh
+make check          # vérifie le Go, ShellCheck, la page PHP et le script rc
+make test-race      # exécute les tests Go avec le détecteur de courses
 make build          # crée bin/unraid-vsock-sensors
 make unraid-package # crée le .txz et le .plg Unraid
 make hwmon-package  # crée le .deb Proxmox
-make all            # exécute tous les contrôles et construit tous les artefacts
+make all            # exécute les contrôles locaux et construit tous les artefacts
 ```
+
+Avant de produire une release, valider d'abord le parcours complet dans la VM,
+puis construire les artefacts locaux uniquement si cette validation réussit :
+
+```sh
+make test-vm && make all
+```
+
+`make all` ne lance pas de VM ; les cibles `test-vm*` restent explicitement
+séparées parce qu'elles nécessitent un environnement Proxmox distant.
 
 Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
 commit courant n'est pas exactement tagué. Une version explicite s'écrit sans
 le préfixe `v`, par exemple `make all VERSION=1.4.2` ; le tag Git correspondant
 peut ensuite s'appeler `v1.4.2`.
+
+### Tests d'intégration dans une VM
+
+Le dossier [`tests/vm`](tests/vm/README.md) contient le constructeur d'un
+template Debian pour Proxmox et le lanceur des tests dans un clone jetable :
+
+```sh
+# Préparation initiale depuis le poste de développement :
+cp tests/vm/template.env.example tests/vm/template.env
+# Éditer tests/vm/template.env avant de continuer.
+make vm-template-sync
+
+# Construire ensuite le template sur Proxmox :
+ssh -t root@pve01.lan.home \
+    'cd /root/uvss-template-builder && bash build-template.sh'
+
+# Tests usuels :
+make test-vm         # parcours complet dans une VM distante jetable
+make test-vm-core    # module, hwmon et SMART QEMU uniquement
+make test-vm-package # cycle du paquet Debian et de DKMS uniquement
+```
+
+La construction requiert `libguestfs-tools` sur Proxmox. Pour remplacer un
+template existant après avoir renvoyé les fichiers du builder :
+
+```sh
+ssh -t root@pve01.lan.home \
+    'cd /root/uvss-template-builder && bash build-template.sh --replace'
+```
+
+Les fichiers du builder, l'unique configuration locale `template.env` ignorée
+par Git et la clé publique configurée sont copiés sur Proxmox. La procédure
+complète, notamment la vérification préalable de l'installation de
+`libguestfs-tools`, est décrite dans [`tests/vm/README.md`](tests/vm/README.md).
+
+Le test d'intégration utilise `/dev/virt-temp` et sysfs pour vérifier les
+températures, le failsafe et la récupération après rechargement du module.
+Il remplace la simulation de l'erreur `ESTALE` et permet de retirer le writer
+injecté uniquement pour les tests. Les tests unitaires restent accessibles
+avec `make check` et `make test-race`. La VM est supprimée après succès et
+conservée après échec.
+
+Le template démarre le noyau Proxmox exact demandé, avec ses headers. Par
+défaut, la cible est le noyau courant de l'hôte ; `PVE_KERNEL_RELEASE` permet
+de la fixer. Le builder et le lanceur vérifient la version effectivement
+démarrée dans la VM. La compilation et le chargement de `virt-temp`, les
+tests hwmon/SMART et le cycle installation/mise à jour/remove/purge du paquet
+DKMS se déroulent entièrement dans le clone. Le runner pilote Proxmox par SSH,
+découvre l'adresse du clone avec QEMU Guest Agent et transfère directement le
+working tree par `rsync`. Deux disques SATA QEMU jetables exercent le vrai
+`smartctl` et le collecteur disque. Aucun module UVSS n'est compilé ou chargé
+sur l'hôte.
+
+Après une mise à jour du noyau de l'hôte, reconstruire le template pour la
+nouvelle cible. Les anciens templates Debian doivent également être
+reconstruits. Les tests du transport VSOCK entre hôte et invité, d'Unraid et
+des contrôleurs physiques restent à réaliser dans leurs environnements
+respectifs.
 
 ### Tester manuellement un paquet Unraid de développement
 
