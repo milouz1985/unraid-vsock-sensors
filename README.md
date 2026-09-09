@@ -422,6 +422,16 @@ make hwmon-package  # crée le .deb Proxmox
 make all            # exécute les contrôles locaux et construit tous les artefacts
 ```
 
+Avant de produire une release, valider d'abord le parcours complet dans la VM,
+puis construire les artefacts locaux uniquement si cette validation réussit :
+
+```sh
+make test-vm && make all
+```
+
+`make all` ne lance pas de VM ; les cibles `test-vm*` restent explicitement
+séparées parce qu'elles nécessitent un environnement Proxmox distant.
+
 Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
 commit courant n'est pas exactement tagué. Une version explicite s'écrit sans
 le préfixe `v`, par exemple `make all VERSION=1.4.2` ; le tag Git correspondant
