@@ -244,42 +244,20 @@ func TestMakeHWMonSamples(t *testing.T) {
 	}
 }
 
-func TestPublisherFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "virt-temp")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	inventory := hwmonInventory{}
-	initial := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
-		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
-		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Temp: 38},
-		{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 45},
-	}})
-	if _, err := publishHWMonFamily(path, "disk", &inventory, initial); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Truncate(path, 0); err != nil {
-		t.Fatal(err)
-	}
-	current := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
+func TestMakeHWMonSamplesFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
+	state := sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},
 		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
 		{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 46},
-	}})
-	if _, err := publishHWMonFamily(path, "disk", &inventory, current); err != nil {
-		t.Fatal(err)
+	}}
+	want := []hwmonSample{
+		hwmonTestSample("disk:group:hdd", "HDD maximum", hwmonFailsafeTemp),
+		hwmonTestSample("disk:1", "disk1 (sda)", 35),
+		hwmonTestSample("disk:2", "disk2 (sdb)", hwmonFailsafeTemp),
+		hwmonTestSample("disk:3", "cache (nvme0n1)", 46),
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "sample\tdisk:group:hdd\t100000\tHDD maximum\n" +
-		"sample\tdisk:1\t35000\tdisk1 (sda)\n" +
-		"sample\tdisk:2\t100000\tdisk2 (sdb)\n" +
-		"sample\tdisk:3\t46000\tcache (nvme0n1)\n" +
-		"commit\tdisk\n"
-	if got := string(data); got != want {
-		t.Fatalf("update = %q, want explicit disk and group failsafe %q", got, want)
+	if got := makeDiskSamples(state); !reflect.DeepEqual(got, want) {
+		t.Fatalf("disk readings = %#v, want explicit disk and group failsafe %#v", got, want)
 	}
 }
 
