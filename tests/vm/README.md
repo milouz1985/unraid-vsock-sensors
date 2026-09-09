@@ -201,14 +201,13 @@ template. Une sortie `Template 9000 is ready` confirme la réussite.
 make test-vm
 make test-vm-core
 make test-vm-package
-make test-vm-all
 # Conserver aussi une VM dont les tests réussissent :
 bash tests/vm/run.sh --keep
 # Équivalent avec Make :
 make test-vm TEST_VM_KEEP=1
 ```
 
-`make test-vm` et `make test-vm-all` exécutent le parcours complet.
+`make test-vm` exécute le parcours complet.
 `make test-vm-core` couvre uniquement le module, hwmon et SMART ;
 `make test-vm-package` couvre uniquement le paquet Debian et DKMS.
 

@@ -52,7 +52,7 @@ test: ## Exécute tous les tests Go
 	$(GO) test ./...
 
 
-.PHONY: vm-template-sync vm-template test-vm test-vm-core test-vm-package test-vm-all lint-shell
+.PHONY: vm-template-sync vm-template test-vm test-vm-core test-vm-package lint-shell
 
 vm-template-sync: ## Synchronise le builder du template vers Proxmox
 	bash tests/vm/sync-builder.sh
@@ -68,9 +68,6 @@ test-vm-core: ## Teste le module, hwmon et SMART sous noyau PVE
 
 test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
 	VM_TEST_SUITE=package bash tests/vm/run.sh
-
-test-vm-all: ## Exécute tous les tests VM, y compris le paquet Debian
-	VM_TEST_SUITE=all bash tests/vm/run.sh
 
 lint-shell: ## Analyse les scripts shell avec ShellCheck
 	shellcheck $(BASH_SCRIPTS)
