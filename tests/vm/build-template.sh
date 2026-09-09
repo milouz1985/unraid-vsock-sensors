@@ -100,26 +100,31 @@ cleanup() {
     fi
 }
 
-on_error() {
+on_exit() {
     local rc=$?
-    echo >&2
-    echo "Build failed with exit code ${rc}." >&2
+    trap - EXIT
+    set +e
+    cleanup
 
-    if vm_exists; then
-        echo "VM ${VMID} is intentionally left in place for diagnosis." >&2
-        echo "Useful commands:" >&2
-        echo "  qm status ${VMID}" >&2
-        echo "  qm terminal ${VMID}" >&2
-        echo "  qm guest cmd ${VMID} ping" >&2
-        echo "  qm guest exec ${VMID} -- /bin/bash -lc 'cloud-init status --long'" >&2
-        echo "  qm guest exec ${VMID} -- /bin/bash -lc 'tail -n 200 /var/log/cloud-init-output.log'" >&2
+    if (( rc != 0 )); then
+        echo >&2
+        echo "Build failed with exit code ${rc}." >&2
+
+        if vm_exists; then
+            echo "VM ${VMID} is intentionally left in place for diagnosis." >&2
+            echo "Useful commands:" >&2
+            echo "  qm status ${VMID}" >&2
+            echo "  qm terminal ${VMID}" >&2
+            echo "  qm guest cmd ${VMID} ping" >&2
+            echo "  qm guest exec ${VMID} -- /bin/bash -lc 'cloud-init status --long'" >&2
+            echo "  qm guest exec ${VMID} -- /bin/bash -lc 'tail -n 200 /var/log/cloud-init-output.log'" >&2
+        fi
     fi
 
     exit "$rc"
 }
 
-trap cleanup EXIT
-trap on_error ERR
+trap on_exit EXIT
 
 [[ $EUID -eq 0 ]] || die "Run this script as root on the Proxmox node"
 
@@ -392,8 +397,6 @@ wait_for_vm_stopped 180
 
 log "Converting VM ${VMID} to template"
 qm template "$VMID"
-
-trap - ERR
 
 log "Template successfully created"
 qm config "$VMID"
