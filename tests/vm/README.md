@@ -23,7 +23,16 @@ répertoire temporaire dédié :
 ```sh
 cp tests/vm/template.env.example tests/vm/template.env
 # Éditer template.env avant la copie : stockage, bridge, réseau et VMID.
+make vm-template-sync
+```
 
+La synchronisation utilise `PVE_HOST`, `PVE_SSH_USER`,
+`PVE_TEMPLATE_DIR` et `SSH_PUBLIC_KEY_SOURCE` dans `template.env`. La clé
+publique locale est copiée à côté du builder ; `SSH_PUBLIC_KEY_FILE` désigne
+son emplacement dans ce répertoire sur Proxmox. La commande manuelle
+équivalente est :
+
+```sh
 ssh root@pve01.lan.home \
     'install -d -m 700 /root/uvss-template-builder'
 
@@ -95,6 +104,8 @@ ignoré par Git. Sa section runner contient notamment :
 ```sh
 PVE_HOST=pve01.lan.home
 PVE_SSH_USER=root
+PVE_TEMPLATE_DIR=/root/uvss-template-builder
+SSH_PUBLIC_KEY_SOURCE="${HOME}/.ssh/id_ed25519.pub"
 TEMPLATE_VMID=9000
 TEST_VMID=9900
 PVE_STORAGE=zfs-pve
@@ -123,8 +134,8 @@ ssh-copy-id -i ~/.ssh/id_ed25519.pub root@pve01.lan.home
 Le même fichier public doit être fourni à `SSH_PUBLIC_KEY_FILE` lors de la
 construction du template afin que le clone accepte `GUEST_SSH_KEY`.
 
-Les valeurs locales prennent priorité sur les valeurs par défaut des scripts.
-Ne pas écraser un `template.env` déjà configuré lors d'une mise à jour.
+Les valeurs de `template.env` prennent priorité sur les valeurs par défaut des
+scripts. Ne pas écraser un fichier déjà configuré lors d'une mise à jour.
 La version de Go du template possède une seule source de vérité :
 `tests/vm/go-version`.
 
