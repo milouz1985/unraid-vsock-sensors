@@ -29,6 +29,14 @@ POSIX_SCRIPTS := virt-temp/debian/postinst.in \
 	virt-temp/debian/prerm.in \
 	virt-temp/debian/postrm.in
 
+MODULE_BUILD_ARTIFACTS := virt-temp/module/*.o \
+	virt-temp/module/*.ko \
+	virt-temp/module/*.mod \
+	virt-temp/module/*.mod.c \
+	virt-temp/module/.*.cmd \
+	virt-temp/module/Module.symvers \
+	virt-temp/module/modules.order
+
 .PHONY: help
 
 help: ## Affiche les commandes disponibles
@@ -111,3 +119,4 @@ $(BIN_DIR):
 
 clean: ## Supprime tous les fichiers générés
 	$(RM) -r $(BIN_DIR) dist
+	$(RM) $(MODULE_BUILD_ARTIFACTS)
