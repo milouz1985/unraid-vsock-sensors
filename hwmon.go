@@ -52,7 +52,6 @@ func hwmon(args []string) error {
 	fs := flag.NewFlagSet("hwmon", flag.ContinueOnError)
 	cid := fs.Uint("cid", 3, "guest vsock CID")
 	port := fs.Uint("port", defaultPort, "vsock port")
-	device := fs.String("device", virtTempDevicePath, "virt-temp control device")
 	cache := fs.String("cache", defaultHWMonCache, "persistent hwmon inventory cache")
 	restartUnitsFlag := fs.String("restart-units", "", "comma-separated systemd units restarted after a topology change")
 	if err := fs.Parse(args); err != nil {
@@ -83,9 +82,9 @@ func hwmon(args []string) error {
 		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
 	}
 	defer listener.Close()
-	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through %s", *port, *device)
+	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through %s", *port, virtTempDevicePath)
 	publisher := &hwmonPublisher{cachePath: *cache}
-	err = publisher.restore(*device)
+	err = publisher.restore(virtTempDevicePath)
 	if err != nil {
 		log.Printf("hwmon inventory cache warning: %s", err)
 	}
@@ -112,7 +111,7 @@ func hwmon(args []string) error {
 				err = fmt.Errorf("discard snapshot queued for %s", time.Since(snapshot.receivedAt).Round(time.Millisecond))
 				break
 			}
-			reconfigured, publishErr := publisher.publish(*device, snapshot.response)
+			reconfigured, publishErr := publisher.publish(virtTempDevicePath, snapshot.response)
 			err = publishErr
 			firstGuestSnapshot := !seenGuestSnapshot
 			seenGuestSnapshot = true
