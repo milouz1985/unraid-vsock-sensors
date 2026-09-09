@@ -27,7 +27,7 @@ BOOT_TIMEOUT="${BOOT_TIMEOUT:-300}"
 CLOUD_INIT_TIMEOUT="${CLOUD_INIT_TIMEOUT:-600}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-1800}"
 TEST_DISK_SIZE_GIB="${TEST_DISK_SIZE_GIB:-1}"
-VM_TEST_SUITE="${VM_TEST_SUITE:-core}"
+VM_TEST_SUITE="${VM_TEST_SUITE:-all}"
 KEEP="${TEST_VM_KEEP:-0}"
 if [[ "${1:-}" == --keep ]]; then KEEP=1; shift; fi
 (( $# == 0 )) || { usage >&2; exit 2; }
