@@ -52,12 +52,12 @@ test: ## Exécute tous les tests Go
 	$(GO) test ./...
 
 
-.PHONY: vm-template-sync vm-template test-vm test-vm-core test-vm-package lint-shell
+.PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package lint-shell
 
 vm-template-sync: ## Synchronise le builder du template vers Proxmox
 	bash tests/vm/sync-builder.sh
 
-vm-template: ## Synchronise puis reconstruit le template Proxmox
+vm-template-rebuild: ## Synchronise puis reconstruit le template Proxmox
 	bash tests/vm/sync-builder.sh --rebuild
 
 test-vm: ## Exécute tous les tests dans une VM Proxmox distante
