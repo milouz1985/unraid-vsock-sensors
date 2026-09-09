@@ -81,7 +81,7 @@ test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
 	VM_TEST_SUITE=package bash tests/vm/run.sh
 
 lint-shell: ## Analyse les scripts shell avec ShellCheck
-	shellcheck $(BASH_SCRIPTS) $(POSIX_SCRIPTS)
+	shellcheck -x -P SCRIPTDIR $(BASH_SCRIPTS) $(POSIX_SCRIPTS)
 
 
 check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
