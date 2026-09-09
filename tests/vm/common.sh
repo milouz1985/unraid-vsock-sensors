@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Sourced by the two Proxmox entry points; VMID is their current target.
+# Shared by the Proxmox entry points and the scripts executed in the guest.
+
+readonly UVSS_TEST_IMAGE_VERSION=2
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -13,15 +15,33 @@ resolve_pve_kernel() {
         die "Expected a Proxmox kernel release, got $PVE_KERNEL_RELEASE; set PVE_KERNEL_RELEASE explicitly if needed"
 }
 
-verify_guest_kernel() {
+verify_guest_template() {
     guest_exec 30 "
         actual=\$(uname -r)
-        echo \"Guest kernel: \$actual; expected: $PVE_KERNEL_RELEASE\"
+        image_version=\$(cat /etc/uvss-test-image-version)
+        echo \"Guest kernel: \$actual; expected: $PVE_KERNEL_RELEASE; image version: \$image_version\"
+        test -f /etc/uvss-test-image
+        test \"\$image_version\" = '$UVSS_TEST_IMAGE_VERSION'
         test \"\$actual\" = '$PVE_KERNEL_RELEASE'
         test \"\$(cat /etc/uvss-test-kernel)\" = '$PVE_KERNEL_RELEASE'
         test -r /lib/modules/\$actual/build/Makefile
         test -r /lib/modules/\$actual/build/Module.symvers
     "
+}
+
+verify_local_test_image() {
+    [[ -f /etc/uvss-test-image ]] || die "Missing UVSS test image marker"
+    [[ "$(cat /etc/uvss-test-image-version 2>/dev/null)" == "$UVSS_TEST_IMAGE_VERSION" ]] ||
+        die "UVSS test image version mismatch; rebuild the template"
+}
+
+wait_for_vm_stopped() {
+    local seconds="$1"
+    local deadline=$((SECONDS + seconds))
+    while [[ "$(qm status "$VMID" 2>/dev/null)" != "status: stopped" ]]; do
+        (( SECONDS < deadline )) || die "VM $VMID did not stop in time"
+        sleep 2
+    done
 }
 
 # qm can return a PID without an exit code when its own timeout expires.
@@ -71,9 +91,11 @@ status = json.loads(result.stdout)
 if status.get("status") != "done" or status.get("errors"):
     sys.exit("Cloud-Init did not finish successfully")
 recoverable = status.get("recoverable_errors", {})
-messages = [message for entries in recoverable.values() for message in entries]
+if set(recoverable) - {"DEPRECATED"}:
+    sys.exit("Cloud-Init reported an unexpected recoverable error category")
+messages = recoverable.get("DEPRECATED", [])
 known = "'user' of type string is deprecated"
-if any(known not in message for message in messages) or (result.returncode == 2 and not messages):
+if any(message != known for message in messages) or (result.returncode == 2 and not messages):
     sys.exit("Cloud-Init reported unexpected recoverable errors; inspect the output above")
 if messages:
     print("WARNING: accepting the known Proxmox Cloud-Init 'user' deprecation", file=sys.stderr)

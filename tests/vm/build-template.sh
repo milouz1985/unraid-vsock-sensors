@@ -15,7 +15,7 @@ BRIDGE="${BRIDGE:-vmbr0}"
 
 DEBIAN_VERSION="${DEBIAN_VERSION:-13}"
 DEBIAN_CODENAME="${DEBIAN_CODENAME:-trixie}"
-GO_VERSION="${GO_VERSION:-1.27.0}"
+GO_VERSION="$(tr -d '[:space:]' < "$SCRIPT_DIR/go-version")"
 PVE_KEYRING_FILE="${PVE_KEYRING_FILE:-/usr/share/keyrings/proxmox-archive-keyring.gpg}"
 PVE_REPO_COMPONENT="${PVE_REPO_COMPONENT:-pve-no-subscription}"
 
@@ -140,7 +140,7 @@ for name in VMID CORES MEMORY BOOT_TIMEOUT CLOUD_INIT_TIMEOUT; do
 done
 [[ "$GO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Invalid GO_VERSION"
 exec 9>"/run/lock/uvss-vm-${VMID}.lock"
-flock -n 9 || die "Another UVSS operation is using VMID $VMID"
+flock -x -n 9 || die "The template VMID $VMID is being built or used by a test run"
 if vm_exists; then
     (( REPLACE )) || die "VMID $VMID already exists; use --replace for a UVSS template"
     qm config "$VMID" | grep -Eq '^tags: ([^;]+;)*uvss-test-template(;|$)' ||
@@ -157,8 +157,8 @@ pvesm status | awk 'NR > 1 {print $1}' | grep -Fxq "$STORAGE" ||
     die "Proxmox storage '${STORAGE}' not found"
 
 mkdir -p "$CACHE_DIR"
-exec 8>"${CACHE_DIR}/build.lock"
-flock -n 8 || die "Another template build is using $CACHE_DIR"
+exec 7>"${CACHE_DIR}/build.lock"
+flock -n 7 || die "Another template build is using $CACHE_DIR"
 WORK_DIR="$(mktemp -d /var/tmp/uvss-template.XXXXXX)"
 
 SOURCE_IMAGE="${CACHE_DIR}/${IMAGE_NAME}"
@@ -258,6 +258,8 @@ GRUB_TOP_LEVEL=/boot/vmlinuz-${PVE_KERNEL_RELEASE}
 " \
     --run-command 'update-grub' \
     --write '/etc/uvss-test-image:Disposable UVSS integration test image' \
+    --write "/etc/uvss-test-image-version:${UVSS_TEST_IMAGE_VERSION}
+" \
     --upload "${GO_TARBALL}:/tmp/${GO_ARCHIVE}" \
     --run-command "rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/${GO_ARCHIVE}" \
     --run-command 'ln -sf /usr/local/go/bin/go /usr/local/bin/go' \
@@ -361,7 +363,7 @@ log "Waiting for Cloud-Init"
 wait_for_cloud_init
 
 log "Validating template environment"
-verify_guest_kernel
+verify_guest_template
 guest_exec 60 "grep -Eq '^CONFIG_HWMON=(y|m)$' /boot/config-\$(uname -r)"
 guest_exec 60 "grep -Eq '^CONFIG_SENSORS_DRIVETEMP=m$' /boot/config-\$(uname -r)"
 guest_exec 60 "grep -qw 'hwmon_device_register_with_info' /lib/modules/\$(uname -r)/build/Module.symvers"

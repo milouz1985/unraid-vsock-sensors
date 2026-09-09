@@ -1,2 +1,3 @@
 *.sh text eol=lf
 tests/vm/*.env* text eol=lf
+tests/vm/go-version text eol=lf

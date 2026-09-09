@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -96,6 +97,12 @@ func TestVMHWMon(t *testing.T) {
 	publish("hba", &hbas, hbaSamples, true)
 	wantTemp("disk", "disk:vm-a", "34000")
 	wantTemp("hba", "hba:vm-a", "48000")
+	if got := read("disk", "disk:vm-a", "name"); got != "unraid_vm_disk_a" {
+		t.Fatalf("disk hwmon name = %q, want unraid_vm_disk_a", got)
+	}
+	if got := read("hba", "hba:vm-a", "name"); got != "unraid_vm_hba_a" {
+		t.Fatalf("HBA hwmon name = %q, want unraid_vm_hba_a", got)
+	}
 
 	t.Log("commit preserves the configured label and device identity")
 	initialPath := paths("disk", "disk:vm-a")[0]
@@ -161,4 +168,37 @@ func TestVMHWMon(t *testing.T) {
 	}
 	publish("disk", &disks, diskSamples, false)
 	wantTemp("disk", "disk:vm-a", "35125")
+
+	t.Log("cached topology is restored through the real module at failsafe")
+	cachePath := filepath.Join(t.TempDir(), "hwmon-inventory.json")
+	cache := cachedHWMonInventory{
+		Version: 1,
+		Disks: &cachedHWMonFamily{Sensors: []cachedHWMonSensor{
+			{ID: "disk:cached", Label: "Cached disk"},
+		}},
+		HBAs: &cachedHWMonFamily{Sensors: []cachedHWMonSensor{
+			{ID: "hba:cached", Label: "Cached HBA"},
+		}},
+	}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	command("rmmod", "virt_temp")
+	command("insmod", module)
+	restored := &hwmonPublisher{cachePath: cachePath}
+	if err := restored.restore(device); err != nil {
+		t.Fatal(err)
+	}
+	wantTemp("disk", "disk:cached", "100000")
+	wantTemp("hba", "hba:cached", "100000")
+	if got := read("disk", "disk:cached", "name"); got != "unraid_cached_disk" {
+		t.Fatalf("restored disk hwmon name = %q, want unraid_cached_disk", got)
+	}
+	if got := read("hba", "hba:cached", "name"); got != "unraid_cached_hba" {
+		t.Fatalf("restored HBA hwmon name = %q, want unraid_cached_hba", got)
+	}
 }

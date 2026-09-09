@@ -434,7 +434,9 @@ template Debian pour Proxmox et le lanceur des tests dans un clone jetable :
 ```sh
 # Sur le nœud Proxmox, en root, après configuration de tests/vm/template.env :
 make vm-template    # préparation initiale du template
-make test-vm        # tests du module et du paquet dans une VM sous noyau PVE
+make test-vm         # module, hwmon et SMART QEMU
+make test-vm-package # cycle du paquet Debian et de DKMS
+make test-vm-all     # les deux parcours dans le même clone
 ```
 
 Le test d'intégration utilise `/dev/virt-temp` et sysfs pour vérifier les
@@ -447,9 +449,10 @@ Le template démarre le noyau Proxmox exact demandé, avec ses headers. Par
 défaut, la cible est le noyau courant de l'hôte ; `PVE_KERNEL_RELEASE` permet
 de la fixer. Le builder et le lanceur vérifient la version effectivement
 démarrée dans la VM. La compilation et le chargement de `virt-temp`, les
-tests hwmon et le cycle installation/mise à jour/remove/purge du paquet DKMS
-se déroulent entièrement dans le clone. Aucun module UVSS n'est compilé ou
-chargé sur l'hôte.
+tests hwmon/SMART et le cycle installation/mise à jour/remove/purge du paquet
+DKMS se déroulent entièrement dans le clone. Deux disques SATA QEMU jetables
+exercent le vrai `smartctl` et le collecteur disque. Aucun module UVSS n'est
+compilé ou chargé sur l'hôte.
 
 Après une mise à jour du noyau de l'hôte, reconstruire le template pour la
 nouvelle cible. Les anciens templates Debian doivent également être

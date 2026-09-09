@@ -38,13 +38,22 @@ vet: ## Recherche les erreurs Go courantes
 test: ## Exécute tous les tests Go
 	$(GO) test ./...
 
-.PHONY: vm-template test-vm
+.PHONY: vm-template test-vm test-vm-package test-vm-all lint-shell
 
 vm-template: ## Prépare le template Debian de test (root sur Proxmox)
 	bash tests/vm/build-template.sh
 
-test-vm: ## Teste le module et le paquet sous noyau PVE dans une VM jetable
-	bash tests/vm/run.sh
+test-vm: ## Teste le module, hwmon et SMART sous noyau PVE
+	VM_TEST_SUITE=core bash tests/vm/run.sh
+
+test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
+	VM_TEST_SUITE=package bash tests/vm/run.sh
+
+test-vm-all: ## Exécute tous les tests VM, y compris le paquet Debian
+	VM_TEST_SUITE=all bash tests/vm/run.sh
+
+lint-shell: ## Analyse les scripts shell avec ShellCheck
+	shellcheck $(BASH_SCRIPTS)
 
 check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	for script in $(BASH_SCRIPTS); do \

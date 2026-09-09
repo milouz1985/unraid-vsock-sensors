@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
-[[ $EUID -eq 0 && "${UVSS_VM_TEST:-}" == 1 && -f /etc/uvss-test-image ]] || {
+# shellcheck source=common.sh
+source tests/vm/common.sh
+[[ $EUID -eq 0 && "${UVSS_VM_TEST:-}" == 1 ]] || {
     echo "Run only through guest-tests.sh in a disposable UVSS VM" >&2; exit 1;
 }
+verify_local_test_image
 case "$(systemd-detect-virt --vm)" in
     kvm|qemu) ;;
     *) echo "Expected a QEMU/KVM VM" >&2; exit 1 ;;
@@ -45,7 +48,7 @@ install_version() {
 }
 check_unregistered() {
     local status
-    status="$(dkms status -m virt-temp -v "$1")"
+    status="$(dkms status -m virt-temp -v "$1" 2>/dev/null || true)"
     [[ -z "$status" ]]
 }
 

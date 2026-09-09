@@ -50,6 +50,8 @@ particulier.
 
 Les valeurs locales prennent priorité sur les valeurs par défaut du builder.
 Ne pas écraser un `template.env` déjà configuré lors d'une mise à jour.
+La version de Go du template possède une seule source de vérité :
+`tests/vm/go-version`.
 
 `PVE_KERNEL_RELEASE` vide (ou absent) sélectionne le noyau courant de l'hôte,
 au moment du build **et de chaque test**. Pour cibler une autre version,
@@ -76,12 +78,15 @@ mais un démarrage dessus fait échouer la validation. Le builder enregistre
 la cible dans `/etc/uvss-test-kernel` puis vérifie que `uname -r` correspond
 exactement à cette cible lors du boot. Il vérifie aussi l'agent, Cloud-Init,
 les headers, les symboles hwmon et les modules `drivetemp` et `vsock_loopback`.
+Il écrit aussi `/etc/uvss-test-image-version`. Le builder, le lanceur et les
+scripts invités partagent la constante de version dans `common.sh` ; une
+évolution incompatible du template impose ainsi sa reconstruction.
 Le builder et le lanceur acceptent le code `2` de Cloud-Init uniquement si
 son état JSON est `done`, sans erreur fatale, et si tous les avertissements
 correspondent à la dépréciation connue `'user' of type string is deprecated`.
-Ces avertissements restent affichés. Tout autre avertissement, erreur ou
-timeout bloque le lancement. Un code `2` provenant d'une autre commande
-reste un échec.
+Seule la catégorie `DEPRECATED` et ce message sont tolérés. Ils restent
+affichés. Toute autre catégorie, tout autre message, erreur ou timeout bloque
+le lancement. Un code `2` provenant d'une autre commande reste un échec.
 L'identité de la VM est nettoyée avant conversion en template. Les fichiers
 de travail sont supprimés ; une VM en échec est conservée pour diagnostic.
 L'image Debian utilise `latest` et APT utilise les dépôts courants : les
@@ -101,27 +106,44 @@ le tag `uvss-test-template`. Le lancement normal refuse un VMID occupé.
 
 ```sh
 make test-vm
+make test-vm-package
+make test-vm-all
 # Conserver aussi une VM dont les tests réussissent :
 bash tests/vm/run.sh --keep
 ```
 
-Le lanceur refuse un `TEST_VMID` déjà utilisé. Il crée un clone complet,
+`make test-vm` couvre le module, hwmon et SMART. `make test-vm-package` couvre
+le paquet Debian et DKMS. `make test-vm-all` enchaîne les deux dans un clone.
+
+Le lanceur refuse un `TEST_VMID` déjà utilisé et exige le tag
+`uvss-test-template` sur le template. Il conserve un verrou partagé sur ce
+dernier pendant tout le test ; le builder prend un verrou exclusif, ce qui
+interdit une reconstruction simultanée. Il crée ensuite un clone complet,
 attend l'agent et Cloud-Init, puis transfère une archive des fichiers listés
 par Git par blocs via l'agent. Il n'inclut ni `.git`, ni les fichiers locaux
 ignorés. Les fichiers suivis mais supprimés localement sont aussi omis.
 Les fichiers ignorés nécessaires aux tests doivent être explicitement suivis.
+Le SHA256 de l'archive est calculé sur l'hôte puis vérifié dans la VM avant
+son extraction.
+
+Avant le démarrage, deux volumes SATA de `TEST_DISK_SIZE_GIB` Gio sont ajoutés
+avec les numéros de série `UVSSDISK1` et `UVSSDISK2`. Ils doivent apparaître
+comme `/dev/sdb` et `/dev/sdc`, avec `ROTA=1`. Un shim minimal installé dans
+la VM associe `disk1` et `disk2` à ces périphériques puis transmet les options
+au vrai `smartctl`. Le test vérifie SMART, le JSON normalisé, la température
+QEMU de 31 °C et le vrai `diskCollector` alimenté par un `disks.ini`.
 
 Avant le transfert, le lanceur vérifie le noyau démarré dans le clone et le
 marqueur du template contre `PVE_KERNEL_RELEASE`. Après une mise à jour du
 noyau de l'hôte, reconstruire le template ou fixer explicitement la cible
 précédente. Un ancien template Debian est refusé : il doit être reconstruit.
 
-Dans le clone, `guest-tests.sh` lance :
+Dans le parcours principal, `guest-tests.sh` lance :
 
-1. `make check` et `go test -race ./...` ;
+1. `go vet`, les contrôles de scripts et `go test -race ./...` ;
 2. la compilation de `virt-temp.ko` avec les headers du noyau actif ;
 3. `go test -tags=integration -count=1 -run '^TestVM' .` ;
-4. `package-tests.sh` : construction de deux versions du `.deb`, installation,
+4. dans le parcours paquet, `package-tests.sh` construit deux versions du `.deb`, installation,
    mise à jour, remove, réinstallation et purge, avec le vrai DKMS et systemd.
 
 Le test charge le vrai module et vérifie la configuration disque/HBA, les
@@ -130,6 +152,9 @@ erreur réelle d'écriture, le retrait de sondes, le failsafe et sa récupérati
 Il décharge et recharge aussi le module, constate le vrai `ESTALE` puis
 vérifie la reconfiguration par le code Go de production. Ce scénario remplace
 le writer injecté et les deux tests qui simulaient ses erreurs.
+Le test vérifie également `/sys/class/hwmon/hwmonN/name`. Après un rechargement
+du module, il restaure un cache réel et exige la présence immédiate des sondes
+à `100000` milli°C.
 
 La suite d'intégration exige root, une VM QEMU marquée par le builder et
 `UVSS_VM_TEST=1`. Elle refuse un module déjà chargé et ne saute pas
@@ -167,14 +192,18 @@ d'autres headers au template ; le boot reste fixé à la cible explicite.
 Le test vérifie DKMS pour le noyau courant, pas un cycle de reboot entre
 deux noyaux différents ni le chargement sous Secure Boot.
 
-La VM ne dispose pas d'Unraid ni de matériel SMART/HBA réel. Les tests de
-transport AF_VSOCK hôte/invité, des températures SMART/HBA réelles et du
+La VM ne dispose pas d'Unraid ni de matériel SMART/HBA physique. Les tests de
+transport AF_VSOCK hôte/invité, des températures SMART/HBA physiques et du
 cycle de vie du plugin Unraid restent à réaliser dans leurs environnements
 respectifs. Un disque QEMU ne garantit pas les fonctions SMART d'un disque
 physique. Aucun module UVSS n'est compilé, installé ou chargé sur l'hôte.
 
 Les tests unitaires du protocole, de la logique métier et des erreurs
 matérielles restent utiles et continuent de tourner avec `make check`.
+Chaque journal indique le commit Git, l'état du working tree, le SHA256 de
+l'archive, le noyau PVE, la version du template, la version de Go et le
+parcours exécuté. `make lint-shell` lance ShellCheck sur tous les scripts Bash
+lorsque l'outil est installé sur la machine de développement ou dans la CI.
 
 Références : [personnalisation libguestfs](https://libguestfs.org/virt-customize.1.html),
 [agrandissement de l'image](https://libguestfs.org/virt-resize.1.html),
