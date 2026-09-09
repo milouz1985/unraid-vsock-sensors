@@ -257,8 +257,9 @@ Dans le parcours principal, `guest-tests.sh` lance :
 
 1. la compilation de `virt-temp.ko` avec les headers du noyau actif ;
 2. `go test -tags=integration -count=1 -run '^TestVM' .` ;
-3. dans le parcours paquet, `package-tests.sh` construit deux versions du `.deb`, installation,
-   mise à jour, remove, réinstallation et purge, avec le vrai DKMS et systemd.
+3. dans le parcours paquet, `package-tests.sh` construit deux versions du `.deb`,
+   puis teste installation, mise à jour, remove et purge avec le vrai DKMS et
+   systemd.
 
 Le test charge le vrai module et vérifie la configuration disque/HBA, les
 valeurs et labels sysfs, les écritures sans commit, la propagation d'une
@@ -274,11 +275,12 @@ La suite d'intégration exige root, une VM QEMU marquée par le builder et
 `UVSS_VM_TEST=1`. Elle refuse un module déjà chargé et ne saute pas
 silencieusement les tests si les prérequis manquent. Ne pas la lancer sur
 un hôte de production. Elle retire le module à la fin du test hwmon. Le test
-du paquet le réinstalle via DKMS, vérifie le service et la version installée pour le noyau courant,
-puis contrôle la conservation de la configuration lors des mises à jour et
-retraits, et sa suppression lors de la purge. Le service écoute sur VSOCK
-avec `vsock_loopback` dans la VM ; ce contrôle de démarrage n'envoie pas de
-snapshots et ne prétend pas tester le transport entre deux machines.
+du paquet installe le module via DKMS, vérifie le service et la version installée
+pour le noyau courant, puis contrôle la conservation de la configuration lors
+des mises à jour et retraits, et sa suppression lors de la purge. Le service
+écoute sur VSOCK avec `vsock_loopback` dans la VM ; ce contrôle de démarrage
+n'envoie pas de snapshots et ne prétend pas tester le transport entre deux
+machines.
 
 Après succès, le clone est arrêté puis supprimé à distance. Après un échec,
 avec `--keep` ou avec `TEST_VM_KEEP=1`, il reste disponible. Le journal complet

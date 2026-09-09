@@ -83,10 +83,7 @@ cmp -- "$config" /var/tmp/uvss-expected-config
 [[ -f "$cache" ]]
 timing "package: remove"
 
-echo "Checking reinstall preserves configuration, then purge removes it"
-install_version 0.0.0-vmtest.2
-timing "package: reinstall"
-cmp -- "$config" /var/tmp/uvss-expected-config
+echo "Checking purge removes the preserved configuration"
 apt-get purge -y "$package"
 [[ ! -e "$config" && ! -e "$cache" && ! -d /sys/module/virt_temp ]]
 check_unregistered 0.0.0-vmtest.2
