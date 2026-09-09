@@ -206,7 +206,6 @@ spundown="0"
 	requireVMHWMonTemp(t, "disk", "disk:group:hdd", "31000")
 
 	t.Log("a persistent SMART failure lets the failed disk and its group expire")
-	collector.grace = 500 * time.Millisecond
 	if err := os.WriteFile("/sys/module/virt_temp/parameters/stale_timeout", []byte("1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +213,6 @@ spundown="0"
 		t.Fatal(err)
 	}
 	collector.refresh(context.Background())
-	time.Sleep(collector.grace + 100*time.Millisecond)
 	failedReadings, err := collector.snapshot()
 	if err != nil {
 		t.Fatal(err)
