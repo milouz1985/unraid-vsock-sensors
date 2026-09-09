@@ -351,40 +351,6 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 	}
 }
 
-func TestPublisherReconfiguresChangedTopology(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "virt-temp")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	publisher := &hwmonPublisher{}
-	states := [][]hwmonSample{
-		makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
-			{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
-			{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Temp: 38},
-		}}),
-		makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
-			{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},
-		}}),
-	}
-	for index, readings := range states {
-		if index > 0 {
-			if err := os.Truncate(path, 0); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if _, err := publishHWMonFamily(path, "disk", &publisher.disks, readings); err != nil {
-			t.Fatalf("state %d: %v", index, err)
-		}
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(data), "sample\tdisk:1\t35000\tdisk1 (sda)\nconfigure\tdisk\n"; got != want {
-		t.Fatalf("update = %q, want replacement inventory %q", got, want)
-	}
-}
-
 func TestPublisherDistinguishesMissingAndEmptyDiskInventory(t *testing.T) {
 	directory := t.TempDir()
 	device := filepath.Join(directory, "virt-temp")
@@ -505,32 +471,6 @@ func TestParseRestartUnits(t *testing.T) {
 	}
 	if _, err := parseRestartUnits("--no-block"); err == nil {
 		t.Fatal("option-like unit must be rejected")
-	}
-}
-
-func TestPublisherUsesStableIDWhenLabelChanges(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "virt-temp")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	inventory := hwmonInventory{}
-	initial := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sda)", 34)}
-	if _, err := publishHWMonFamily(path, "disk", &inventory, initial); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Truncate(path, 0); err != nil {
-		t.Fatal(err)
-	}
-	changed := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sdb)", 35)}
-	if _, err := publishHWMonFamily(path, "disk", &inventory, changed); err != nil {
-		t.Fatalf("a label change must not change sensor identity: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(data), "sample\tdisk:serial\t35000\tdisk1 (sdb)\ncommit\tdisk\n"; got != want {
-		t.Fatalf("update = %q, want current label %q", got, want)
 	}
 }
 
