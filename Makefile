@@ -3,13 +3,8 @@
 GO ?= go
 BIN_DIR := bin
 BINARY := $(BIN_DIR)/unraid-vsock-sensors
-VERSION ?= $(shell ./version.sh)
+VERSION ?=
 DEBIAN_REVISION ?= 1
-
-# Freeze the inferred version before packaging modifies generated tracked files.
-VERSION := $(VERSION)
-
-LDFLAGS = -s -w -X main.version=$(VERSION)
 
 BASH_SCRIPTS := version.sh \
 	unraid-plugin/package.sh \
@@ -37,6 +32,25 @@ MODULE_BUILD_ARTIFACTS := virt-temp/module/*.o \
 	virt-temp/module/Module.symvers \
 	virt-temp/module/modules.order
 
+
+# Resolve VERSION only for targets that actually produce versioned artifacts.
+#
+# If VERSION is provided explicitly, version.sh validates it.
+# Otherwise version.sh derives it from Git.
+define resolve-version
+	version="$(VERSION)"; \
+	if [ -n "$$version" ]; then \
+		version="$$(./version.sh "$$version")" || exit $$?; \
+	else \
+		version="$$(./version.sh)" || exit $$?; \
+	fi; \
+	[ -n "$$version" ] || { \
+		echo "Unable to determine version" >&2; \
+		exit 1; \
+	};
+endef
+
+
 .PHONY: help
 
 help: ## Affiche les commandes disponibles
@@ -45,7 +59,7 @@ help: ## Affiche les commandes disponibles
 		$(MAKEFILE_LIST)
 
 
-.PHONY: fmt tidy vet test test-race check-scripts check all
+.PHONY: fmt tidy vet test test-race check-scripts lint-shell check all
 
 fmt: ## Formate tous les fichiers Go
 	$(GO) fmt ./...
@@ -62,27 +76,8 @@ test: ## Exécute tous les tests Go
 test-race: ## Exécute tous les tests Go avec le détecteur de courses
 	$(GO) test -race ./...
 
-
-.PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package lint-shell
-
-vm-template-sync: ## Synchronise le builder du template vers Proxmox
-	bash tests/vm/sync-builder.sh
-
-vm-template-rebuild: ## Synchronise puis reconstruit le template Proxmox
-	bash tests/vm/sync-builder.sh --rebuild
-
-test-vm: ## Exécute tous les tests dans une VM Proxmox distante
-	VM_TEST_SUITE=all bash tests/vm/run.sh
-
-test-vm-core: ## Teste le module, hwmon et SMART sous noyau PVE
-	VM_TEST_SUITE=core bash tests/vm/run.sh
-
-test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
-	VM_TEST_SUITE=package bash tests/vm/run.sh
-
 lint-shell: ## Analyse les scripts shell avec ShellCheck
 	shellcheck -x -P SCRIPTDIR $(BASH_SCRIPTS) $(POSIX_SCRIPTS)
-
 
 check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	for script in $(BASH_SCRIPTS); do \
@@ -99,19 +94,43 @@ check: vet test check-scripts lint-shell ## Vérifie le projet sans créer d'art
 all: check test-race build unraid-package hwmon-package ## Vérifie, compile et crée tous les paquets
 
 
+.PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package
+
+vm-template-sync: ## Synchronise le builder du template vers Proxmox
+	bash tests/vm/sync-builder.sh
+
+vm-template-rebuild: ## Synchronise puis reconstruit le template Proxmox
+	bash tests/vm/sync-builder.sh --rebuild
+
+test-vm: ## Exécute tous les tests dans une VM Proxmox distante
+	VM_TEST_SUITE=all bash tests/vm/run.sh
+
+test-vm-core: ## Teste le module, hwmon et SMART sous noyau PVE
+	VM_TEST_SUITE=core bash tests/vm/run.sh
+
+test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
+	VM_TEST_SUITE=package bash tests/vm/run.sh
+
+
 .PHONY: build
 
 build: | $(BIN_DIR) ## Compile un binaire Linux statique
-	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) .
+	@$(resolve-version) \
+	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath \
+		-ldflags="-s -w -X main.version=$$version" \
+		-o $(BINARY) .
 
 
 .PHONY: unraid-package hwmon-package
 
 unraid-package: ## Crée le plugin serveur installable dans Unraid
-	GO="$(GO)" VERSION="$(VERSION)" ./unraid-plugin/package.sh
+	@$(resolve-version) \
+	GO="$(GO)" VERSION="$$version" ./unraid-plugin/package.sh
 
 hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
-	GO="$(GO)" VERSION="$(VERSION)" DEBIAN_REVISION="$(DEBIAN_REVISION)" ./virt-temp/package.sh
+	@$(resolve-version) \
+	GO="$(GO)" VERSION="$$version" DEBIAN_REVISION="$(DEBIAN_REVISION)" \
+		./virt-temp/package.sh
 
 
 $(BIN_DIR):
