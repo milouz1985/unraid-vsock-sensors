@@ -191,15 +191,55 @@ func TestReadInventoryRejectsMissingSections(t *testing.T) {
 	}
 }
 
-func TestReadInventoryAllowsNoAssignedDisks(t *testing.T) {
+func TestReadInventorySkipsNoPresentStatuses(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "disks.ini")
-	data := "[disk1]\nstatus=DISK_NP\n\n[flash]\ndevice=sda\n"
+	data := strings.TrimSpace(`
+		[disk1]
+		status=DISK_NP
+
+		[disk2]
+		status=DISK_NP_DSBL
+
+		[disk3]
+		status=DISK_NP_MISSING
+
+		[disk4]
+		status=DISK_OK_NP
+
+		[flash]
+		device=sda
+	`) + "\n"
+	data = strings.ReplaceAll(data, "\n\t\t", "\n")
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
 	disks, err := readDisks(path)
 	if err != nil || len(disks) != 0 {
 		t.Fatalf("inventory = %#v, %v; want a valid empty inventory", disks, err)
+	}
+}
+
+func TestReadInventoryKeepsPresentDiskStatuses(t *testing.T) {
+	for name, status := range map[string]string{
+		"degraded":     "DISK_INVALID",
+		"ok":           "DISK_OK",
+		"wrong":        "DISK_WRONG",
+		"disabled":     "DISK_DSBL",
+		"disabled_new": "DISK_DSBL_NEW",
+		"new":          "DISK_NEW",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "disks.ini")
+			data := "[disk1]\nid=serial1\ndevice=sda\nstatus=" + status + "\n"
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			disks, err := readDisks(path)
+			if err != nil || len(disks) != 1 || disks[0].id != "serial1" || disks[0].device != "sda" {
+				t.Fatalf("inventory = %#v, %v; want the physically present disk", disks, err)
+			}
+		})
 	}
 }
 

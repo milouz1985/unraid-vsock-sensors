@@ -12,8 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/ini.v1"
 	"unraid-vsock-sensors/internal/sensors"
+
+	"gopkg.in/ini.v1"
 )
 
 const (
@@ -188,11 +189,14 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 		transport := strings.ToLower(strings.TrimSpace(section.Key("transport").String()))
 		id := strings.TrimSpace(section.Key("id").String())
 		device := strings.TrimSpace(section.Key("device").String())
-		status := strings.TrimSpace(section.Key("status").String())
+		status := strings.ToUpper(strings.TrimSpace(section.Key("status").String()))
 		// disks.ini contains sections for every possible array slot, including
-		// unassigned DISK_NP entries, the Unraid boot flash device and external
-		// USB disks. USB temperatures have no consumer in the push protocol.
-		if strings.EqualFold(status, "DISK_NP") || strings.EqualFold(name, "flash") ||
+		// slots without a physical disk. Unraid uses the _NP marker
+		// for states where no physical disk is present.
+		// Every other state remains eligible so degraded or emulated
+		// disks stay visible. USB temperatures have no consumer in the protocol.
+		if strings.Contains(status, "_NP") ||
+			strings.EqualFold(name, "flash") ||
 			transport == "usb" {
 			continue
 		}

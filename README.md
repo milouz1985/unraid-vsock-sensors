@@ -248,11 +248,14 @@ et `unraid_hba`. Lors de la première mise à niveau vers cette version, il faut
 donc sélectionner une fois les nouvelles sources dans CoolerControl ou adapter
 les `platform` configurées dans fan2go.
 
-L'agent Unraid exclut les disques USB avant toute lecture SMART et tout envoi
-VSOCK. Les slots non assignés (`DISK_NP`) et la clé USB de démarrage `flash`
-sont également exclus. Les SSD internes utilisant un autre transport que SATA
-ou NVMe possèdent un périphérique individuel, mais ne créent pas de maximum
-dédié.
+L'agent Unraid conserve `disks.ini` comme source d'autorité pour l'inventaire.
+Toute entrée dont le statut commence par `DISK_NP` désigne un slot sans disque
+physiquement présent et est exclue. Les autres statuts ne sont pas filtrés : un
+disque désactivé, émulé ou dégradé reste inventorié tant que son ID et son
+périphérique sont renseignés. La clé USB de démarrage `flash` et les autres
+disques USB sont également exclus avant toute lecture SMART et tout envoi VSOCK.
+Les SSD internes utilisant un autre transport que SATA ou NVMe possèdent un
+périphérique individuel, mais ne créent pas de maximum dédié.
 
 Un disque signalé en veille par `spundown="1"` est conservé dans l'inventaire
 avec une température de `0 °C`, sans exécuter de commande SMART. Cette valeur
