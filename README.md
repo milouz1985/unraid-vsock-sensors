@@ -442,21 +442,24 @@ sudo apt install shellcheck
 ```sh
 make check          # vérifie le Go, ShellCheck, la page PHP et le script rc
 make test-race      # exécute les tests Go avec le détecteur de courses
-make build          # crée bin/unraid-vsock-sensors
-make unraid-package # crée le .txz et le .plg Unraid
-make hwmon-package  # crée le .deb Proxmox
-make all            # exécute les contrôles locaux et construit tous les artefacts
+make build                   # crée bin/unraid-vsock-sensors
+make unraid-package          # crée le .txz et le .plg Unraid
+make hwmon-package           # crée le .deb Proxmox
+make all                     # vérifie et construit tous les artefacts locaux
+make release VERSION=X.Y.Z   # valide et prépare une release complète
 ```
 
-Avant de produire une release, valider d'abord le parcours complet dans la VM,
-puis construire les artefacts locaux uniquement si cette validation réussit :
+Pour valider manuellement le pipeline complet sans publier le manifeste suivi,
+lancer d'abord le parcours VM, puis construire les artefacts locaux uniquement
+si cette validation réussit :
 
 ```sh
 make test-vm && make all
 ```
 
 `make all` ne lance pas de VM ; les cibles `test-vm*` restent explicitement
-séparées parce qu'elles nécessitent un environnement Proxmox distant.
+séparées parce qu'elles nécessitent un environnement Proxmox distant. La cible
+`release` enchaîne elle-même ces deux validations avant de publier le manifeste.
 
 Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
 commit courant n'est pas exactement tagué. Une version explicite s'écrit sans
@@ -571,23 +574,33 @@ redémarrage, puisque le système Unraid est chargé en mémoire. Pour valider u
 première installation ou le cycle de démarrage, utiliser un `.plg` dont l'URL
 de paquet pointe vers le `.txz` de développement.
 
-La construction régénère également le fichier suivi
-`unraid-plugin/unraid-vsock-sensors.plg`. Ne pas commiter ce descripteur pour
-une version `-dev` ; seul celui d'une version finale destinée à être publiée
-doit être conservé dans Git.
+La construction écrit le descripteur dans `dist/unraid-vsock-sensors.plg` et ne
+modifie aucun fichier suivi par Git. Le manifeste public situé dans
+`unraid-plugin/` n'est remplacé que par la procédure explicite de release.
 
 ## Publier une release
 
-Partir d'un arbre propre, construire avec la version finale, commiter le `.plg`
-produit, puis poser le tag sur ce commit :
+Partir d'un arbre propre et préparer la release en une seule commande. Cette
+cible valide d'abord le parcours VM, exécute `make all` avec la version finale,
+puis remplace le manifeste public par celui qui vient d'être construit :
 
 ```sh
-make all VERSION=X.Y.Z
+make release VERSION=X.Y.Z
+git diff -- unraid-plugin/unraid-vsock-sensors.plg
 git add unraid-plugin/unraid-vsock-sensors.plg
 git commit -m "Publie le descripteur Unraid X.Y.Z"
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
 git push origin main vX.Y.Z
 ```
+
+La dernière étape peut aussi être exécutée séparément après la construction :
+
+```sh
+make release-manifest VERSION=X.Y.Z
+```
+
+Elle refuse une version implicite ainsi qu'un manifeste absent ou construit
+pour une autre version. Elle ne crée ni commit, ni tag et ne pousse rien.
 
 Joindre à la release GitHub :
 

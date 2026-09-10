@@ -12,7 +12,7 @@ package_version="${package_version//+/_}"
 package_name="unraid-vsock-sensors-${package_version}-x86_64-1.txz"
 package_url="${PACKAGE_URL:-$repository_url/releases/download/v$version/$package_name}"
 dist_dir="${DIST_DIR:-$repo_dir/dist}"
-plugin_output="${PLUGIN_OUTPUT:-$plugin_dir/unraid-vsock-sensors.plg}"
+plugin_output="$dist_dir/unraid-vsock-sensors.plg"
 build_dir="$(mktemp -d)"
 stage_dir="$build_dir/package"
 trap 'rm -rf "$build_dir"' EXIT
@@ -66,7 +66,6 @@ sed \
     -e "s|@PACKAGE_MD5@|$package_md5|g" \
     -e "s|@PACKAGE_SHA256@|$package_sha256|g" \
     "$plugin_dir/unraid-vsock-sensors.plg.in" > "$plugin_output"
-cp "$plugin_output" "$dist_dir/unraid-vsock-sensors.plg"
 
 echo "$package_path"
-echo "$dist_dir/unraid-vsock-sensors.plg"
+echo "$plugin_output"

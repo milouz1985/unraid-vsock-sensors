@@ -121,7 +121,7 @@ build: | $(BIN_DIR) ## Compile un binaire Linux statique
 		-o $(BINARY) .
 
 
-.PHONY: unraid-package hwmon-package
+.PHONY: unraid-package hwmon-package release-manifest release
 
 unraid-package: ## Crée le plugin serveur installable dans Unraid
 	@$(resolve-version) \
@@ -131,6 +131,43 @@ hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
 	@$(resolve-version) \
 	GO="$(GO)" VERSION="$$version" DEBIAN_REVISION="$(DEBIAN_REVISION)" \
 		./virt-temp/package.sh
+
+release-manifest: ## Publie dans Git le manifeste Unraid déjà construit
+	@version="$(VERSION)"; \
+	if [ -z "$$version" ]; then \
+		echo "VERSION is required (example: make release-manifest VERSION=1.7.0)" >&2; \
+		exit 1; \
+	fi; \
+	version="$$(VERSION="$$version" ./version.sh)" || exit $$?; \
+	manifest="dist/unraid-vsock-sensors.plg"; \
+	if [ ! -f "$$manifest" ]; then \
+		echo "Missing $$manifest; run make unraid-package VERSION=$$version first" >&2; \
+		exit 1; \
+	fi; \
+	manifest_version="$$(awk -F'"' '/^<!ENTITY version / { print $$2; exit }' "$$manifest")"; \
+	if [ "$$manifest_version" != "$$version" ]; then \
+		echo "Manifest version $$manifest_version does not match VERSION=$$version" >&2; \
+		exit 1; \
+	fi; \
+	install -m 0644 "$$manifest" unraid-plugin/unraid-vsock-sensors.plg; \
+	echo "unraid-plugin/unraid-vsock-sensors.plg"
+
+release: ## Valide et prépare tous les artefacts d'une release
+	@version="$(VERSION)"; \
+	if [ -z "$$version" ]; then \
+		echo "VERSION is required (example: make release VERSION=1.7.0)" >&2; \
+		exit 1; \
+	fi; \
+	VERSION="$$version" ./version.sh >/dev/null; \
+	status="$$(git status --porcelain --untracked-files=normal)"; \
+	if [ -n "$$status" ]; then \
+		echo "A release requires a clean Git worktree:" >&2; \
+		printf '%s\n' "$$status" >&2; \
+		exit 1; \
+	fi
+	+$(MAKE) --no-print-directory test-vm
+	+$(MAKE) --no-print-directory all VERSION="$(VERSION)"
+	+$(MAKE) --no-print-directory release-manifest VERSION="$(VERSION)"
 
 
 $(BIN_DIR):
