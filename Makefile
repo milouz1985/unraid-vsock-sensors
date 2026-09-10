@@ -40,7 +40,7 @@ MODULE_BUILD_ARTIFACTS := virt-temp/module/*.o \
 define resolve-version
 	version="$(VERSION)"; \
 	if [ -n "$$version" ]; then \
-		version="$$(./version.sh "$$version")" || exit $$?; \
+		version="$$(VERSION="$$version" ./version.sh)" || exit $$?; \
 	else \
 		version="$$(./version.sh)" || exit $$?; \
 	fi; \
