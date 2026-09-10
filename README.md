@@ -9,10 +9,9 @@ Sur Proxmox, ces températures peuvent être :
   fancontrol ou lm-sensors ;
 - utilisées sans réseau IP entre la VM et l'hôte.
 
-L'agent Unraid lit l'inventaire et l'état de rotation, puis relève en
-arrière-plan la température des disques actifs avec le helper
-`smartctl_type`. Il ne consulte pas les disques déjà signalés en veille et
-utilise `smartctl -n standby` pour couvrir un changement d'état concurrent.
+L'agent consomme l'inventaire et les températures déjà produits par Unraid dans
+`disks.ini` et `devs.ini`. Il vérifie leur fraîcheur avec le `mtime` des rapports
+`/var/local/emhttp/smart/*`, sans jamais interroger lui-même le matériel SMART.
 Il maintient une connexion VSOCK vers Proxmox et y pousse chaque seconde le
 dernier snapshot complet. Cette publication périodique sert aussi de heartbeat.
 Chaque snapshot porte un numéro de protocole entier ; le récepteur refuse une
@@ -23,7 +22,9 @@ version incompatible. La version logicielle reste indépendante de ce numéro.
 ```text
 VM Unraid                                      Hôte Proxmox
 ┌────────────────────────────┐                 ┌─────────────────────────────┐
-│ disks.ini + smartctl_type  │                 │ unraid-vsock-sensors hwmon  │
+│ emhttpd                    │                 │ unraid-vsock-sensors hwmon  │
+│  └─ disks.ini, devs.ini    │                 │            │                │
+│     et cache smart/*       │                 │            │                │
 │ /dev/mpt3ctl (HBA)         │                 │            │                │
 │            │               │     AF_VSOCK    │            ▼                │
 │ unraid-vsock-sensors serve ├────────────────►│ /dev/virt-temp              │
@@ -78,7 +79,8 @@ https://raw.githubusercontent.com/milouz1985/unraid-vsock-sensors/refs/heads/mai
 Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 
 - **VSOCK port** : `990` ;
-- **Disk SMART refresh interval** : `30 seconds` ;
+- **Unraid SMART polling interval** : la valeur en lecture seule doit
+  correspondre au réglage disque Unraid ;
 - **HBA monitoring** : `enabled` si un HBA compatible est disponible, sinon
   `disabled` ;
 - **HBA backend** : `Native /dev/mpt3ctl` pour un contrôleur `mpt3sas`, ou
@@ -86,10 +88,10 @@ Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 - **HBA refresh interval** : `15 seconds` avec `mpt3ctl` ou `30 seconds` avec
   StorCLI.
 
-Le plugin transmet ces deux intervalles à l'agent. La collecte disque vaut
-`30s` par défaut dans les deux cas. Pour le HBA, le plugin choisit `15s` avec
-`mpt3ctl` et `30s` avec StorCLI ; lancé manuellement sans option, le binaire
-utilise le défaut générique de `30s`, quel que soit le backend.
+La cadence disque appartient entièrement à Unraid. Pour le HBA, le plugin
+choisit `15s` avec `mpt3ctl` et `30s` avec StorCLI ; lancé manuellement sans
+option, le binaire utilise le défaut générique de `30s`, quel que soit le
+backend.
 
 L'agent lit directement `/dev/mpt3ctl` pour les contrôleurs gérés par
 `mpt3sas` : aucun utilitaire supplémentaire n'est nécessaire. Le backend
@@ -248,40 +250,48 @@ et `unraid_hba`. Lors de la première mise à niveau vers cette version, il faut
 donc sélectionner une fois les nouvelles sources dans CoolerControl ou adapter
 les `platform` configurées dans fan2go.
 
-L'agent Unraid conserve `disks.ini` comme source d'autorité pour l'inventaire.
-Toute entrée dont le statut commence par `DISK_NP` désigne un slot sans disque
-physiquement présent et est exclue. Les autres statuts ne sont pas filtrés : un
-disque désactivé, émulé ou dégradé reste inventorié tant que son ID et son
-périphérique sont renseignés. La clé USB de démarrage `flash` et les autres
-disques USB sont également exclus avant toute lecture SMART et tout envoi VSOCK.
-Les SSD internes utilisant un autre transport que SATA ou NVMe possèdent un
-périphérique individuel, mais ne créent pas de maximum dédié.
+L'agent conserve `disks.ini` comme source d'autorité pour les disques assignés
+et ajoute les Unassigned Devices décrits par `devs.ini`. Une unité présente
+temporairement dans les deux fichiers est dédupliquée par son ID stable, avec
+priorité à son entrée assignée. Le nom `/dev/sdX` d'un Unassigned Device sert
+uniquement à localiser son rapport SMART ; il ne devient jamais son identité.
+La clé USB de démarrage `flash` reste exclue. Les disques rotationnels, y
+compris USB, rejoignent le maximum HDD. Un SSD utilisant un autre transport que
+SATA ou NVMe possède une sonde individuelle, mais ne crée pas de maximum dédié.
+
+La température vient directement du champ `temp` produit par Unraid. L'agent ne
+lance ni `smartctl`, ni `smartctl_type`, et ne parse pas le contenu textuel des
+rapports SMART. Pour un disque assigné, il contrôle le `mtime` de
+`/var/local/emhttp/smart/<nom-logique>` ; pour un Unassigned Device, celui de
+`/var/local/emhttp/smart/<device>`. Une mesure est fraîche jusqu'à
+`poll_attributes + max(10 secondes, 20 % de poll_attributes)`. Ce calcul est
+entièrement local à Unraid et ne dépend pas de l'horloge Proxmox.
+
+`poll_attributes` est lu comme donnée depuis `/boot/config/disk.cfg`, jamais
+exécuté comme du shell. Une valeur absente, négative ou non numérique produit un
+warning et utilise un fallback interne de `30s` pour le seul calcul de
+fraîcheur. La valeur `0` désactive réellement le polling automatique Unraid et
+produit un warning distinct. Une cadence supérieure à `60s` produit également
+un warning, car elle augmente directement le délai de réaction thermique.
+
+L'event Unraid `poll_attributes` envoie `SIGUSR1` au daemon pour déclencher une
+relecture immédiate. Les demandes rapprochées sont fusionnées et une seule
+collecte peut s'exécuter à la fois. Un watchdog de cinq secondes relit les
+fichiers légers afin de détecter un event perdu, une expiration, un changement
+de veille, d'inventaire ou de configuration. Aucun de ces chemins n'accède au
+matériel SMART.
 
 Un disque signalé en veille par `spundown="1"` est conservé dans l'inventaire
-avec une température de `0 °C`, sans exécuter de commande SMART. Cette valeur
-signifie que la sonde est inactive et évite de déclencher le failsafe pendant
-un spindown normal.
-
-Pour chaque disque actif, l'agent appelle le helper Unraid
-`/usr/local/sbin/smartctl_type` avec `--json -n standby,3 -A`. Unraid résout
-ainsi le périphérique et les éventuels paramètres particuliers du contrôleur.
-D'après la [documentation officielle de `smartctl` pour
-`-n`](https://github.com/smartmontools/smartmontools/blob/main/src/smartctl.8.in#L896-L915),
-le code par défaut `2` peut aussi signaler un échec d'ouverture ou
-d'identification. Le code `3` n'est accepté comme veille que si le JSON indique
-`STANDBY` ou `SLEEP`. Les NVMe sont interrogés sans l'option `-n standby`.
-
-Après une erreur SMART, l'agent marque le disque indisponible et effectue jusqu'à
-deux nouvelles tentatives espacées de deux secondes, ou de l'intervalle de
-collecte configuré s'il est inférieur. Une erreur persistante ne crée donc pas
-de boucle de lectures rapprochées : après ces tentatives, l'agent reprend son
-intervalle normal, fixé à `30s` par défaut et indépendant du réglage Unraid
-**Tunable (poll_attributes)**.
+avec une température de `0 °C`, même si son rapport est ancien. Après son réveil,
+un rapport encore ancien devient une erreur de collecte. La dernière mesure
+fraîche est conservée pendant une unique période de grâce égale à la cadence
+Unraid augmentée de cinq secondes ; si aucun cache frais n'arrive, le disque
+devient `Unavailable`.
 
 Le disque reste présent dans l'inventaire hwmon, mais les `commit` cessent
 d'actualiser sa valeur et celle du maximum de sa catégorie. `virt_temp` conserve
 alors leur dernière valeur avant de les faire passer à `100 °C` après son délai
-de dix secondes. Si un retry réussit assez vite, ce délai n'expire pas. Une
+de dix secondes. Si le cache Unraid redevient frais, la publication reprend. Une
 nouvelle configuration crée néanmoins toute sonde déjà indisponible directement
 au failsafe afin de ne jamais présenter `0 °C` comme une mesure valide.
 
@@ -334,8 +344,8 @@ Pendant l'exécution :
 - une erreur globale de lecture, y compris une section active de `disks.ini`
   sans ID ou périphérique, ne modifie jamais le cache et laisse toute la famille
   disque atteindre le failsafe. Une température indisponible ou invalide cesse
-  d'actualiser son disque et le maximum de sa catégorie ; jusqu'à deux retries
-  SMART peuvent les rétablir avant l'expiration du délai noyau ;
+  d'actualiser son disque et le maximum de sa catégorie après la période de
+  grâce ; un nouveau cache Unraid frais les rétablit automatiquement ;
 - une erreur HBA invalide le relevé complet : l'inventaire précédent reste
   configuré sans être actualisé et atteint donc le failsafe. StorCLI tente
   auparavant une redécouverte et une nouvelle lecture lorsque celle fondée sur
@@ -352,26 +362,22 @@ Pendant l'exécution :
 
 ## Failsafe et fraîcheur des mesures
 
-Chaque collecteur Unraid invalide son propre cache après son intervalle normal
-augmenté du délai maximal de collecte. Un collecteur bloqué finit donc par
-publier une erreur pour sa famille ; Proxmox cesse de l'actualiser sans
-interrompre l'autre famille.
+Le watchdog disque invalide un snapshot global qu'il n'a pas pu renouveler
+pendant quinze secondes. Les mesures individuelles suivent la fraîcheur du
+cache SMART Unraid et la période de grâce décrites ci-dessus. Une panne du
+collecteur disque n'interrompt jamais le collecteur HBA.
 
 Chaque canal du module `virt_temp` non actualisé pendant 10 secondes retourne
 `100 °C`. Ce garde-fou couvre aussi bien une famille en erreur qu'une perte du
 flux VSOCK ou l'arrêt du récepteur Proxmox.
 
-La température des disques vient d'une collecte SMART directe, exécutée en
-arrière-plan selon **Disk SMART refresh interval**, réglé à `30s` par défaut.
-Le snapshot VSOCK réutilise ce relevé entre deux collectes et permet à Proxmox
-de continuer à alimenter le module `virt-temp`. Pour une régulation thermique
-réactive, une erreur déclenche jusqu'à deux nouvelles collectes espacées de deux
-secondes ; après leur échec, le cycle normal reprend. Une valeur de 30 à 60
-secondes est recommandée. Cinq minutes constitue une limite
-haute raisonnable ; au-delà, une température peut rester ancienne trop
-longtemps pour piloter efficacement les ventilateurs. L'agent accepte une
-valeur plus longue passée en ligne de commande, mais écrit alors un
-avertissement dans son journal.
+La réactivité disque dépend directement du réglage **Tunable
+(poll_attributes)** d'Unraid. Une valeur de 30 à 60 secondes est recommandée
+pour la régulation thermique. Une valeur supérieure reste acceptée sans être
+modifiée, mais l'interface et le journal signalent le délai supplémentaire. La
+valeur `0` laisse le daemon actif mais, sans nouveaux caches créés par Unraid,
+les disques actifs deviennent indisponibles après expiration et atteignent le
+failsafe.
 
 La température HBA vient de IO Unit Page 7, lue avec des commandes MPI CONFIG
 strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
@@ -515,12 +521,12 @@ Le template démarre le noyau Proxmox exact demandé, avec ses headers. Par
 défaut, la cible est le noyau courant de l'hôte ; `PVE_KERNEL_RELEASE` permet
 de la fixer. Le builder et le lanceur vérifient la version effectivement
 démarrée dans la VM. La compilation et le chargement de `virt-temp`, les
-tests hwmon/SMART et le cycle installation/mise à jour/remove/purge du paquet
+tests hwmon/cache SMART et le cycle installation/mise à jour/remove/purge du paquet
 DKMS se déroulent entièrement dans le clone. Le runner pilote Proxmox par SSH,
 découvre l'adresse du clone avec QEMU Guest Agent et transfère directement le
-working tree par `rsync`. Deux disques SATA QEMU jetables exercent le vrai
-`smartctl` et le collecteur disque. Aucun module UVSS n'est compilé ou chargé
-sur l'hôte.
+working tree par `rsync`. Deux disques SATA QEMU jetables exercent le collecteur
+à partir de fichiers Unraid simulés, sans commande SMART. Aucun module UVSS
+n'est compilé ou chargé sur l'hôte.
 
 Après une mise à jour du noyau de l'hôte, reconstruire le template pour la
 nouvelle cible. Les anciens templates Debian doivent également être

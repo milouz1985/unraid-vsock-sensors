@@ -258,10 +258,10 @@ Un manifeste SHA256 est vérifié dans la VM après le transfert.
 Avant le démarrage, deux volumes SATA de `TEST_DISK_SIZE_GIB` Gio sont ajoutés
 avec les numéros de série `UVSSDISK1` et `UVSSDISK2`. Leurs noms `/dev/sdX`
 ne sont pas supposés stables : le test parcourt les disques entiers et les
-identifie avec le champ `serial_number` du vrai `smartctl --json -i`. Il
-vérifie ensuite `ROTA=1`, la disponibilité et l'activation de SMART ainsi que
-la température QEMU de 31 °C. Le shim `smartctl_type` et le `disks.ini` sont
-générés avec les chemins découverts avant d'exécuter le vrai `diskCollector`.
+identifie avec le numéro de série exposé par sysfs. Il vérifie ensuite
+`ROTA=1`, génère un `disks.ini`, un `disk.cfg` et des rapports SMART en cache,
+puis exerce le collecteur sans aucune commande SMART matérielle. Le scénario
+couvre aussi l'expiration du cache, le failsafe hwmon et la récupération.
 
 Avant les tests, le lanceur vérifie par SSH le noyau démarré dans le clone et
 le marqueur du template contre `PVE_KERNEL_RELEASE`. Après une mise à jour du

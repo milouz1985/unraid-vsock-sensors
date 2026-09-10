@@ -15,7 +15,7 @@ import (
 
 func TestPublishedSnapshotMetadata(t *testing.T) {
 	response := collectorSnapshot(
-		newDiskCollector("unused", time.Minute),
+		newDiskCollector(diskDataPaths{}),
 		newTestHBACollector(time.Minute, hbaModeDisabled),
 	)
 
@@ -83,7 +83,7 @@ func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
 		go func() {
 			done <- publishSnapshotsWithDialer(
 				ctx,
-				newDiskCollector("unused", time.Minute),
+				newDiskCollector(diskDataPaths{}),
 				newTestHBACollector(time.Minute, hbaModeDisabled),
 				func(context.Context) (snapshotConnection, error) {
 					if dials >= len(connections) {

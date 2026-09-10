@@ -209,7 +209,7 @@ func TestBlockedHBACollectionDoesNotStopSnapshotPublication(t *testing.T) {
 
 		frames := capturePublishedSnapshots(
 			t,
-			newDiskCollector("unused", time.Minute),
+			newDiskCollector(diskDataPaths{}),
 			collector,
 			2,
 		)

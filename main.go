@@ -93,8 +93,6 @@ Commands:
   version                   Print the build version
 
 Serve options:
-  --disks-ini PATH          Unraid disk state (default: /var/local/emhttp/disks.ini)
-  --disk-interval DURATION  Delay between disk SMART refreshes (default: 30s)
   --port PORT               AF_VSOCK port (default: 990)
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
@@ -118,8 +116,6 @@ Examples:
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	disksINIPath := fs.String("disks-ini", "/var/local/emhttp/disks.ini", "Unraid live disk state")
-	diskInterval := fs.Duration("disk-interval", defaultDiskInterval, "delay between disk SMART refreshes")
 	port := fs.Uint("port", defaultPort, "vsock port")
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
@@ -143,9 +139,6 @@ func serve(args []string) error {
 	if *hbaInterval <= 0 {
 		return errors.New("hba-interval must be greater than zero")
 	}
-	if *diskInterval <= 0 {
-		return errors.New("disk-interval must be greater than zero")
-	}
 	hbaMode := hbaMode(*hbaModeValue)
 	if hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
 		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
@@ -157,20 +150,32 @@ func serve(args []string) error {
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
-	disks := newDiskCollector(*disksINIPath, *diskInterval)
+	disks := newDiskCollector(defaultDiskDataPaths)
 	log.Printf("starting unraid-vsock-sensors v%s; pushing to host VSOCK port %d", version, *port)
-	log.Printf("disk SMART refresh interval is %s; up to %d retries follow failures every %s", disks.interval, maxDiskRetries, disks.retryDelay)
-	if *diskInterval > maximumRecommendedDiskInterval {
-		log.Printf("warning: disk-interval=%s exceeds the recommended maximum of %s; disk temperatures may be too stale for reliable fan control", *diskInterval, maximumRecommendedDiskInterval)
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	refreshSignals := make(chan os.Signal, 1)
+	signal.Notify(refreshSignals, syscall.SIGUSR1)
+	defer signal.Stop(refreshSignals)
+	refreshRequests := make(chan struct{}, 1)
+	go forwardDiskRefreshSignals(ctx, refreshSignals, refreshRequests)
 	hbas := newConfiguredHBACollector(*hbaInterval, hbaMode, hbaBackend)
 	// Collection remains independent from publication so a disk or controller
 	// command can never block the VSOCK heartbeat.
-	go disks.run(ctx)
+	go disks.run(ctx, refreshRequests)
 	go hbas.run(ctx)
 	return publishSnapshots(ctx, uint32(*port), disks, hbas)
+}
+
+func forwardDiskRefreshSignals(ctx context.Context, signals <-chan os.Signal, refresh chan<- struct{}) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-signals:
+			requestDiskRefresh(refresh)
+		}
+	}
 }
 
 func collectorSnapshot(

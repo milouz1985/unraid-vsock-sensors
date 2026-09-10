@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /etc/rc.d/rc.unraid-vsock-sensors refresh

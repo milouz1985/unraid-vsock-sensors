@@ -4,12 +4,9 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,43 +44,35 @@ func discoverVMTestDisks(t *testing.T) []vmTestDisk {
 		} else if !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("inspect block device %s: %v", sysfsPath, err)
 		}
+		serialBytes, err := os.ReadFile(filepath.Join(sysfsPath, "device", "serial"))
+		if err != nil {
+			continue
+		}
+		serial := strings.TrimSpace(string(serialBytes))
 		devicePath := filepath.Join("/dev", filepath.Base(sysfsPath))
-		output, runErr := exec.Command("/usr/sbin/smartctl", "--json", "-i", devicePath).Output()
-		var identity struct {
-			SerialNumber string `json:"serial_number"`
-			Smartctl     struct {
-				ExitStatus *int `json:"exit_status"`
-			} `json:"smartctl"`
+		if serial != "" {
+			observed = append(observed, fmt.Sprintf("%s=%s", devicePath, serial))
 		}
-		if err := json.Unmarshal(output, &identity); err != nil {
+		if _, ok := wantedSerials[serial]; !ok {
 			continue
 		}
-		if identity.SerialNumber != "" {
-			observed = append(observed, fmt.Sprintf("%s=%s", devicePath, identity.SerialNumber))
+		if previous := found[serial]; previous != "" {
+			t.Fatalf("serial %s found on both %s and %s", serial, previous, devicePath)
 		}
-		if _, ok := wantedSerials[identity.SerialNumber]; !ok {
-			continue
-		}
-		if runErr != nil && (identity.Smartctl.ExitStatus == nil || *identity.Smartctl.ExitStatus&smartctlCommandErrorMask != 0) {
-			t.Fatalf("identify test disk %s at %s: %v", identity.SerialNumber, devicePath, runErr)
-		}
-		if previous := found[identity.SerialNumber]; previous != "" {
-			t.Fatalf("serial %s found on both %s and %s", identity.SerialNumber, previous, devicePath)
-		}
-		found[identity.SerialNumber] = devicePath
+		found[serial] = devicePath
 	}
 
 	for index := range wanted {
 		wanted[index].path = found[wanted[index].serial]
 		if wanted[index].path == "" {
-			t.Fatalf("QEMU SATA disk %s not found through SMART; observed: %v", wanted[index].serial, observed)
+			t.Fatalf("QEMU SATA disk %s not found through sysfs; observed: %v", wanted[index].serial, observed)
 		}
 		t.Logf("discovered QEMU SATA disk %s at %s", wanted[index].serial, wanted[index].path)
 	}
 	return wanted
 }
 
-func TestVMQEMUSMARTCollector(t *testing.T) {
+func TestVMUnraidSMARTCacheCollector(t *testing.T) {
 	requireVMIntegrationTest(t)
 
 	devices := discoverVMTestDisks(t)
@@ -98,78 +87,47 @@ func TestVMQEMUSMARTCollector(t *testing.T) {
 		}
 	}
 
-	failureMarker := filepath.Join(t.TempDir(), "fail-"+devices[0].name)
-	var shim strings.Builder
-	shim.WriteString(`#!/usr/bin/env bash
-set -euo pipefail
-case "$1" in
-`)
-	for _, disk := range devices {
-		fmt.Fprintf(&shim, "    %s) device=%q ;;\n", disk.name, disk.path)
+	directory := t.TempDir()
+	paths := diskDataPaths{
+		disksINI:   filepath.Join(directory, "disks.ini"),
+		devsINI:    filepath.Join(directory, "devs.ini"),
+		smartDir:   filepath.Join(directory, "smart"),
+		diskConfig: filepath.Join(directory, "disk.cfg"),
 	}
-	fmt.Fprintf(&shim, `
-    *) echo "unknown UVSS test disk: $1" >&2; exit 2 ;;
-esac
-if [[ "$1" == %q && -e %q ]]; then
-    printf '{"smartctl":{"exit_status":2}}\n'
-    echo "smartctl: simulated device read failure" >&2
-    exit 2
-fi
-read -r -a options <<< "$2"
-exec /usr/sbin/smartctl "${options[@]}" "$device"
-`, devices[0].name, failureMarker)
-	if _, err := os.Stat(smartctlTypePath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("refusing to replace existing %s", smartctlTypePath)
-	}
-	if err := os.WriteFile(smartctlTypePath, []byte(shim.String()), 0755); err != nil {
+	if err := os.Mkdir(paths.smartDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Remove(smartctlTypePath) })
-
-	for _, disk := range devices {
-		cmd := exec.Command("/usr/sbin/smartctl", "--json", "-i", "-A", disk.path)
-		output, runErr := cmd.Output()
-		var report struct {
-			SerialNumber string `json:"serial_number"`
-			SmartSupport struct {
-				Available bool `json:"available"`
-				Enabled   bool `json:"enabled"`
-			} `json:"smart_support"`
-		}
-		if err := json.Unmarshal(output, &report); err != nil {
-			t.Fatalf("decode real SMART JSON for %s: %v; command error=%v", disk.path, err, runErr)
-		}
-		if report.SerialNumber != disk.serial {
-			t.Fatalf("SMART serial for %s = %q, want %s", disk.path, report.SerialNumber, disk.serial)
-		}
-		if !report.SmartSupport.Available || !report.SmartSupport.Enabled {
-			t.Fatalf("SMART support for %s = %#v", disk.path, report.SmartSupport)
-		}
-		temperature, standby, err := parseSMARTTemperature(disk.name, output, runErr)
-		if err != nil || standby || temperature != 31 {
-			t.Fatalf("real SMART temperature for %s = %v, standby=%v, err=%v; want 31", disk.path, temperature, standby, err)
-		}
+	if err := os.WriteFile(paths.devsINI, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.diskConfig, []byte("poll_attributes=30\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
 
-	directory := t.TempDir()
-	inventory := filepath.Join(directory, "disks.ini")
-	var ini strings.Builder
+	var inventory strings.Builder
 	for _, disk := range devices {
-		fmt.Fprintf(&ini, `[%q]
+		fmt.Fprintf(&inventory, `[%q]
 id=%q
 device=%q
 status="DISK_OK"
 rotational="1"
 transport="ata"
 spundown="0"
+temp="31"
 
 `, disk.name, disk.serial, filepath.Base(disk.path))
+		if err := os.WriteFile(filepath.Join(paths.smartDir, disk.name), []byte("QEMU SMART cache\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(inventory, []byte(ini.String()), 0600); err != nil {
+	if err := os.WriteFile(paths.disksINI, []byte(inventory.String()), 0600); err != nil {
 		t.Fatal(err)
 	}
-	collector := newDiskCollector(inventory, time.Minute)
-	collector.refresh(context.Background())
+
+	now := time.Now()
+	collector := newDiskCollector(paths)
+	collector.now = func() time.Time { return now }
+	collector.refresh()
 	readings, err := collector.snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -199,28 +157,35 @@ spundown="0"
 		}
 	}
 
-	t.Log("publish real SMART temperatures through virt_temp")
+	t.Log("publish Unraid-cached temperatures through virt_temp")
 	publish(readings, true)
 	for _, disk := range devices {
 		requireVMHWMonTemp(t, "disk", "disk:"+disk.serial, "31000")
 	}
 	requireVMHWMonTemp(t, "disk", "disk:group:hdd", "31000")
 
-	t.Log("a persistent SMART failure lets the failed disk and its group expire")
+	t.Log("an expired Unraid SMART cache lets the disk and its group reach failsafe")
 	if err := os.WriteFile("/sys/module/virt_temp/parameters/stale_timeout", []byte("1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(failureMarker, nil, 0600); err != nil {
+	freshness := smartFreshnessWindow(30 * time.Second)
+	old := now.Add(-freshness - time.Second)
+	if err := os.Chtimes(filepath.Join(paths.smartDir, devices[0].name), old, old); err != nil {
 		t.Fatal(err)
 	}
-	collector.refresh(context.Background())
+	collector.refresh()
+	now = now.Add(freshness)
+	if err := os.Chtimes(filepath.Join(paths.smartDir, devices[1].name), now, now); err != nil {
+		t.Fatal(err)
+	}
+	collector.refresh()
 	failedReadings, err := collector.snapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(failedReadings) != 2 || !failedReadings[0].Unavailable || failedReadings[0].Temp != 0 ||
 		failedReadings[1].Unavailable || failedReadings[1].Temp != 31 {
-		t.Fatalf("collector readings after SMART failure = %#v", failedReadings)
+		t.Fatalf("collector readings after cache expiry = %#v", failedReadings)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -237,11 +202,11 @@ spundown="0"
 	}
 	requireVMHWMonTemp(t, "disk", "disk:"+devices[1].serial, "31000")
 
-	t.Log("a successful SMART read recovers disk and group temperatures")
-	if err := os.Remove(failureMarker); err != nil {
+	t.Log("a fresh Unraid cache recovers disk and group temperatures")
+	if err := os.Chtimes(filepath.Join(paths.smartDir, devices[0].name), now, now); err != nil {
 		t.Fatal(err)
 	}
-	collector.refresh(context.Background())
+	collector.refresh()
 	recoveredReadings, err := collector.snapshot()
 	if err != nil {
 		t.Fatal(err)

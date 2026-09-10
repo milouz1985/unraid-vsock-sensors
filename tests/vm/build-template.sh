@@ -239,7 +239,7 @@ printf '%s  %s\n' "$GO_SHA256" "$GO_TARBALL" | sha256sum -c -
 log "Installing Proxmox kernel $PVE_KERNEL_RELEASE and test dependencies into the image"
 virt-customize \
     -a "$CUSTOM_IMAGE" \
-    --install 'qemu-guest-agent,openssh-server,ca-certificates,git,rsync,python3,smartmontools,lm-sensors,build-essential,make,gcc,pkg-config,kmod,php-cli,dkms' \
+    --install 'qemu-guest-agent,openssh-server,ca-certificates,git,rsync,python3,lm-sensors,build-essential,make,gcc,pkg-config,kmod,php-cli,dkms' \
     --upload "${PVE_KEYRING_FILE}:/usr/share/keyrings/uvss-proxmox.gpg" \
     --write "/etc/apt/sources.list.d/uvss-proxmox.sources:Types: deb
 URIs: http://download.proxmox.com/debian/pve
@@ -371,7 +371,6 @@ guest_exec 60 "/usr/sbin/modprobe vsock_loopback"
 guest_exec 60 "python3 -c 'import socket; s = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM); s.bind((socket.VMADDR_CID_ANY, 990)); s.listen(); s.close()'"
 guest_exec 60 "/usr/local/bin/go version | grep -q 'go${GO_VERSION} '"
 guest_exec 60 "command -v gcc >/dev/null"
-guest_exec 60 "command -v smartctl >/dev/null"
 guest_exec 60 "command -v sensors >/dev/null"
 guest_exec 60 "systemctl is-active --quiet qemu-guest-agent"
 

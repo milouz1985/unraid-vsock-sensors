@@ -6,7 +6,6 @@ Icon="icon.png"
 $plugin = 'unraid-vsock-sensors';
 $cfg = parse_plugin_cfg($plugin);
 $port = htmlspecialchars($cfg['PORT'] ?? '990', ENT_QUOTES);
-$diskInterval = $cfg['DISK_INTERVAL'] ?? '30s';
 $hbaMode = $cfg['HBA_MODE'] ?? 'enabled';
 $hbaBackend = $cfg['HBA_BACKEND'] ?? 'mpt3ctl';
 $hbaInterval = $cfg['HBA_INTERVAL'] ?? ($hbaBackend === 'storcli' ? '30s' : '15s');
@@ -18,6 +17,18 @@ $status = $running ? implode(' ', $statusOutput) : 'stopped';
 $version = trim((string)shell_exec('/usr/local/sbin/unraid-vsock-sensors version 2>/dev/null'));
 if ($version === '') {
     $version = 'unavailable';
+}
+$diskCfg = @parse_ini_file('/boot/config/disk.cfg');
+$pollRaw = is_array($diskCfg) ? ($diskCfg['poll_attributes'] ?? null) : null;
+$pollValid = is_string($pollRaw) && preg_match('/^\d+$/', $pollRaw) === 1;
+$pollAttributes = $pollValid ? filter_var($pollRaw, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]) : false;
+$pollValid = $pollValid && $pollAttributes !== false;
+if (!$pollValid) {
+    $pollDisplay = 'Unavailable (daemon freshness fallback: 30 seconds)';
+} elseif ($pollAttributes === 0) {
+    $pollDisplay = 'Disabled';
+} else {
+    $pollDisplay = $pollAttributes . ($pollAttributes === 1 ? ' second' : ' seconds');
 }
 ?>
 
@@ -63,15 +74,18 @@ _(VSOCK port)_:
 
 > The Proxmox receiver and the Unraid publisher must use the same port.
 
-_(Disk SMART refresh interval)_:
-: <select name="DISK_INTERVAL">
-<option value="30s" <?=$diskInterval === '30s' ? 'selected' : ''?>>30 seconds</option>
-<option value="1m" <?=$diskInterval === '1m' ? 'selected' : ''?>>1 minute</option>
-<option value="2m" <?=$diskInterval === '2m' ? 'selected' : ''?>>2 minutes</option>
-<option value="5m" <?=$diskInterval === '5m' ? 'selected' : ''?>>5 minutes</option>
-</select>
+_(Unraid SMART polling interval)_:
+: <?=htmlspecialchars($pollDisplay, ENT_QUOTES)?>
 
-> Active disks are collected in the background and each new state is pushed to Proxmox. Sleeping disks are not queried.
+<?php if (!$pollValid): ?>
+> The Unraid `poll_attributes` value is missing or invalid. The daemon uses a 30-second fallback only to assess cache freshness and does not modify Unraid settings.
+<?php elseif ($pollAttributes === 0): ?>
+> Automatic SMART polling is disabled in Unraid. Disk temperatures cannot remain fresh automatically.
+<?php elseif ($pollAttributes > 60): ?>
+> Unraid polls SMART data every <?=$pollAttributes?> seconds. Fan control may therefore react with several minutes of delay. Reduce the SMART polling interval in Unraid Disk Settings if faster reaction is required.
+<?php else: ?>
+> This read-only value comes from Unraid Disk Settings. Unraid remains the sole owner of hardware SMART polling.
+<?php endif; ?>
 
 _(HBA monitoring)_:
 : <select name="HBA_MODE">

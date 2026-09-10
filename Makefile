@@ -8,6 +8,7 @@ DEBIAN_REVISION ?= 1
 
 BASH_SCRIPTS := version.sh \
 	unraid-plugin/package.sh \
+	unraid-plugin/poll_attributes \
 	unraid-plugin/rc.unraid-vsock-sensors \
 	unraid-plugin/rc_test.sh \
 	unraid-plugin/service.sh \
