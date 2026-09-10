@@ -111,11 +111,14 @@ TEST_VMID=9900
 PVE_STORAGE=zfs-pve
 GUEST_USER=uvss-test
 GUEST_SSH_KEY="${HOME}/.ssh/id_ed25519"
+GUEST_SSH_PUBLIC_KEY="${GUEST_SSH_KEY}.pub"
+GUEST_SSH_IDENTITY_AGENT="${SSH_AUTH_SOCK:-}"
 ```
 
-Le poste doit disposer de `ssh`, `rsync`, `python3`, `git` et `sha256sum`.
+Le poste doit disposer de `ssh`, `ssh-add`, `ssh-keygen`, `rsync`, `python3`,
+`git` et `sha256sum`.
 La connexion SSH au nœud Proxmox doit fonctionner sans interaction, tout
-comme la connexion du poste au compte invité avec `GUEST_SSH_KEY`.
+comme l'utilisation de `GUEST_SSH_KEY` sans saisie interactive.
 Si la clé privée est protégée par une passphrase, la charger dans `ssh-agent`
 avant le test :
 
@@ -124,6 +127,12 @@ eval "$(ssh-agent -s)" # seulement si aucun agent n'est déjà disponible
 ssh-add ~/.ssh/id_ed25519
 ```
 
+Le runner vérifie avant de créer la VM que les clés privée et publique
+correspondent. Si la clé privée est chiffrée, il exige également que l'agent
+désigné par `GUEST_SSH_IDENTITY_AGENT` — ou par `SSH_AUTH_SOCK` — puisse
+l'utiliser. Il transmet explicitement cet agent à SSH, même si la configuration
+globale contient une autre directive `IdentityAgent`.
+
 Si la clé publique du poste n'est pas encore autorisée sur Proxmox, la mise en
 place initiale peut se faire avec :
 
@@ -131,9 +140,14 @@ place initiale peut se faire avec :
 ssh-copy-id -i ~/.ssh/id_ed25519.pub root@pve01.lan.home
 ```
 
-Le même fichier public doit être fourni à `SSH_PUBLIC_KEY_FILE` lors de la
-construction du template afin que le clone accepte `GUEST_SSH_KEY`.
-
+Après le démarrage de chaque clone, le runner attend la fin de Cloud-Init via
+QEMU Guest Agent puis ajoute `GUEST_SSH_PUBLIC_KEY` aux clés autorisées de
+`GUEST_USER`. Cette clé vaut `${GUEST_SSH_KEY}.pub` par défaut : chaque poste
+de développement peut donc accéder à son clone avec sa propre clé, même si le
+template a été construit depuis une autre machine. Seule la clé publique
+transite par Proxmox ; la clé privée reste sur le poste qui lance le test.
+`SSH_PUBLIC_KEY_SOURCE` et `SSH_PUBLIC_KEY_FILE` restent utilisés uniquement
+pour poser une clé initiale dans le template.
 Les valeurs de `template.env` prennent priorité sur les valeurs par défaut des
 scripts. Ne pas écraser un fichier déjà configuré lors d'une mise à jour.
 La version de Go du template possède une seule source de vérité :
@@ -230,8 +244,9 @@ session SSH persistante dans `/run/lock` sur Proxmox. Le verrou exclusif du
 clone se trouve au même endroit ; aucun verrou local ne prétend protéger les
 ressources de l'hyperviseur.
 
-Le runner crée ensuite un clone lié du template, attend QEMU Guest Agent,
-récupère son IPv4 avec `network-get-interfaces`, puis attend SSH et Cloud-Init.
+Le runner crée ensuite un clone lié du template, attend QEMU Guest Agent et la
+fin de Cloud-Init, injecte la clé publique du poste, récupère son IPv4 avec
+`network-get-interfaces`, puis attend SSH.
 Les fichiers listés par Git sont envoyés directement du poste au clone par
 `rsync`. Le transfert n'utilise plus QGA, base64 ou une archive intermédiaire
 et ne copie jamais le dépôt sur `PVE_HOST`. Il n'inclut ni `.git`, ni les
@@ -257,9 +272,10 @@ Dans le parcours principal, `guest-tests.sh` lance :
 
 1. la compilation de `virt-temp.ko` avec les headers du noyau actif ;
 2. `go test -tags=integration -count=1 -run '^TestVM' .` ;
-3. dans le parcours paquet, `package-tests.sh` construit deux versions du `.deb`,
-   puis teste installation, mise à jour, remove et purge avec le vrai DKMS et
-   systemd.
+3. dans le parcours paquet, `package-tests.sh` construit quatre versions du
+   `.deb`, puis teste installation, mise à jour, échec volontaire d'une
+   compilation DKMS, récupération par la version suivante, remove et purge
+   avec le vrai DKMS et systemd.
 
 Le test charge le vrai module et vérifie la configuration disque/HBA, les
 valeurs et labels sysfs, les écritures sans commit, la propagation d'une
@@ -277,7 +293,14 @@ silencieusement les tests si les prérequis manquent. Ne pas la lancer sur
 un hôte de production. Elle retire le module à la fin du test hwmon. Le test
 du paquet installe le module via DKMS, vérifie le service et la version installée
 pour le noyau courant, puis contrôle la conservation de la configuration lors
-des mises à jour et retraits, et sa suppression lors de la purge. Le service
+des mises à jour et retraits, et sa suppression lors de la purge. Le paquet
+volontairement cassé contient une directive `#error` ajoutée après sa
+construction. Le test exige que son installation échoue, journalise l'état de
+`dpkg`, de DKMS, du module et du service, puis vérifie que le paquet reste
+`half-configured`, que l'ancienne version DKMS a été désenregistrée et que le
+module précédemment chargé reste actif. Il installe ensuite une version valide
+plus récente et exige que celle-ci répare complètement l'installation et
+retire l'enregistrement DKMS cassé. Le service
 écoute sur VSOCK avec `vsock_loopback` dans la VM ; ce contrôle de démarrage
 n'envoie pas de snapshots et ne prétend pas tester le transport entre deux
 machines.

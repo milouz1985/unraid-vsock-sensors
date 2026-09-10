@@ -52,11 +52,52 @@ check_unregistered() {
     [[ -z "$status" ]]
 }
 
+check_failed_upgrade() {
+    local old_version="$1" failed_version="$2" package_status dkms_status
+
+    package_status="$(dpkg-query -W -f='${Status}' "$package")"
+    dkms_status="$(dkms status -m virt-temp -v "$failed_version" 2>/dev/null || true)"
+
+    echo "State after the intentionally failed upgrade:"
+    printf '  package version: %s\n' "$(dpkg-query -W -f='${Version}' "$package")"
+    printf '  package status:  %s\n' "$package_status"
+    printf '  old DKMS:        %s\n' \
+        "$(dkms status -m virt-temp -v "$old_version" 2>/dev/null || true)"
+    printf '  failed DKMS:     %s\n' "$dkms_status"
+    printf '  loaded module:   %s\n' "$(grep '^virt_temp ' /proc/modules || true)"
+    printf '  service:         %s\n' "$(systemctl is-active "$service" 2>/dev/null || true)"
+    dpkg --audit || true
+
+    [[ "$(dpkg-query -W -f='${Version}' "$package")" == "$failed_version-1" ]]
+    [[ "$package_status" == "install ok half-configured" ]]
+    check_unregistered "$old_version"
+    [[ "$dkms_status" == *': added'* ]]
+    grep -Fq 'UVSS_VM_INTENTIONAL_DKMS_FAILURE' \
+        "/var/lib/dkms/virt-temp/$failed_version/build/make.log"
+    [[ -d /sys/module/virt_temp && -c /dev/virt-temp ]]
+    systemctl is-active --quiet "$service"
+}
+
 echo "Building and installing the Debian package on kernel $kernel"
 start_timing
-for version in 0.0.0-vmtest.1 0.0.0-vmtest.2; do
+for version in \
+    0.0.0-vmtest.1 \
+    0.0.0-vmtest.2 \
+    0.0.0-vmtest.3 \
+    0.0.0-vmtest.4; do
     make hwmon-package VERSION="$version"
 done
+
+failed_version=0.0.0-vmtest.3
+failed_root="$(mktemp -d /var/tmp/uvss-failed-package.XXXXXX)"
+failed_package="$PWD/dist/${package}_${failed_version}-1_amd64-failed.deb"
+trap 'rm -rf -- "$failed_root"' EXIT
+dpkg-deb -R \
+    "$PWD/dist/${package}_${failed_version}-1_amd64.deb" \
+    "$failed_root"
+printf '\n#error UVSS_VM_INTENTIONAL_DKMS_FAILURE\n' >> \
+    "$failed_root/usr/src/virt-temp-$failed_version/virt-temp.c"
+dpkg-deb --build --root-owner-group "$failed_root" "$failed_package" >/dev/null
 timing "package: builds"
 install_version 0.0.0-vmtest.1
 timing "package: install"
@@ -71,6 +112,24 @@ timing "package: upgrade"
 cmp -- "$config" /var/tmp/uvss-expected-config
 check_unregistered 0.0.0-vmtest.1
 
+echo "Checking state after an intentionally failed DKMS upgrade"
+if apt-get install -y --no-install-recommends "$failed_package"; then
+    echo "The intentionally broken DKMS upgrade unexpectedly succeeded" >&2
+    exit 1
+fi
+timing "package: failed upgrade"
+check_failed_upgrade 0.0.0-vmtest.2 "$failed_version"
+cmp -- "$config" /var/tmp/uvss-expected-config
+[[ -f "$cache" ]]
+
+echo "Checking recovery by upgrading the half-configured package"
+install_version 0.0.0-vmtest.4
+timing "package: recovery upgrade"
+check_unregistered 0.0.0-vmtest.2
+check_unregistered "$failed_version"
+cmp -- "$config" /var/tmp/uvss-expected-config
+[[ -f "$cache" ]]
+
 echo "Checking package removal preserves configuration and unloads the module"
 apt-get remove -y "$package"
 if systemctl is-active --quiet "$service"; then
@@ -78,7 +137,7 @@ if systemctl is-active --quiet "$service"; then
 fi
 [[ ! -d /sys/module/virt_temp && ! -e /dev/virt-temp ]]
 [[ ! -e /usr/bin/unraid-vsock-sensors ]]
-check_unregistered 0.0.0-vmtest.2
+check_unregistered 0.0.0-vmtest.4
 cmp -- "$config" /var/tmp/uvss-expected-config
 [[ -f "$cache" ]]
 timing "package: remove"
@@ -86,6 +145,6 @@ timing "package: remove"
 echo "Checking purge removes the preserved configuration"
 apt-get purge -y "$package"
 [[ ! -e "$config" && ! -e "$cache" && ! -d /sys/module/virt_temp ]]
-check_unregistered 0.0.0-vmtest.2
+check_unregistered 0.0.0-vmtest.4
 timing "package: purge"
 echo "Package and DKMS lifecycle checks passed on $kernel"

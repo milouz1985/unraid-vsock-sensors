@@ -23,6 +23,8 @@ VMID="${TEST_VMID:-9900}"
 PVE_STORAGE="${PVE_STORAGE:-${STORAGE:-zfs-pve}}"
 GUEST_USER="${GUEST_USER:-uvss-test}"
 GUEST_SSH_KEY="${GUEST_SSH_KEY:-${HOME}/.ssh/id_ed25519}"
+GUEST_SSH_PUBLIC_KEY="${GUEST_SSH_PUBLIC_KEY:-${GUEST_SSH_KEY}.pub}"
+GUEST_SSH_IDENTITY_AGENT="${GUEST_SSH_IDENTITY_AGENT:-${SSH_AUTH_SOCK:-}}"
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-300}"
 CLOUD_INIT_TIMEOUT="${CLOUD_INIT_TIMEOUT:-600}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-1800}"
@@ -32,7 +34,7 @@ KEEP="${TEST_VM_KEEP:-0}"
 if [[ "${1:-}" == --keep ]]; then KEEP=1; shift; fi
 (( $# == 0 )) || { usage >&2; exit 2; }
 
-for cmd in ssh rsync python3 git sha256sum; do
+for cmd in ssh ssh-add ssh-keygen rsync python3 git sha256sum; do
     command -v "$cmd" >/dev/null || die "Required command not found: $cmd"
 done
 for name in TEMPLATE_VMID VMID BOOT_TIMEOUT CLOUD_INIT_TIMEOUT TEST_TIMEOUT TEST_DISK_SIZE_GIB; do
@@ -45,6 +47,23 @@ done
 [[ -n "$PVE_SSH_USER" && -n "$PVE_STORAGE" && -n "$GUEST_USER" ]] ||
     die "PVE_SSH_USER, PVE_STORAGE and GUEST_USER must not be empty"
 [[ -r "$GUEST_SSH_KEY" ]] || die "Guest SSH private key not readable: $GUEST_SSH_KEY"
+[[ -r "$GUEST_SSH_PUBLIC_KEY" ]] ||
+    die "Guest SSH public key not readable: $GUEST_SSH_PUBLIC_KEY"
+ssh-keygen -lf "$GUEST_SSH_PUBLIC_KEY" >/dev/null ||
+    die "Guest SSH public key is invalid: $GUEST_SSH_PUBLIC_KEY"
+private_fingerprint="$(ssh-keygen -lf "$GUEST_SSH_KEY" | awk '{print $2}')"
+public_fingerprint="$(ssh-keygen -lf "$GUEST_SSH_PUBLIC_KEY" | awk '{print $2}')"
+[[ "$private_fingerprint" == "$public_fingerprint" ]] ||
+    die "GUEST_SSH_PUBLIC_KEY does not match GUEST_SSH_KEY"
+if ! ssh-keygen -y -P '' -f "$GUEST_SSH_KEY" >/dev/null 2>&1; then
+    if [[ -z "$GUEST_SSH_IDENTITY_AGENT" && -S "${HOME}/.ssh/agent.sock" ]]; then
+        GUEST_SSH_IDENTITY_AGENT="${HOME}/.ssh/agent.sock"
+    fi
+    [[ -n "$GUEST_SSH_IDENTITY_AGENT" && -S "$GUEST_SSH_IDENTITY_AGENT" ]] ||
+        die "Guest SSH key is encrypted; load it in ssh-agent before running the VM tests"
+    SSH_AUTH_SOCK="$GUEST_SSH_IDENTITY_AGENT" ssh-add -T "$GUEST_SSH_PUBLIC_KEY" >/dev/null ||
+        die "The SSH agent cannot use GUEST_SSH_KEY"
+fi
 [[ "$VMID" != "$TEMPLATE_VMID" ]] || die "TEST_VMID must differ from TEMPLATE_VMID"
 
 PVE_TARGET="${PVE_SSH_USER}@${PVE_HOST}"
@@ -57,6 +76,13 @@ pve() {
 shell_quote() {
     local value="$1"
     printf "'%s'" "${value//\'/\'\\\'\'}"
+}
+
+pve_guest_exec() {
+    local seconds="$1" command="$2" input="${3:-/dev/null}" result remote_command
+    remote_command="qm guest exec $VMID --timeout $((seconds + 15)) --pass-stdin 1 -- /usr/bin/timeout $seconds /bin/bash -euo pipefail -c $(shell_quote "$command")"
+    result="$(pve bash -c "$(shell_quote "$remote_command")" < "$input")" || return
+    check_guest_exec_result <<< "$result"
 }
 
 WORK_DIR="$(mktemp -d /tmp/uvss-test.XXXXXX)"
@@ -142,6 +168,7 @@ SOURCE_SHA256="$(sha256sum "$WORK_DIR/source.sha256" | awk '{print $1}')"
     printf 'PVE kernel target: %s\n' "$PVE_KERNEL_RELEASE"
     printf 'Template image version: %s\n' "$UVSS_TEST_IMAGE_VERSION"
     printf 'Go toolchain: %s\n' "$(tr -d '[:space:]' < "$SCRIPT_DIR/go-version")"
+    printf 'Guest SSH key: %s\n' "$(ssh-keygen -lf "$GUEST_SSH_PUBLIC_KEY")"
     printf 'VM test suite: %s\n' "$VM_TEST_SUITE"
 } > "$WORK_DIR/uvss-test-metadata"
 
@@ -166,6 +193,34 @@ until pve qm guest cmd "$VMID" ping >/dev/null 2>&1; do
     sleep 3
 done
 timing "boot -> QGA"
+
+# Use QGA until SSH is available. Cloud-Init must finish before the key is
+# installed because it is allowed to rewrite authorized_keys.
+guest_exec() {
+    pve_guest_exec "$@"
+}
+echo "Waiting for Cloud-Init through QEMU Guest Agent"
+wait_for_cloud_init
+timing "Cloud-Init"
+
+echo "Authorizing this workstation's SSH key in the guest"
+guest_user="$(shell_quote "$GUEST_USER")"
+pve_guest_exec 30 "
+guest_user=$guest_user
+guest_home=\$(getent passwd \"\$guest_user\" | cut -d: -f6)
+guest_group=\$(id -gn \"\$guest_user\")
+test -n \"\$guest_home\"
+install -d -m 0700 -o \"\$guest_user\" -g \"\$guest_group\" \"\$guest_home/.ssh\"
+authorized_keys=\"\$guest_home/.ssh/authorized_keys\"
+touch \"\$authorized_keys\"
+chown \"\$guest_user:\$guest_group\" \"\$authorized_keys\"
+chmod 0600 \"\$authorized_keys\"
+public_key=\$(cat)
+test -n \"\$public_key\"
+grep -Fqx -- \"\$public_key\" \"\$authorized_keys\" ||
+    printf '%s\\n' \"\$public_key\" >> \"\$authorized_keys\"
+" "$GUEST_SSH_PUBLIC_KEY"
+timing "guest SSH key"
 
 echo "Discovering guest IP"
 deadline=$((SECONDS + BOOT_TIMEOUT))
@@ -200,8 +255,13 @@ timing "QGA -> IP"
 
 GUEST_TARGET="${GUEST_USER}@${GUEST_IP}"
 GUEST_KNOWN_HOSTS="$WORK_DIR/known_hosts"
-GUEST_SSH=(ssh -i "$GUEST_SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 \
-    -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$GUEST_KNOWN_HOSTS" -- "$GUEST_TARGET")
+GUEST_SSH=(ssh -i "$GUEST_SSH_KEY")
+if [[ -n "$GUEST_SSH_IDENTITY_AGENT" ]]; then
+    GUEST_SSH+=(-o "IdentityAgent=$GUEST_SSH_IDENTITY_AGENT")
+fi
+GUEST_SSH+=(-o BatchMode=yes -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$GUEST_KNOWN_HOSTS" \
+    -- "$GUEST_TARGET")
 guest() {
     "${GUEST_SSH[@]}" "$@"
 }
@@ -217,14 +277,16 @@ until guest true >/dev/null 2>&1; do
     sleep 3
 done
 timing "IP -> SSH"
-wait_for_cloud_init
-timing "Cloud-Init"
 verify_guest_template
 timing "template verification"
 
 echo "Uploading working tree"
 guest 'rm -rf /var/tmp/uvss-source && mkdir -p /var/tmp/uvss-source'
-RSYNC_SSH="ssh -i $GUEST_SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$GUEST_KNOWN_HOSTS"
+RSYNC_SSH="ssh -i $GUEST_SSH_KEY"
+if [[ -n "$GUEST_SSH_IDENTITY_AGENT" ]]; then
+    RSYNC_SSH+=" -o IdentityAgent=$GUEST_SSH_IDENTITY_AGENT"
+fi
+RSYNC_SSH+=" -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$GUEST_KNOWN_HOSTS"
 rsync -a --from0 --files-from="$WORK_DIR/files" -e "$RSYNC_SSH" \
     "$REPO_DIR/" "$GUEST_TARGET:/var/tmp/uvss-source/"
 rsync -a -e "$RSYNC_SSH" "$WORK_DIR/uvss-test-metadata" "$WORK_DIR/source.sha256" \

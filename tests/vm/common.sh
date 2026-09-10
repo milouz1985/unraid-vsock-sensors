@@ -64,11 +64,8 @@ wait_for_vm_stopped() {
 }
 
 # qm can return a PID without an exit code when its own timeout expires.
-# Bound the command in the guest first, and require a completed JSON result.
-guest_exec() {
-    local seconds="$1" command="$2" input="${3:-/dev/null}" result
-    result="$(qm guest exec "$VMID" --timeout "$((seconds + 15))" --pass-stdin 1 \
-        -- /usr/bin/timeout "$seconds" /bin/bash -euo pipefail -c "$command" < "$input")" || return
+# Require a completed JSON result and reproduce the guest command's status.
+check_guest_exec_result() {
     python3 -c '
 import json, sys
 result = json.load(sys.stdin)
@@ -79,7 +76,15 @@ if not result.get("exited") or "exitcode" not in result:
 if result.get("out-truncated") or result.get("err-truncated"):
     print("Guest output truncated; consult /var/tmp/uvss-tests.log in the VM", file=sys.stderr)
 sys.exit(0 if result["exitcode"] == 0 else 1)
-' <<< "$result"
+'
+}
+
+# Bound the command in the guest before qm applies its own timeout.
+guest_exec() {
+    local seconds="$1" command="$2" input="${3:-/dev/null}" result
+    result="$(qm guest exec "$VMID" --timeout "$((seconds + 15))" --pass-stdin 1 \
+        -- /usr/bin/timeout "$seconds" /bin/bash -euo pipefail -c "$command" < "$input")" || return
+    check_guest_exec_result <<< "$result"
 }
 
 wait_for_guest() {
