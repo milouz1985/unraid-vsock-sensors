@@ -40,7 +40,9 @@ func (d Disk) Kind() DiskKind {
 		return DiskKindHDD
 	case strings.EqualFold(d.Transport, "nvme") || strings.HasPrefix(d.Device, "nvme"):
 		return DiskKindNVMe
-	case strings.EqualFold(d.Transport, "ata"):
+	case strings.EqualFold(d.Transport, "ata"),
+		strings.EqualFold(d.Transport, "scsi-sata"),
+		strings.EqualFold(d.Transport, "scsi-1ata"):
 		return DiskKindSATASSD
 	default:
 		return DiskKindOtherSSD
