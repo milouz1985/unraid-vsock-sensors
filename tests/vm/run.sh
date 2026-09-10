@@ -78,6 +78,18 @@ shell_quote() {
     printf "'%s'" "${value//\'/\'\\\'\'}"
 }
 
+rsync_shell_command() {
+    local command="" argument
+    for argument; do
+        [[ -z "$command" ]] || command+=" "
+        # rsync's --rsh parser preserves spaces inside quotes and represents a
+        # literal quote by doubling it; it does not use shell backslash quoting.
+        argument="${argument//\'/\'\'}"
+        command+="'$argument'"
+    done
+    printf '%s' "$command"
+}
+
 pve_guest_exec() {
     local seconds="$1" command="$2" input="${3:-/dev/null}" result remote_command
     require_pve_lock "QEMU Guest Agent command"
@@ -281,13 +293,13 @@ timing "QGA -> IP"
 
 GUEST_TARGET="${GUEST_USER}@${GUEST_IP}"
 GUEST_KNOWN_HOSTS="$WORK_DIR/known_hosts"
-GUEST_SSH=(ssh -i "$GUEST_SSH_KEY")
+GUEST_SSH_OPTIONS=(-i "$GUEST_SSH_KEY")
 if [[ -n "$GUEST_SSH_IDENTITY_AGENT" ]]; then
-    GUEST_SSH+=(-o "IdentityAgent=$GUEST_SSH_IDENTITY_AGENT")
+    GUEST_SSH_OPTIONS+=(-o "IdentityAgent=$GUEST_SSH_IDENTITY_AGENT")
 fi
-GUEST_SSH+=(-o BatchMode=yes -o ConnectTimeout=10 \
-    -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$GUEST_KNOWN_HOSTS" \
-    -- "$GUEST_TARGET")
+GUEST_SSH_OPTIONS+=(-o BatchMode=yes -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$GUEST_KNOWN_HOSTS")
+GUEST_SSH=(ssh "${GUEST_SSH_OPTIONS[@]}" -- "$GUEST_TARGET")
 guest() {
     "${GUEST_SSH[@]}" "$@"
 }
@@ -308,11 +320,7 @@ timing "template verification"
 
 echo "Uploading working tree"
 guest 'rm -rf /var/tmp/uvss-source && mkdir -p /var/tmp/uvss-source'
-RSYNC_SSH="ssh -i $GUEST_SSH_KEY"
-if [[ -n "$GUEST_SSH_IDENTITY_AGENT" ]]; then
-    RSYNC_SSH+=" -o IdentityAgent=$GUEST_SSH_IDENTITY_AGENT"
-fi
-RSYNC_SSH+=" -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$GUEST_KNOWN_HOSTS"
+RSYNC_SSH="$(rsync_shell_command ssh "${GUEST_SSH_OPTIONS[@]}")"
 rsync -a --from0 --files-from="$WORK_DIR/files" -e "$RSYNC_SSH" \
     "$REPO_DIR/" "$GUEST_TARGET:/var/tmp/uvss-source/"
 rsync -a -e "$RSYNC_SSH" "$WORK_DIR/uvss-test-metadata" "$WORK_DIR/source.sha256" \
