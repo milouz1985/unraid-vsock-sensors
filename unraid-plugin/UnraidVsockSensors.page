@@ -8,9 +8,6 @@ $cfg = parse_plugin_cfg($plugin);
 $port = htmlspecialchars($cfg['PORT'] ?? '990', ENT_QUOTES);
 $diskInterval = $cfg['DISK_INTERVAL'] ?? '30s';
 $hbaMode = $cfg['HBA_MODE'] ?? 'enabled';
-if ($hbaMode === 'auto') {
-    $hbaMode = 'enabled';
-}
 $hbaBackend = $cfg['HBA_BACKEND'] ?? 'mpt3ctl';
 $hbaInterval = $cfg['HBA_INTERVAL'] ?? ($hbaBackend === 'storcli' ? '30s' : '15s');
 
