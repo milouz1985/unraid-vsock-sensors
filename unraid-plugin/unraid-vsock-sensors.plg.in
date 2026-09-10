@@ -22,7 +22,7 @@ the CoolerControl plugin without querying sleeping disks.
 ### &version;
 
 - Package the VSOCK sensor publisher as an Unraid plugin.
-- Add service status, version, start, stop, restart, port and HBA cache settings.
+- Add service status, version, start, stop, restart, port, HBA mode, backend and interval settings.
 </CHANGES>
 
 <FILE Name="&cfgdir;/&package;" Run="/sbin/upgradepkg --install-new --reinstall">

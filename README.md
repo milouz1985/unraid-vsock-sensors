@@ -492,15 +492,17 @@ ssh -t root@pve01.lan.home \
     'cd /root/uvss-template-builder && bash build-template.sh --replace'
 ```
 
-Les fichiers du builder, l'unique configuration locale `template.env` ignorée
-par Git et la clé publique configurée sont copiés sur Proxmox. La procédure
-complète, notamment la vérification préalable de l'installation de
-`libguestfs-tools`, est décrite dans [`tests/vm/README.md`](tests/vm/README.md).
+Les fichiers du builder et l'unique configuration locale `template.env`
+ignorée par Git sont copiés sur Proxmox. La procédure complète, notamment la
+vérification préalable de l'installation de `libguestfs-tools`, est décrite
+dans [`tests/vm/README.md`](tests/vm/README.md).
 
 Le test d'intégration utilise `/dev/virt-temp` et sysfs pour vérifier les
 températures, le failsafe et la récupération après rechargement du module.
-Il remplace la simulation de l'erreur `ESTALE` et permet de retirer le writer
-injecté uniquement pour les tests. Les tests unitaires restent accessibles
+Il supprime la nécessité de simuler le comportement du noyau et l'erreur
+`ESTALE`. L'injection interne via `publishHWMonFamilyWithWriter()` reste
+utilisée par les tests unitaires ciblés sur les erreurs du publisher. Les tests
+unitaires restent accessibles
 avec `make check` et `make test-race`. La VM est supprimée après succès et
 conservée après échec.
 
