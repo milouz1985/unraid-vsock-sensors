@@ -18,14 +18,6 @@ PVE_TEMPLATE_DIR="${PVE_TEMPLATE_DIR:-/root/uvss-template-builder}"
     echo "PVE_TEMPLATE_DIR must be an absolute path without shell metacharacters." >&2
     exit 2
 }
-SSH_PUBLIC_KEY_SOURCE="${SSH_PUBLIC_KEY_SOURCE:-${HOME}/.ssh/id_ed25519.pub}"
-SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE:-${SCRIPT_DIR}/id_ed25519.pub}"
-SSH_PUBLIC_KEY_NAME="${SSH_PUBLIC_KEY_FILE##*/}"
-[[ -r "$SSH_PUBLIC_KEY_SOURCE" ]] || {
-    echo "SSH public key not readable: $SSH_PUBLIC_KEY_SOURCE" >&2
-    exit 1
-}
-
 PVE_TARGET="${PVE_SSH_USER}@${PVE_HOST}"
 
 # PVE_TEMPLATE_DIR is validated above and intentionally expanded by the client.
@@ -39,10 +31,6 @@ rsync -av \
     "$SCRIPT_DIR/go-version" \
     "$SCRIPT_DIR/template.env" \
     "$PVE_TARGET:${PVE_TEMPLATE_DIR}/"
-
-rsync -av \
-    "$SSH_PUBLIC_KEY_SOURCE" \
-    "$PVE_TARGET:${PVE_TEMPLATE_DIR}/${SSH_PUBLIC_KEY_NAME}"
 
 if [[ "${1:-}" == "--rebuild" ]]; then
     # PVE_TEMPLATE_DIR is validated above and intentionally expanded by the client.

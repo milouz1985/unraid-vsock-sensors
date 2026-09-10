@@ -210,6 +210,10 @@ guest_user=$guest_user
 guest_home=\$(getent passwd \"\$guest_user\" | cut -d: -f6)
 guest_group=\$(id -gn \"\$guest_user\")
 test -n \"\$guest_home\"
+test ! -s \"\$guest_home/.ssh/authorized_keys\" || {
+    echo \"The clone already contains an authorized SSH key\" >&2
+    exit 1
+}
 install -d -m 0700 -o \"\$guest_user\" -g \"\$guest_group\" \"\$guest_home/.ssh\"
 authorized_keys=\"\$guest_home/.ssh/authorized_keys\"
 touch \"\$authorized_keys\"

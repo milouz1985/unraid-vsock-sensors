@@ -26,11 +26,8 @@ cp tests/vm/template.env.example tests/vm/template.env
 make vm-template-sync
 ```
 
-La synchronisation utilise `PVE_HOST`, `PVE_SSH_USER`,
-`PVE_TEMPLATE_DIR` et `SSH_PUBLIC_KEY_SOURCE` dans `template.env`. La clé
-publique locale est copiée à côté du builder ; `SSH_PUBLIC_KEY_FILE` désigne
-son emplacement dans ce répertoire sur Proxmox. La commande manuelle
-équivalente est :
+La synchronisation utilise `PVE_HOST`, `PVE_SSH_USER` et `PVE_TEMPLATE_DIR`
+dans `template.env`. La commande manuelle équivalente est :
 
 ```sh
 ssh root@pve01.lan.home \
@@ -41,7 +38,6 @@ rsync -av \
     tests/vm/common.sh \
     tests/vm/go-version \
     tests/vm/template.env \
-    ~/.ssh/id_ed25519.pub \
     root@pve01.lan.home:/root/uvss-template-builder/
 ```
 
@@ -52,14 +48,13 @@ VMID=9000
 STORAGE=zfs-pve
 BRIDGE=vmbr0
 CI_USER=uvss-test
-SSH_PUBLIC_KEY_FILE="${SCRIPT_DIR}/id_ed25519.pub"
 IPCONFIG0="ip=dhcp,ip6=auto"
 NAMESERVER="192.168.50.1"
 SEARCHDOMAIN="lan.home"
 ```
 
 La clé privée `~/.ssh/id_ed25519` reste exclusivement sur le poste de
-développement. Seul son fichier public `.pub` est envoyé au builder.
+développement. La synchronisation du builder ne copie aucune clé.
 
 Le nœud doit disposer d'un stockage acceptant les disques VM, d'un bridge et
 d'un accès aux téléchargements Debian, Proxmox et Go. Le template et les
@@ -97,15 +92,14 @@ ssh -t root@pve01.lan.home \
     'cd /root/uvss-template-builder && bash build-template.sh'
 ```
 
-Le builder utilise ses variables `VMID`, `STORAGE`, `BRIDGE` et
-`SSH_PUBLIC_KEY_FILE`. `template.env` est un fichier shell local de confiance,
-ignoré par Git. Sa section runner contient notamment :
+Le builder utilise notamment ses variables `VMID`, `STORAGE`, `BRIDGE` et
+`CI_USER`. `template.env` est un fichier shell local de confiance, ignoré par
+Git. Sa section runner contient notamment :
 
 ```sh
 PVE_HOST=pve01.lan.home
 PVE_SSH_USER=root
 PVE_TEMPLATE_DIR=/root/uvss-template-builder
-SSH_PUBLIC_KEY_SOURCE="${HOME}/.ssh/id_ed25519.pub"
 TEMPLATE_VMID=9000
 TEST_VMID=9900
 PVE_STORAGE=zfs-pve
@@ -146,8 +140,10 @@ QEMU Guest Agent puis ajoute `GUEST_SSH_PUBLIC_KEY` aux clés autorisées de
 de développement peut donc accéder à son clone avec sa propre clé, même si le
 template a été construit depuis une autre machine. Seule la clé publique
 transite par Proxmox ; la clé privée reste sur le poste qui lance le test.
-`SSH_PUBLIC_KEY_SOURCE` et `SSH_PUBLIC_KEY_FILE` restent utilisés uniquement
-pour poser une clé initiale dans le template.
+Le template ne contient donc aucune clé utilisateur préinstallée et n'a pas
+besoin d'être reconstruit lorsqu'un autre poste utilise une autre paire de
+clés. Le runner vérifie avant l'injection que le clone ne contient pas déjà de
+fichier `authorized_keys` non vide.
 Les valeurs de `template.env` prennent priorité sur les valeurs par défaut des
 scripts. Ne pas écraser un fichier déjà configuré lors d'une mise à jour.
 La version de Go du template possède une seule source de vérité :

@@ -20,7 +20,6 @@ PVE_KEYRING_FILE="${PVE_KEYRING_FILE:-/usr/share/keyrings/proxmox-archive-keyrin
 PVE_REPO_COMPONENT="${PVE_REPO_COMPONENT:-pve-no-subscription}"
 
 CI_USER="${CI_USER:-uvss-test}"
-SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE:-${HOME}/.ssh/id_ed25519.pub}"
 
 DISK_SIZE="${DISK_SIZE:-16G}"
 CORES="${CORES:-2}"
@@ -151,12 +150,6 @@ if vm_exists; then
     qm config "$VMID" | grep -Eq '^tags: ([^;]+;)*uvss-test-template(;|$)' ||
         die "Refusing to replace VM $VMID without the uvss-test-template tag"
 fi
-
-[[ -r "$SSH_PUBLIC_KEY_FILE" ]] ||
-    die "SSH public key not readable: ${SSH_PUBLIC_KEY_FILE}"
-
-grep -Eq '^(ssh-(ed25519|rsa)|ecdsa-sha2-)' "$SSH_PUBLIC_KEY_FILE" ||
-    die "${SSH_PUBLIC_KEY_FILE} does not look like an OpenSSH public key"
 
 pvesm status | awk 'NR > 1 {print $1}' | grep -Fxq "$STORAGE" ||
     die "Proxmox storage '${STORAGE}' not found"
@@ -324,7 +317,6 @@ log "Adding standard Proxmox Cloud-Init configuration"
 qm set "$VMID" --ide2 "${STORAGE}:cloudinit"
 qm set "$VMID" --ciuser "$CI_USER"
 qm set "$VMID" --ciupgrade 0
-qm set "$VMID" --sshkeys "$SSH_PUBLIC_KEY_FILE"
 qm set "$VMID" --ipconfig0 "$IPCONFIG0"
 
 if [[ -n "$NAMESERVER" ]]; then
