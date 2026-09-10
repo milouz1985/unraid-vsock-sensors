@@ -502,9 +502,8 @@ températures, le failsafe et la récupération après rechargement du module.
 Il supprime la nécessité de simuler le comportement du noyau et l'erreur
 `ESTALE`. L'injection interne via `publishHWMonFamilyWithWriter()` reste
 utilisée par les tests unitaires ciblés sur les erreurs du publisher. Les tests
-unitaires restent accessibles
-avec `make check` et `make test-race`. La VM est supprimée après succès et
-conservée après échec.
+unitaires restent accessibles avec `make check` et `make test-race`. La VM est
+supprimée après succès et conservée après échec.
 
 Le template démarre le noyau Proxmox exact demandé, avec ses headers. Par
 défaut, la cible est le noyau courant de l'hôte ; `PVE_KERNEL_RELEASE` permet
@@ -590,7 +589,7 @@ git tag -a vX.Y.Z -m "Release vX.Y.Z"
 git push origin main vX.Y.Z
 ```
 
-Joindre à la release Gitea :
+Joindre à la release GitHub :
 
 - `dist/unraid-vsock-sensors-X.Y.Z-x86_64-1.txz` ;
 - `dist/unraid-vsock-sensors-hwmon_X.Y.Z-1_amd64.deb`.

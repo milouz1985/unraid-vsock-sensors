@@ -281,8 +281,10 @@ Le test charge le vrai module et vérifie la configuration disque/HBA, les
 valeurs et labels sysfs, les écritures sans commit, la propagation d'une
 erreur réelle d'écriture, le retrait de sondes, le failsafe et sa récupération.
 Il décharge et recharge aussi le module, constate le vrai `ESTALE` puis
-vérifie la reconfiguration par le code Go de production. Ce scénario remplace
-le writer injecté et les deux tests qui simulaient ses erreurs.
+vérifie la reconfiguration par le code Go de production. Ce scénario supprime
+la nécessité de simuler le comportement du noyau et l'erreur `ESTALE`.
+L'injection interne via `publishHWMonFamilyWithWriter()` reste utilisée par les
+tests unitaires ciblés sur les erreurs du publisher.
 Le test vérifie également `/sys/class/hwmon/hwmonN/name`. Après un rechargement
 du module, il restaure un cache réel et exige la présence immédiate des sondes
 à `100000` milli°C.
