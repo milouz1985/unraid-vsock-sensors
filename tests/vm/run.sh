@@ -113,7 +113,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Connecting to Proxmox host $PVE_TARGET"
-pve true || die "SSH authentication to $PVE_TARGET failed; authorize the key or load an encrypted key with: ssh-add $GUEST_SSH_KEY"
+pve true || die "SSH authentication to $PVE_TARGET failed; verify your SSH configuration or load the key used for Proxmox into ssh-agent"
 PVE_KERNEL_RELEASE="${PVE_KERNEL_RELEASE:-$(pve uname -r)}"
 resolve_pve_kernel
 
