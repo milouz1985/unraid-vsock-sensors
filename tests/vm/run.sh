@@ -80,6 +80,7 @@ shell_quote() {
 
 pve_guest_exec() {
     local seconds="$1" command="$2" input="${3:-/dev/null}" result remote_command
+    require_pve_lock "QEMU Guest Agent command"
     remote_command="qm guest exec $VMID --timeout $((seconds + 15)) --pass-stdin 1 -- /usr/bin/timeout $seconds /bin/bash -euo pipefail -c $(shell_quote "$command")"
     result="$(pve bash -c "$(shell_quote "$remote_command")" < "$input")" || return
     check_guest_exec_result <<< "$result"
@@ -138,6 +139,21 @@ if ! IFS= read -r -t 20 lock_ready <&"${UVSS_PVE_LOCK[0]}"; then
 fi
 [[ "$lock_ready" == UVSS_LOCK_READY ]] || die "Unexpected response from Proxmox lock session"
 
+require_pve_lock() {
+    local operation="$1" lock_rc
+    if [[ -n "$PVE_LOCK_PID" ]] && kill -0 "$PVE_LOCK_PID" 2>/dev/null; then
+        return 0
+    fi
+    if [[ -n "$PVE_LOCK_PID" ]]; then
+        if wait "$PVE_LOCK_PID" 2>/dev/null; then lock_rc=0; else lock_rc=$?; fi
+        PVE_LOCK_PID=""
+    else
+        lock_rc="unknown"
+    fi
+    die "Proxmox lock session was lost before $operation (SSH exit $lock_rc)"
+}
+
+require_pve_lock "template validation"
 template_config="$(pve qm config "$TEMPLATE_VMID")"
 grep -qx 'template: 1' <<< "$template_config" || die "VM $TEMPLATE_VMID is not a template"
 grep -Eq '^tags: ([^;]+;)*uvss-test-template(;|$)' <<< "$template_config" ||
@@ -174,21 +190,26 @@ SOURCE_SHA256="$(sha256sum "$WORK_DIR/source.sha256" | awk '{print $1}')"
 
 start_timing
 echo "Cloning Proxmox template $TEMPLATE_VMID -> $VMID"
+require_pve_lock "clone"
 pve qm clone "$TEMPLATE_VMID" "$VMID" --name "uvss-test-$VMID" --full 0
 CREATED=1
 timing "clone"
+require_pve_lock "clone configuration"
 pve qm set "$VMID" --tags uvss-test-run --ciupgrade 0
 echo "Adding virtual HDDs"
 pve qm set "$VMID" --sata1 "${PVE_STORAGE}:${TEST_DISK_SIZE_GIB},serial=UVSSDISK1"
 pve qm set "$VMID" --sata2 "${PVE_STORAGE}:${TEST_DISK_SIZE_GIB},serial=UVSSDISK2"
 timing "attach disks"
 echo "Starting VM"
+require_pve_lock "VM start"
 pve qm start "$VMID"
 timing "qm start"
 
 echo "Waiting for QEMU Guest Agent"
 deadline=$((SECONDS + BOOT_TIMEOUT))
+require_pve_lock "QEMU Guest Agent wait"
 until pve qm guest cmd "$VMID" ping >/dev/null 2>&1; do
+    require_pve_lock "QEMU Guest Agent wait"
     (( SECONDS < deadline )) || die "Timed out waiting for QEMU Guest Agent on VM $VMID"
     sleep 3
 done
@@ -229,6 +250,7 @@ timing "guest SSH key"
 echo "Discovering guest IP"
 deadline=$((SECONDS + BOOT_TIMEOUT))
 while (( SECONDS < deadline )); do
+    require_pve_lock "guest IP discovery"
     network_json="$(pve qm guest cmd "$VMID" network-get-interfaces 2>/dev/null || true)"
     GUEST_IP="$(python3 -c '
 import ipaddress, json, sys
@@ -299,6 +321,7 @@ guest_exec 60 "test \"\$(sha256sum /var/tmp/source.sha256 | awk '{print \$1}')\"
 timing "source upload"
 
 echo "Running VM test suite: $VM_TEST_SUITE"
+require_pve_lock "guest tests"
 TEST_PASSED=0
 if guest_exec "$TEST_TIMEOUT" "cd /var/tmp/uvss-source; bash tests/vm/guest-tests.sh '$VM_TEST_SUITE' 2>&1 | tee /var/tmp/uvss-tests.log"; then
     TEST_PASSED=1
@@ -318,15 +341,18 @@ timing "log download"
 
 if (( ! KEEP )); then
     echo "Shutting down VM $VMID"
+    require_pve_lock "VM shutdown"
     if ! pve qm shutdown "$VMID" --timeout 120; then
         echo "qm shutdown returned an error; waiting for the final VM state" >&2
     fi
     deadline=$((SECONDS + 180))
     while [[ "$(pve qm status "$VMID" 2>/dev/null)" != "status: stopped" ]]; do
+        require_pve_lock "VM shutdown wait"
         (( SECONDS < deadline )) || die "VM $VMID did not stop in time"
         sleep 2
     done
     echo "Destroying VM $VMID"
+    require_pve_lock "VM destruction"
     pve qm destroy "$VMID" --purge
     CREATED=0
     timing "shutdown + destroy"

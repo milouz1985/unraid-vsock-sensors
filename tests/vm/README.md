@@ -238,7 +238,11 @@ dernier pendant tout le test ; le builder prend un verrou exclusif, ce qui
 interdit une reconstruction simultanée. Ces verrous sont détenus par une
 session SSH persistante dans `/run/lock` sur Proxmox. Le verrou exclusif du
 clone se trouve au même endroit ; aucun verrou local ne prétend protéger les
-ressources de l'hyperviseur.
+ressources de l'hyperviseur. Avant chaque opération sensible — validation du
+template, clone, configuration, démarrage, tests, arrêt et destruction — le
+runner vérifie que le processus SSH détenant les verrous existe toujours. La
+perte de cette session interrompt le parcours et conserve le clone éventuel
+pour diagnostic.
 
 Le runner crée ensuite un clone lié du template, attend QEMU Guest Agent et la
 fin de Cloud-Init, injecte la clé publique du poste, récupère son IPv4 avec
