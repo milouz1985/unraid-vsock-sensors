@@ -3,9 +3,9 @@
 <!ENTITY name "unraid-vsock-sensors">
 <!ENTITY author "François HOYEZ">
 <!ENTITY version "1.6.0">
-<!ENTITY pluginURL "https://git.lan.home/francois/unraid-vsock-sensors/raw/branch/main/unraid-plugin/unraid-vsock-sensors.plg">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/milouz1985/unraid-vsock-sensors/main/unraid-plugin/unraid-vsock-sensors.plg">
 <!ENTITY package "unraid-vsock-sensors-1.6.0-x86_64-1.txz">
-<!ENTITY packageURL "https://git.lan.home/francois/unraid-vsock-sensors/releases/download/v1.6.0/unraid-vsock-sensors-1.6.0-x86_64-1.txz">
+<!ENTITY packageURL "https://github.com/milouz1985/unraid-vsock-sensors/releases/download/v1.6.0/unraid-vsock-sensors-1.6.0-x86_64-1.txz">
 <!ENTITY packageMD5 "d6080aa8f8dce21faf399cac3b5327d9">
 <!ENTITY packageSHA256 "a799eaef0ac963cbdbc8ab114924dc9c70d7ac51501c010238c6d95313e6ce28">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
