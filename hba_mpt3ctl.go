@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 // hba_mpt3ctl.go implements the read-only userspace side of the Linux mpt3sas
-// management ABI. It does not contain code extracted from LSIUtil or StorCLI.
+// management ABI. It does not contain code copied from LSIUtil, StorCLI or the
+// Linux mpt3sas driver.
 //
-// The implementation was derived from the public GPL-2.0 Linux driver sources:
+// The ABI constants, binary layouts and MPI protocol semantics used here were
+// obtained from and verified against the public Linux mpt3sas interface
+// definitions:
 //
 //   - drivers/scsi/mpt3sas/mpt3sas_ctl.h
 //     MPT3IOCINFO, MPT3COMMAND and their userspace structure layouts;
@@ -18,10 +21,9 @@
 //
 // Upstream sources: https://github.com/torvalds/linux/tree/master/drivers/scsi/mpt3sas
 //
-// The byte layouts and offsets were also validated on Linux/amd64 against the
-// standalone mpt3info.py prototype and an LSI SAS3008 using mpt3sas
-// 54.100.00.00. That test returned IOC 0, PCI address 0000:06:10.0, SAS address
-// 56c92bf0002e6705 and an IOC temperature identical to LSIUtil.
+// The byte layouts and offsets were also validated on Linux/amd64 against an
+// LSI SAS3008 using mpt3sas 54.100.00.00. The resulting IOC temperature matched
+// the value reported by LSIUtil.
 //
 // Only MPI CONFIG PAGE_HEADER and PAGE_READ_CURRENT requests are constructed.
 // No caller-provided MPI frame, data-out buffer, firmware write, reset or

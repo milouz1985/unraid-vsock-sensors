@@ -1,4 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Package vsockaddr validates VSOCK context IDs and ports.
+
 package vsockaddr
 
 import "fmt"

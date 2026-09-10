@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Command unraid-vsock-sensors exports Unraid storage temperatures over AF_VSOCK.
 package main
 

@@ -608,15 +608,18 @@ que le CID de VM configuré et limite chaque snapshot encadré à 1 Mio.
 
 ## Références techniques et remerciements
 
-Le backend HBA natif s'appuie sur l'ABI publique du pilote Linux `mpt3sas` et
-sur les définitions MPI disponibles dans les sources du noyau, notamment
+Le backend HBA natif est une implémentation Go originale de l'ABI publique du
+pilote Linux `mpt3sas`. Il utilise les constantes, formats binaires et
+sémantiques MPI documentés dans les sources du noyau, notamment
 [`mpt3sas_ctl.h`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpt3sas_ctl.h),
 [`mpt3sas_ctl.c`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpt3sas_ctl.c),
 [`mpi2_cnfg.h`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpi/mpi2_cnfg.h)
 et
 [`mpt3sas_hwmon.c`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpt3sas_hwmon.c).
-Ces références ont servi à implémenter les ioctl de `/dev/mpt3ctl`, les requêtes
-MPI CONFIG en lecture seule et le décodage de la température HBA.
+Ces références ont servi à documenter et vérifier les ioctl de `/dev/mpt3ctl`,
+les requêtes MPI CONFIG en lecture seule et le décodage de la température HBA ;
+le backend ne contient pas de code copié depuis le pilote Linux, LSIUtil ou
+StorCLI.
 
 L'architecture consistant à publier sur l'hôte Proxmox une sonde `hwmon`
 virtuelle alimentée par les températures d'une VM a été inspirée par le projet
@@ -627,10 +630,17 @@ persistants, plusieurs familles de sondes et un failsafe indépendant du flux.
 
 ## Licence
 
-Ce projet est distribué selon les termes de la
-[GNU General Public License version 2 uniquement](LICENSE) (`GPL-2.0-only`).
-Cette licence est compatible avec celle du pilote Linux `mpt3sas`, du module
-`hwmon` du noyau et du projet `hdd-temp-monitor` cités ci-dessus.
+Les composants originaux de ce dépôt, notamment le programme Go, les scripts et
+l'interface Unraid, sont distribués sous
+[`GPL-3.0-or-later`](LICENSES/GPL-3.0-or-later.txt). Le module noyau séparé
+[`virt-temp.c`](virt-temp/module/virt-temp.c) reste sous
+[`GPL-2.0-only`](LICENSES/GPL-2.0-only.txt).
+
+Les dépendances tierces conservent leurs propres licences. Le binaire Go inclut
+notamment `gopkg.in/ini.v1` sous Apache-2.0 ; la liste complète des composants,
+attributions et textes applicables figure dans
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Le fichier
+[`LICENSE`](LICENSE) résume la répartition des licences du dépôt.
 
 ## Développement assisté par IA
 

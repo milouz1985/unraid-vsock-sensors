@@ -1,4 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Package sensors defines the shared sensor model and transport protocol.
+
 package sensors
 
 import "strings"

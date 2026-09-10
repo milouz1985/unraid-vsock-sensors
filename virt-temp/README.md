@@ -268,3 +268,10 @@ Supprimer également la configuration :
 ```sh
 apt purge unraid-vsock-sensors-hwmon
 ```
+
+## Licence
+
+Le programme userspace est distribué sous `GPL-3.0-or-later`. Le module noyau
+`virt-temp` est un programme séparé distribué sous `GPL-2.0-only`. Les licences
+et notices tierces complètes sont installées dans
+`/usr/share/doc/unraid-vsock-sensors-hwmon/`.

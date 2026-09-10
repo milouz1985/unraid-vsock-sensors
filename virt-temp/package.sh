@@ -35,7 +35,7 @@ mkdir -p \
     "$package_root/usr/lib/modules-load.d" \
     "$package_root/usr/lib/systemd/system" \
     "$package_root/usr/share/$package" \
-    "$package_root/usr/share/doc/$package" \
+    "$package_root/usr/share/doc/$package/LICENSES" \
     "$output_dir"
 
 (
@@ -53,7 +53,13 @@ install -m 0644 "$script_dir/unraid-vsock-hwmon.service" \
 install -m 0644 "$script_dir/README.md" \
     "$package_root/usr/share/doc/$package/README.md"
 install -m 0644 "$repo_dir/LICENSE" \
+    "$package_root/usr/share/doc/$package/LICENSE"
+install -m 0644 "$script_dir/debian/copyright" \
     "$package_root/usr/share/doc/$package/copyright"
+install -m 0644 "$repo_dir/THIRD_PARTY_NOTICES.md" \
+    "$package_root/usr/share/doc/$package/THIRD_PARTY_NOTICES.md"
+install -m 0644 "$repo_dir"/LICENSES/*.txt \
+    "$package_root/usr/share/doc/$package/LICENSES/"
 install -m 0644 "$script_dir/default" \
     "$package_root/usr/share/$package/unraid-vsock-hwmon.default"
 printf 'virt-temp\n' > "$package_root/usr/lib/modules-load.d/virt-temp.conf"

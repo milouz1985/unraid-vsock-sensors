@@ -24,7 +24,7 @@ esac
 mkdir -p \
     "$stage_dir/etc/rc.d" \
     "$stage_dir/install" \
-    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors" \
+    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/LICENSES" \
     "$stage_dir/usr/local/sbin" \
     "$dist_dir"
 
@@ -43,6 +43,10 @@ install -m 0644 "$plugin_dir/default.cfg" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/default.cfg"
 install -m 0644 "$repo_dir/LICENSE" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/LICENSE"
+install -m 0644 "$repo_dir/THIRD_PARTY_NOTICES.md" \
+    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/THIRD_PARTY_NOTICES.md"
+install -m 0644 "$repo_dir"/LICENSES/*.txt \
+    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/LICENSES/"
 install -m 0755 "$plugin_dir/service.sh" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/service.sh"
 install -m 0644 "$plugin_dir/slack-desc" "$stage_dir/install/slack-desc"
