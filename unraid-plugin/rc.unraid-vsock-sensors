@@ -124,7 +124,7 @@ start() {
 }
 
 stop() {
-    local pid
+    local pid running
     if ! pid="$(running_pid)"; then
         rm -f "$pid_file"
         echo "$name is not running"
@@ -140,7 +140,26 @@ stop() {
         fi
         sleep 0.1
     done
-    echo "$name did not stop within 5 seconds" >&2
+
+    # Revalidate the PID before sending an uncatchable signal: the daemon may
+    # have exited just after the last poll and its PID may have been reused.
+    if ! running="$(running_pid)" || [[ "$running" != "$pid" ]]; then
+        rm -f "$pid_file"
+        echo "$name stopped"
+        return 0
+    fi
+
+    echo "$name did not stop within 5 seconds; sending SIGKILL" >&2
+    kill -KILL "$pid" 2>/dev/null || true
+    for _ in {1..10}; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$pid_file"
+            echo "$name stopped after SIGKILL"
+            return 0
+        fi
+        sleep 0.1
+    done
+    echo "$name is still present after SIGKILL" >&2
     return 1
 }
 

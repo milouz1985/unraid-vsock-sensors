@@ -7,6 +7,9 @@ if [[ "${1:-}" == "serve" ]]; then
     if [[ -n "${UVSS_RC_TEST_ARGS_FILE:-}" ]]; then
         printf '%s\n' "$@" > "$UVSS_RC_TEST_ARGS_FILE"
     fi
+    if [[ "${UVSS_RC_TEST_IGNORE_TERM:-0}" == 1 ]]; then
+        trap '' TERM
+    fi
     exec -a "$0" sleep 30
 fi
 
@@ -38,12 +41,14 @@ exec 9> >(cat >/dev/null)
 pipe_reader_pid=$!
 
 run_rc() {
-    timeout 5 env \
+    local action="$1" ignore_term="${2:-0}"
+    timeout 10 env \
         UVSS_RC_BINARY="$script_dir/rc_test.sh" \
         UVSS_RC_CONFIG="$test_dir/missing.cfg" \
         UVSS_RC_PID_FILE="$pid_file" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
-        "$rc_script" "$1"
+        UVSS_RC_TEST_IGNORE_TERM="$ignore_term" \
+        "$rc_script" "$action"
 }
 
 run_rc start >/dev/null
@@ -75,3 +80,23 @@ for descriptor in "/proc/$daemon_pid/fd/"*; do
         exit 1
     fi
 done
+
+run_rc stop >/dev/null
+
+echo "Checking SIGKILL fallback for a daemon ignoring SIGTERM"
+run_rc start 1 >/dev/null
+read -r stubborn_pid < "$pid_file"
+stop_output="$(run_rc stop 2>&1)"
+if [[ "$stop_output" != *"sending SIGKILL"* ||
+      "$stop_output" != *"stopped after SIGKILL"* ]]; then
+    echo "stop did not report the SIGKILL fallback: $stop_output" >&2
+    exit 1
+fi
+if kill -0 "$stubborn_pid" 2>/dev/null; then
+    echo "daemon $stubborn_pid survived the SIGKILL fallback" >&2
+    exit 1
+fi
+if [[ -e "$pid_file" ]]; then
+    echo "PID file still exists after the SIGKILL fallback" >&2
+    exit 1
+fi
