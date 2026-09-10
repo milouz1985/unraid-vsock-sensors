@@ -83,6 +83,14 @@ done
 
 run_rc stop >/dev/null
 
+process_is_alive() {
+    local pid="$1" state
+
+    [[ -r "/proc/$pid/status" ]] || return 1
+    state="$(awk '$1 == "State:" { print $2 }' "/proc/$pid/status")" || return 1
+    [[ "$state" != "Z" && "$state" != "X" ]]
+}
+
 echo "Checking SIGKILL fallback for a daemon ignoring SIGTERM"
 run_rc start 1 >/dev/null
 read -r stubborn_pid < "$pid_file"
@@ -92,7 +100,7 @@ if [[ "$stop_output" != *"sending SIGKILL"* ||
     echo "stop did not report the SIGKILL fallback: $stop_output" >&2
     exit 1
 fi
-if kill -0 "$stubborn_pid" 2>/dev/null; then
+if process_is_alive "$stubborn_pid"; then
     echo "daemon $stubborn_pid survived the SIGKILL fallback" >&2
     exit 1
 fi
