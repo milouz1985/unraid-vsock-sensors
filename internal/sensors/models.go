@@ -25,7 +25,7 @@ type DiskKind string
 const (
 	// DiskKindHDD identifies a rotational disk.
 	DiskKindHDD DiskKind = "hdd"
-	// DiskKindSATASSD identifies a non-rotational disk using ATA transport.
+	// DiskKindSATASSD identifies a non-rotational SATA disk.
 	DiskKindSATASSD DiskKind = "ssd"
 	// DiskKindNVMe identifies a non-rotational NVMe disk.
 	DiskKindNVMe DiskKind = "nvme"
