@@ -306,6 +306,50 @@ trois secondes afin de permettre une reconnexion propre. Ce délai de transport
 ne déclenche pas lui-même le failsafe thermique : celui-ci reste le
 `stale_timeout` de 10 secondes appliqué indépendamment par `virt_temp`.
 
+### Contrat de compatibilité des données Unraid
+
+L'intégration repose sur le contrat suivant avec les fichiers runtime produits
+par emhttpd. Un champ « obligatoire » est une hypothèse de compatibilité : le
+parseur peut transformer son absence en entrée ignorée ou en erreur failsafe,
+mais une modification de sa présence ou de sa sémantique côté Unraid nécessite
+de réévaluer l'intégration. Les champs inconnus sont ignorés.
+
+`/var/local/emhttp/disks.ini` doit être un fichier INI lisible contenant au
+moins une section nommée. Il constitue l'inventaire autoritaire des disques
+assignés.
+
+| Élément | Contrat | Utilisation |
+| --- | --- | --- |
+| nom de section | obligatoire | Nom logique et nom du rapport `smart/<nom-logique>` ; `flash` est exclu. |
+| `status` | obligatoire | Toute valeur contenant `_NP` signifie qu'aucun disque physique n'est présent ; toute autre valeur, y compris une valeur absente, est traitée comme un disque présent. Les états dégradés ou désactivés sont donc conservés. |
+| `id` | obligatoire pour un disque présent | Identité stable de la sonde et clé de déduplication. |
+| `device` | obligatoire pour un disque présent | Périphérique exposé dans le snapshot ; le préfixe `/dev/` est retiré. |
+| `temp` | optionnel | Une valeur absente, `*` ou invalide est un échec de mesure pour un disque actif et passe par la période de grâce. |
+| `spundown` | optionnel | Seule la valeur `1` signifie que le disque dort ; sinon il est traité comme actif. |
+| `rotational` | optionnel | Seule la valeur `1` classe le disque comme rotationnel ; sinon il est traité comme non rotationnel. |
+| `transport` | optionnel | Transport normalisé en minuscules et utilisé pour classer les SSD SATA, NVMe ou autres. |
+
+`/var/local/emhttp/devs.ini`, fourni nativement par Unraid, doit également être
+un fichier INI lisible ; il peut ne contenir aucune unité. Pour chaque section :
+
+| Élément | Contrat | Utilisation |
+| --- | --- | --- |
+| nom de section | obligatoire | Nom affiché de l'Unassigned Device. |
+| `device` | obligatoire pour inclure l'unité | Une section sans périphérique est ignorée ; la valeur localise `smart/<device>`. |
+| `id` | obligatoire lorsque `device` existe | Identité stable ; le nom `sdX` n'est jamais utilisé comme identité. |
+| `temp`, `spundown`, `rotational`, `transport` | optionnels | Même sémantique et mêmes replis que dans `disks.ini`. |
+
+Dans `/var/local/emhttp/var.ini`, `poll_attributes` est attendu dans la section
+par défaut comme un entier en secondes. Une valeur positive fixe la cadence,
+`0` désactive valablement le polling SMART automatique, et une valeur absente,
+invalide, négative, trop grande ou un fichier illisible produit un warning puis
+utilise le fallback interne de 30 secondes pour le calcul de fraîcheur.
+
+Enfin, chaque disque actif exige un rapport SMART présent dont le `mtime` reste
+dans la fenêtre de fraîcheur : `smart/<nom-logique>` pour `disks.ini` et
+`smart/<device>` pour `devs.ini`. Le contenu du rapport n'est pas parsé. Un
+disque signalé en veille n'exige pas un rapport frais.
+
 ## Inventaire persistant et changement de topologie
 
 Après le premier relevé valide, l'agent enregistre la liste des sondes dans
