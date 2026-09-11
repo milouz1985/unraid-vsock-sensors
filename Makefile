@@ -136,7 +136,7 @@ build: | $(BIN_DIR) ## Compile un binaire Linux statique
 		-o $(BINARY) .
 
 
-.PHONY: unraid-package hwmon-package release-manifest release
+.PHONY: unraid-package hwmon-package update-plg release
 
 unraid-package: ## Crée le plugin serveur installable dans Unraid
 	@$(resolve-version) \
@@ -147,10 +147,10 @@ hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
 	GO="$(GO)" VERSION="$$version" DEBIAN_REVISION="$(DEBIAN_REVISION)" \
 		./virt-temp/package.sh
 
-release-manifest: ## Publie dans Git le manifeste Unraid déjà construit
+update-plg: ## Met à jour dans Git le manifeste Unraid déjà construit
 	@version="$(VERSION)"; \
 	if [ -z "$$version" ]; then \
-		echo "VERSION is required (example: make release-manifest VERSION=1.7.0)" >&2; \
+		echo "VERSION is required (example: make update-plg VERSION=1.7.0)" >&2; \
 		exit 1; \
 	fi; \
 	version="$$(VERSION="$$version" ./version.sh --release)" || exit $$?; \
@@ -182,7 +182,7 @@ release: ## Valide et prépare tous les artefacts d'une release
 	fi
 	+$(MAKE) --no-print-directory test-vm
 	+$(MAKE) --no-print-directory all VERSION="$(VERSION)"
-	+$(MAKE) --no-print-directory release-manifest VERSION="$(VERSION)"
+	+$(MAKE) --no-print-directory update-plg VERSION="$(VERSION)"
 
 
 $(BIN_DIR):

@@ -610,11 +610,11 @@ git push origin main vX.Y.Z
 La dernière étape peut aussi être exécutée séparément après la construction :
 
 ```sh
-make release-manifest VERSION=X.Y.Z
+make update-plg VERSION=X.Y.Z
 ```
 
 Elle refuse une version implicite ainsi qu'un manifeste absent ou construit
-pour une autre version. `release` et `release-manifest` exigent toutes deux une
+pour une autre version. `release` et `update-plg` exigent toutes deux une
 version finale strictement au format `X.Y.Z`, sans prerelease ni métadonnée de
 build. Elle ne crée ni commit, ni tag et ne pousse rien.
 
