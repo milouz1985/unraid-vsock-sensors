@@ -7,6 +7,7 @@ repo_dir="$(cd -- "$script_dir/.." && pwd)"
 go_command="${GO:-go}"
 architecture="${GOARCH:-amd64}"
 version="$(VERSION="${VERSION:-}" "$repo_dir/version.sh")"
+debian_upstream="$(VERSION="$version" "$repo_dir/version.sh" --debian)"
 debian_revision="${DEBIAN_REVISION:-1}"
 output_dir="${DIST_DIR:-$repo_dir/dist}"
 package="unraid-vsock-sensors-hwmon"
@@ -23,11 +24,10 @@ if [[ ! "$debian_revision" =~ ^[1-9][0-9]*$ ]]; then
     exit 2
 fi
 
-# Git development builds describe commits made after the nearest release, so
-# Debian must sort them after that release. A tagged 1.4.3 becomes 1.4.3-1 and
-# a following snapshot becomes 1.4.3+dev.N.gHASH-1; the next release still
-# sorts after both. The final -N component remains the packaging revision.
-debian_version="${version/-dev./+dev.}-$debian_revision"
+# Debian sorts prereleases marked with '~' before the corresponding final
+# release, while Git snapshots marked with '+dev' sort after their base.
+# The final -N component remains the packaging revision.
+debian_version="$debian_upstream-$debian_revision"
 output="$output_dir/${package}_${debian_version}_${architecture}.deb"
 
 mkdir -p \

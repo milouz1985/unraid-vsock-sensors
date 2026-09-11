@@ -476,7 +476,9 @@ séparées parce qu'elles nécessitent un environnement Proxmox distant. La cibl
 Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
 commit courant n'est pas exactement tagué. Une version explicite s'écrit sans
 le préfixe `v`, par exemple `make all VERSION=1.4.2` ; le tag Git correspondant
-peut ensuite s'appeler `v1.4.2`.
+peut ensuite s'appeler `v1.4.2`. Une prerelease peut être construite avec, par
+exemple, `make all VERSION=1.4.3-rc.1`. Son paquet Debian utilise
+`1.4.3~rc.1-1`, afin de rester antérieur à la finale `1.4.3-1`.
 
 ### Tests d'intégration dans une VM
 

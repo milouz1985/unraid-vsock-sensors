@@ -30,6 +30,23 @@ expect_development_version() {
     fi
 }
 
+expect_debian_version() {
+    local version="$1" expected="$2" output
+    output="$(VERSION="$version" "$version_script" --debian)"
+    if [[ "$output" != "$expected" ]]; then
+        echo "Debian version for $version resolved to $output, expected $expected" >&2
+        exit 1
+    fi
+}
+
+expect_debian_version_less_than() {
+    local left="$1" right="$2"
+    if ! dpkg --compare-versions "$left" lt "$right"; then
+        echo "Debian version $left does not sort before $right" >&2
+        exit 1
+    fi
+}
+
 for version in 0.0.0 1.7.0 10.20.30; do
     expect_release_version "$version"
 done
@@ -40,3 +57,24 @@ done
 
 expect_development_version 1.7.0-rc.1
 expect_development_version 1.7.0-dev.3.gabcdef
+
+expect_debian_version 1.7.0 1.7.0
+expect_debian_version 1.7.0-rc.1 1.7.0~rc.1
+expect_debian_version 1.7.0-rc.2 1.7.0~rc.2
+expect_debian_version 1.7.0-dev.4.gabcdef 1.7.0+dev.4.gabcdef
+expect_debian_version 1.7.0-rc.1-dev.2.gabcdef 1.7.0~rc.1+dev.2.gabcdef
+
+if command -v dpkg >/dev/null 2>&1; then
+    debian_versions=(
+        1.7.0~rc.1-1
+        1.7.0~rc.1+dev.2.gabcdef-1
+        1.7.0~rc.2-1
+        1.7.0-1
+        1.7.0+dev.4.gabcdef-1
+        1.7.1-1
+    )
+    for ((i = 1; i < ${#debian_versions[@]}; i++)); do
+        expect_debian_version_less_than \
+            "${debian_versions[i - 1]}" "${debian_versions[i]}"
+    done
+fi

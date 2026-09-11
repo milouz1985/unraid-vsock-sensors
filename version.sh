@@ -2,19 +2,18 @@
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-release_only=0
+mode="project"
 
 case "$#" in
     0) ;;
     1)
-        if [[ "$1" == "--release" ]]; then
-            release_only=1
-        else
-            echo "Usage: $0 [--release]" >&2
-            exit 2
-        fi
+        case "$1" in
+            --debian) mode="debian" ;;
+            --release) mode="release" ;;
+            *) echo "Usage: $0 [--debian|--release]" >&2; exit 2 ;;
+        esac
         ;;
-    *) echo "Usage: $0 [--release]" >&2; exit 2 ;;
+    *) echo "Usage: $0 [--debian|--release]" >&2; exit 2 ;;
 esac
 
 validate_version() {
@@ -26,15 +25,30 @@ validate_version() {
 
 validate_selected_version() {
     validate_version "$1"
-    if (( release_only )) && [[ ! "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    if [[ "$mode" == "release" && ! "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
         echo "Version de release invalide : $1 (format attendu : X.Y.Z)" >&2
         exit 1
     fi
 }
 
+print_selected_version() {
+    local version="$1"
+
+    validate_selected_version "$version"
+    if [[ "$mode" == "debian" ]]; then
+        # Debian sorts '~' before the corresponding final release and '+'
+        # after it. Git snapshots replace their project '-dev.' separator
+        # first so post-release builds remain newer than the final release.
+        version="${version/-dev./+dev.}"
+        if [[ "$version" == *-* ]]; then
+            version="${version%%-*}~${version#*-}"
+        fi
+    fi
+    printf '%s\n' "$version"
+}
+
 if [[ -n "${VERSION:-}" ]]; then
-    validate_selected_version "$VERSION"
-    printf '%s\n' "$VERSION"
+    print_selected_version "$VERSION"
     exit 0
 fi
 
@@ -65,5 +79,4 @@ else
     fi
 fi
 
-validate_selected_version "$version"
-printf '%s\n' "$version"
+print_selected_version "$version"

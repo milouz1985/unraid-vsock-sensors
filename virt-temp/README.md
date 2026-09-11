@@ -190,9 +190,12 @@ dist/unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
 ```
 
 La version Debian `X.Y.Z-N` contient la version applicative `X.Y.Z` et la
-révision de packaging `N`. Un build Git postérieur à une release est converti
-en snapshot Debian avec `+dev` : `1.4.3+dev.N.gHASH-1` est postérieur à
-`1.4.3-1`, mais reste antérieur à `1.4.4-1` et à `1.5.0-1`.
+révision de packaging `N`. Une prerelease `1.4.3-rc.1` devient
+`1.4.3~rc.1-1`, donc reste antérieure à la finale `1.4.3-1`. Un build Git
+postérieur à une version utilise `+dev` : `1.4.3+dev.N.gHASH-1` est postérieur
+à `1.4.3-1`, mais reste antérieur à `1.4.4-1` et à `1.5.0-1`. Après un tag RC,
+un snapshot tel que `1.4.3-rc.1-dev.N.gHASH` devient
+`1.4.3~rc.1+dev.N.gHASH-1`.
 
 ## Installer et mettre à jour
 
