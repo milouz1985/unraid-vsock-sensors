@@ -7,6 +7,9 @@ if [[ "${1:-}" == "serve" ]]; then
     if [[ -n "${UVSS_RC_TEST_ARGS_FILE:-}" ]]; then
         printf '%s\n' "$@" > "$UVSS_RC_TEST_ARGS_FILE"
     fi
+    if [[ -n "${UVSS_RC_TEST_STARTED_FILE:-}" ]]; then
+        printf '%s\n' "$$" >> "$UVSS_RC_TEST_STARTED_FILE"
+    fi
     exec -a "$0" bash -c '
         if [[ "${UVSS_RC_TEST_IGNORE_TERM:-0}" == 1 ]]; then
             trap "" TERM
@@ -25,8 +28,10 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 rc_script="$script_dir/rc.unraid-vsock-sensors"
 test_dir="$(mktemp -d)"
 pid_file="$test_dir/service.pid"
+lock_file="$test_dir/service.lock"
 args_file="$test_dir/service.args"
 refresh_file="$test_dir/service.refresh"
+started_file="$test_dir/service.started"
 pipe_reader_pid=""
 foreign_pid=""
 
@@ -34,6 +39,7 @@ cleanup() {
     UVSS_RC_BINARY="$script_dir/rc_test.sh" \
         UVSS_RC_CONFIG="$test_dir/missing.cfg" \
         UVSS_RC_PID_FILE="$pid_file" \
+        UVSS_RC_LOCK_FILE="$lock_file" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
         "$rc_script" stop >/dev/null 2>&1 || true
     if [[ -n "$foreign_pid" ]]; then
@@ -60,11 +66,38 @@ run_rc() {
         UVSS_RC_BINARY="$script_dir/rc_test.sh" \
         UVSS_RC_CONFIG="$test_dir/missing.cfg" \
         UVSS_RC_PID_FILE="$pid_file" \
+        UVSS_RC_LOCK_FILE="$lock_file" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
         UVSS_RC_TEST_REFRESH_FILE="$refresh_file" \
+        UVSS_RC_TEST_STARTED_FILE="$started_file" \
         UVSS_RC_TEST_IGNORE_TERM="$ignore_term" \
         "$rc_script" "$action"
 }
+
+echo "Checking concurrent starts"
+run_rc start > "$test_dir/start-1.output" &
+start_1_pid=$!
+run_rc start > "$test_dir/start-2.output" &
+start_2_pid=$!
+wait "$start_1_pid"
+wait "$start_2_pid"
+
+mapfile -t started_pids < "$started_file"
+if (( ${#started_pids[@]} != 1 )); then
+    echo "concurrent starts launched ${#started_pids[@]} daemons instead of one" >&2
+    exit 1
+fi
+if [[ ! -r "$pid_file" ]]; then
+    echo "concurrent starts did not leave a PID file" >&2
+    exit 1
+fi
+read -r daemon_pid < "$pid_file"
+if [[ "$daemon_pid" != "${started_pids[0]}" ]] || ! kill -0 "$daemon_pid" 2>/dev/null; then
+    echo "PID file does not identify the daemon started concurrently" >&2
+    exit 1
+fi
+run_rc stop >/dev/null
+rm -f "$started_file"
 
 run_rc start >/dev/null
 restart_output="$(run_rc restart)"

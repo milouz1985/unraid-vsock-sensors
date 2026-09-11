@@ -4,6 +4,7 @@ name="unraid-vsock-sensors"
 binary="${UVSS_RC_BINARY:-/usr/local/sbin/$name}"
 config="${UVSS_RC_CONFIG:-/boot/config/plugins/$name/$name.cfg}"
 pid_file="${UVSS_RC_PID_FILE:-/var/run/$name.pid}"
+lock_file="${UVSS_RC_LOCK_FILE:-/var/run/$name.lock}"
 
 close_inherited_fds() {
     local descriptor path
@@ -180,10 +181,27 @@ refresh() {
     echo "$name refresh requested"
 }
 
+run_mutating_action() {
+    local action="$1" lock_fd
+
+    if ! exec {lock_fd}>"$lock_file"; then
+        echo "Unable to open service lock: $lock_file" >&2
+        return 1
+    fi
+    if ! flock -x "$lock_fd"; then
+        echo "Unable to lock service operations: $lock_file" >&2
+        return 1
+    fi
+
+    case "$action" in
+        start) start ;;
+        stop) stop ;;
+        restart) stop && start ;;
+    esac
+}
+
 case "${1:-}" in
-    start) start ;;
-    stop) stop ;;
-    restart) stop && start ;;
+    start|stop|restart) run_mutating_action "$1" ;;
     status) status ;;
     refresh) refresh ;;
     *) echo "Usage: $0 {start|stop|restart|status|refresh}" >&2; exit 2 ;;
