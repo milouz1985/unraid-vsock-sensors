@@ -171,7 +171,7 @@ func FuzzParseMPT3Temperature(f *testing.F) {
 	f.Add(mpt3TemperatureSeed(122, temperatureFahrenheit))
 	f.Add(mpt3TemperatureSeed(0, temperatureNotPresent))
 	f.Add(mpt3TemperatureSeed(51, 0xff))
-	for _, raw := range []int16{math.MinInt16, -1, 0, 32, 100, 150, 151, math.MaxInt16} {
+	for _, raw := range []int16{math.MinInt16, -32767, -40, -1, 0, 32, 100, 150, 151, 200, math.MaxInt16} {
 		f.Add(mpt3TemperatureSeed(raw, temperatureCelsius))
 		f.Add(mpt3TemperatureSeed(raw, temperatureFahrenheit))
 	}
@@ -187,8 +187,17 @@ func FuzzParseMPT3Temperature(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if math.IsNaN(temperature) || math.IsInf(temperature, 0) || temperature < 0 || temperature > 150 {
-			t.Fatalf("temperature outside finite 0..150 C contract: %v", temperature)
+		if math.IsNaN(temperature) || math.IsInf(temperature, 0) {
+			t.Fatalf("non-finite temperature: %v", temperature)
+		}
+
+		raw := int16(binary.LittleEndian.Uint16(page[0x10:0x12]))
+		want := float64(raw)
+		if page[0x12] == temperatureFahrenheit {
+			want = (float64(raw) - 32) * 5 / 9
+		}
+		if temperature != want {
+			t.Fatalf("decoded temperature = %v, want %v for raw %d and unit 0x%02x", temperature, want, raw, page[0x12])
 		}
 	})
 }

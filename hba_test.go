@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -379,12 +380,19 @@ func TestParseMPT3Temperature(t *testing.T) {
 		want    float64
 		invalid bool
 	}{
-		"Celsius":         {raw: 51, units: temperatureCelsius, want: 51},
-		"Fahrenheit":      {raw: 122, units: temperatureFahrenheit, want: 50},
+		"Celsius":         {raw: 42, units: temperatureCelsius, want: 42},
+		"Celsius -1":      {raw: -1, units: temperatureCelsius, want: -1},
+		"Celsius -40":     {raw: -40, units: temperatureCelsius, want: -40},
+		"Celsius 151":     {raw: 151, units: temperatureCelsius, want: 151},
+		"Celsius 200":     {raw: 200, units: temperatureCelsius, want: 200},
+		"Celsius maximum": {raw: math.MaxInt16, units: temperatureCelsius, want: math.MaxInt16},
+		"Fahrenheit 32":   {raw: 32, units: temperatureFahrenheit, want: 0},
+		"Fahrenheit -40":  {raw: -40, units: temperatureFahrenheit, want: -40},
+		"Fahrenheit 104":  {raw: 104, units: temperatureFahrenheit, want: 40},
+		"Fahrenheit 212":  {raw: 212, units: temperatureFahrenheit, want: 100},
+		"Fahrenheit high": {raw: 1000, units: temperatureFahrenheit, want: 537.7777777777778},
 		"not present":     {units: temperatureNotPresent, invalid: true},
 		"unknown units":   {raw: 51, units: 3, invalid: true},
-		"negative signed": {raw: -20, units: temperatureCelsius, invalid: true},
-		"out of range":    {raw: 255, units: temperatureCelsius, invalid: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			page := make([]byte, 0x17)
@@ -394,7 +402,7 @@ func TestParseMPT3Temperature(t *testing.T) {
 			if test.invalid && err == nil {
 				t.Fatalf("got %v, expected error", got)
 			}
-			if !test.invalid && (err != nil || got != test.want) {
+			if !test.invalid && (err != nil || math.Abs(got-test.want) > 1e-12) {
 				t.Fatalf("got %v, %v; want %v", got, err, test.want)
 			}
 		})

@@ -384,8 +384,5 @@ func parseMPT3Temperature(page []byte) (float64, error) {
 	default:
 		return 0, fmt.Errorf("unsupported IOC temperature unit 0x%02x", page[0x12])
 	}
-	if temperature < 0 || temperature > 150 {
-		return 0, fmt.Errorf("IOC temperature %.1f C is outside 0..150 C", temperature)
-	}
 	return temperature, nil
 }

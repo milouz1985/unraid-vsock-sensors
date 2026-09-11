@@ -430,8 +430,10 @@ les disques actifs deviennent indisponibles après expiration et atteignent le
 failsafe.
 
 La température HBA vient de IO Unit Page 7, lue avec des commandes MPI CONFIG
-strictement en lecture seule via `/dev/mpt3ctl`. Les valeurs Celsius et
-Fahrenheit sont converties puis validées dans la plage `0..150 °C`. Chaque
+strictement en lecture seule via `/dev/mpt3ctl`. Elle est décodée comme une
+valeur signée sur 16 bits. Les unités Celsius et Fahrenheit sont reconnues, et
+les valeurs Fahrenheit sont converties en Celsius. Le décodeur MPT3 n'ajoute
+aucune borne de plausibilité à la valeur fournie par le firmware. Chaque
 collecte native lit aussi les pages de fabrication pour associer la température
 à l'adresse SAS stable et au modèle actuels, indépendamment du numéro IOC.
 
