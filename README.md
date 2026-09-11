@@ -401,12 +401,14 @@ L'agent actualise ce relevé en arrière-plan sans bloquer la publication VSOCK.
 Lorsque le backend StorCLI est sélectionné,
 la température ROC fournie par sa sortie JSON est utilisée à la place.
 
-Une collecte HBA dispose de 15 secondes. Au-delà, l'agent signale une erreur
-HBA même si l'ioctl reste bloqué : l'ancien relevé cesse d'être publié et les
-périphériques hwmon atteignent leur failsafe après leur délai de 10 secondes sans
-actualisation. Un résultat arrivé après l'échéance est rejeté ; une nouvelle
-collecte réussie rétablit les mesures. Le cache reste valide pendant l'intervalle
-normal entre deux collectes.
+Le deadline d'une collecte HBA est de 15 secondes, mais un `ioctl` natif
+synchrone peut malgré tout rester bloqué et empêcher cette collecte de rendre la
+main. La lecture du dernier snapshot valide reste indépendante : s'il n'est pas
+renouvelé, il expire après l'intervalle normal de collecte augmenté de ces
+15 secondes. L'ancien relevé cesse alors d'être publié et les périphériques
+hwmon atteignent leur failsafe après leur délai de 10 secondes sans
+actualisation. Si l'`ioctl` finit par rendre la main après son deadline, son
+résultat est rejeté ; une nouvelle collecte réussie rétablit les mesures.
 
 ## Mise à jour et désinstallation Unraid
 
