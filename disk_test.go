@@ -266,6 +266,43 @@ func TestWakeGraceUnavailableAndRecovery(t *testing.T) {
 	}
 }
 
+func TestInventoryFailureCountsTowardDiskGracePeriod(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	inventory := strings.TrimSpace(`
+		["disk1"]
+		id="serial"
+		device="sda"
+		status="DISK_OK"
+		rotational="1"
+		transport="ata"
+		spundown="0"
+		temp="35"
+	`) + "\n"
+	environment.write(t, environment.paths.disksINI, inventory)
+	environment.report(t, "disk1", environment.now)
+
+	collector := environment.collector()
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); disk.temp != 35 || disk.unavailable {
+		t.Fatalf("initial disk = %#v", disk)
+	}
+
+	if err := os.Remove(environment.paths.disksINI); err != nil {
+		t.Fatal(err)
+	}
+	collector.refresh()
+	if _, err := collector.snapshot(); err == nil {
+		t.Fatal("broken inventory did not make the disk snapshot unavailable")
+	}
+
+	environment.now = environment.now.Add(smartFreshnessWindow(30*time.Second) + time.Second)
+	environment.write(t, environment.paths.disksINI, inventory)
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); disk.temp != 0 || !disk.unavailable {
+		t.Fatalf("disk after prolonged inventory failure = %#v", disk)
+	}
+}
+
 func TestParsePollAttributes(t *testing.T) {
 	for name, test := range map[string]struct {
 		data string

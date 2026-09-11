@@ -142,7 +142,9 @@ func (c *diskCollector) refresh() {
 
 	disks, err := readDiskInventory(c.paths.disksINI, c.paths.devsINI)
 	var readings []sensors.Disk
-	if err == nil {
+	if err != nil {
+		c.state.markFailure(now)
+	} else {
 		observations := makeDiskObservations(disks, c.paths.smartDir, now, freshness)
 		readings = c.state.apply(observations, now, pollInterval+diskFailureMargin)
 	}
@@ -405,6 +407,15 @@ func parseCachedTemperature(raw string) (float64, error) {
 		return 0, fmt.Errorf("cached temperature %q is invalid", raw)
 	}
 	return temperature, nil
+}
+
+func (s diskStateTracker) markFailure(now time.Time) {
+	for id, state := range s {
+		if state.failedSince.IsZero() {
+			state.failedSince = now
+			s[id] = state
+		}
+	}
 }
 
 func (s diskStateTracker) apply(observations []diskObservation, now time.Time, grace time.Duration) []sensors.Disk {
