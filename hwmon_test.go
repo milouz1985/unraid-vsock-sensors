@@ -353,6 +353,23 @@ func TestEncodeHWMonSamples(t *testing.T) {
 	}
 }
 
+func TestEncodeHWMonSamplesAllowsSignedTemperaturesOutsideHardwareRanges(t *testing.T) {
+	readings := []hwmonSample{
+		hwmonTestSample("hba:sas:negative", "Negative", -40.125),
+		hwmonTestSample("hba:sas:high", "High", 200),
+	}
+	var output bytes.Buffer
+	if err := encodeHWMonSamples(&output, "hba", "commit", readings); err != nil {
+		t.Fatal(err)
+	}
+	want := "sample\thba:sas:negative\t-40125\tNegative\n" +
+		"sample\thba:sas:high\t200000\tHigh\n" +
+		"commit\thba\n"
+	if got := output.String(); got != want {
+		t.Fatalf("encoded snapshot = %q, want %q", got, want)
+	}
+}
+
 func TestEncodeHWMonSamplesAllowsEmptyCommitSubset(t *testing.T) {
 	readings := []hwmonSample{{
 		sensor:       hwmonSensor{id: "disk:1", label: "disk1 (sda)"},

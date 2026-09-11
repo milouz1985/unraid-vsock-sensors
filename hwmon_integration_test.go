@@ -57,6 +57,15 @@ func TestVMHWMon(t *testing.T) {
 		t.Fatalf("HBA hwmon name = %q, want unraid_vm_hba_a", got)
 	}
 
+	t.Log("signed temperatures outside common hardware ranges reach real sysfs")
+	hbaSamples[0].temperature = -40
+	publish("hba", &hbas, hbaSamples, false)
+	requireVMHWMonTemp(t, "hba", "hba:vm-a", "-40000")
+	hbaSamples[0].temperature = 200
+	publish("hba", &hbas, hbaSamples, false)
+	requireVMHWMonTemp(t, "hba", "hba:vm-a", "200000")
+	hbaSamples[0].temperature = 48
+
 	t.Log("a label change reconfigures the family")
 	diskSamples[0].temperature = 35.125
 	diskSamples[0].sensor.label = "New label"

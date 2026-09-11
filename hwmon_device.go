@@ -74,13 +74,14 @@ func writeHWMonSamples(path, namespace, operation string, readings []hwmonSample
 func encodeHWMonSamples(out io.Writer, namespace, operation string, readings []hwmonSample) error {
 	prefix := namespace + ":"
 	ids := make(map[string]struct{}, len(readings))
+	milliCelsius := make([]int64, len(readings))
 	if namespace != "disk" && namespace != "hba" {
 		return fmt.Errorf("invalid hwmon namespace %q", namespace)
 	}
 	if operation != "configure" && operation != "commit" {
 		return fmt.Errorf("invalid hwmon operation %q", operation)
 	}
-	for _, reading := range readings {
+	for index, reading := range readings {
 		sensor := reading.sensor
 		if !strings.HasPrefix(sensor.id, prefix) || len(sensor.id) > maxHWMonIDSize ||
 			strings.ContainsAny(sensor.id, "\t\r\n") {
@@ -97,16 +98,18 @@ func encodeHWMonSamples(out io.Writer, namespace, operation string, readings []h
 		if math.IsNaN(reading.temperature) || math.IsInf(reading.temperature, 0) {
 			return fmt.Errorf("invalid temperature for %q", sensor.id)
 		}
-		if reading.temperature < 0 || reading.temperature > 150 {
-			return fmt.Errorf("temperature out of range for %q", sensor.id)
+		rounded := math.Round(reading.temperature * 1000)
+		const maxInt64Exclusive = float64(1 << 63)
+		if rounded < -maxInt64Exclusive || rounded >= maxInt64Exclusive {
+			return fmt.Errorf("temperature cannot be represented in milli-Celsius for %q", sensor.id)
 		}
+		milliCelsius[index] = int64(rounded)
 	}
-	for _, reading := range readings {
+	for index, reading := range readings {
 		if operation == "commit" && reading.omitOnCommit {
 			continue
 		}
-		milliCelsius := int64(math.Round(reading.temperature * 1000))
-		if _, err := fmt.Fprintf(out, "sample\t%s\t%d\t%s\n", reading.sensor.id, milliCelsius, reading.sensor.label); err != nil {
+		if _, err := fmt.Fprintf(out, "sample\t%s\t%d\t%s\n", reading.sensor.id, milliCelsius[index], reading.sensor.label); err != nil {
 			return err
 		}
 	}

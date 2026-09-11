@@ -15,7 +15,6 @@
 #include <linux/uaccess.h>
 
 #define FAILSAFE_MILLIC 100000L
-#define MAX_MILLIC 150000L
 #define MAX_STALE_TIMEOUT 300U
 #define ID_SIZE 64
 #define LABEL_SIZE 96
@@ -542,10 +541,6 @@ static ssize_t device_write(struct file *file, const char __user *user,
 	err = kstrtol(temperature, 10, &value);
 	if (err)
 		goto out;
-	if (value < 0 || value > MAX_MILLIC) {
-		err = -ERANGE;
-		goto out;
-	}
 	record = find_record(session, id);
 	if (!record) {
 		if (session->count >= MAX_RECORDS) {
