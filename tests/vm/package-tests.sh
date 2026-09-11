@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+repo_root=$PWD
 # shellcheck source=common.sh
 source tests/vm/common.sh
 [[ $EUID -eq 0 && "${UVSS_VM_TEST:-}" == 1 ]] || {
@@ -14,6 +15,7 @@ esac
 kernel="$(uname -r)"
 [[ "$kernel" == *-pve && "$kernel" == "$(cat /etc/uvss-test-kernel)" ]] || exit 1
 package=unraid-vsock-sensors-hwmon
+debian_revision="${DEBIAN_REVISION:-1}"
 service=unraid-vsock-hwmon.service
 config=/etc/default/unraid-vsock-hwmon
 cache=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
@@ -27,9 +29,19 @@ trap 'journalctl -u "$service" -n 80 --no-pager >&2' ERR
 modprobe vsock_loopback
 export DEBIAN_FRONTEND=noninteractive
 export GOTOOLCHAIN=local
+debian_version() {
+    VERSION="$1" "$repo_root/version.sh" --debian
+}
+package_path() {
+    local version="$1" debian
+    debian="$(debian_version "$version")"
+    printf '%s/dist/%s_%s-%s_amd64.deb\n' \
+        "$repo_root" "$package" "$debian" "$debian_revision"
+}
 check_installed() {
-    local version="$1" status magic
-    [[ "$(dpkg-query -W -f='${Version}' "$package")" == "$version-1" ]]
+    local version="$1" debian status magic
+    debian="$(debian_version "$version")"
+    [[ "$(dpkg-query -W -f='${Version}' "$package")" == "$debian-$debian_revision" ]]
     status="$(dkms status -m virt-temp -v "$version" -k "$kernel")"
     [[ "$status" == *': installed'* ]]
     magic="$(modinfo -F vermagic virt_temp)"
@@ -42,8 +54,9 @@ check_installed() {
     [[ "$(systemctl show -p NRestarts --value "$service")" == 0 ]]
 }
 install_version() {
-    local version="$1"
-    apt-get install -y --no-install-recommends "$PWD/dist/${package}_${version}-1_amd64.deb"
+    local version="$1" package_file
+    package_file="$(package_path "$version")"
+    apt-get install -y --no-install-recommends "$package_file"
     check_installed "$version"
 }
 check_unregistered() {
@@ -53,8 +66,9 @@ check_unregistered() {
 }
 
 check_failed_upgrade() {
-    local old_version="$1" failed_version="$2" package_status dkms_status
+    local old_version="$1" failed_version="$2" debian package_status dkms_status
 
+    debian="$(debian_version "$failed_version")"
     package_status="$(dpkg-query -W -f='${Status}' "$package")"
     dkms_status="$(dkms status -m virt-temp -v "$failed_version" 2>/dev/null || true)"
 
@@ -68,7 +82,7 @@ check_failed_upgrade() {
     printf '  service:         %s\n' "$(systemctl is-active "$service" 2>/dev/null || true)"
     dpkg --audit || true
 
-    [[ "$(dpkg-query -W -f='${Version}' "$package")" == "$failed_version-1" ]]
+    [[ "$(dpkg-query -W -f='${Version}' "$package")" == "$debian-$debian_revision" ]]
     [[ "$package_status" == "install ok half-configured" ]]
     check_unregistered "$old_version"
     [[ "$dkms_status" == *': added'* ]]
@@ -90,11 +104,10 @@ done
 
 failed_version=0.0.0-vmtest.3
 failed_root="$(mktemp -d /var/tmp/uvss-failed-package.XXXXXX)"
-failed_package="$PWD/dist/${package}_${failed_version}-1_amd64-failed.deb"
+failed_source="$(package_path "$failed_version")"
+failed_package="${failed_source%.deb}-failed.deb"
 trap 'rm -rf -- "$failed_root"' EXIT
-dpkg-deb -R \
-    "$PWD/dist/${package}_${failed_version}-1_amd64.deb" \
-    "$failed_root"
+dpkg-deb -R "$failed_source" "$failed_root"
 printf '\n#error UVSS_VM_INTENTIONAL_DKMS_FAILURE\n' >> \
     "$failed_root/usr/src/virt-temp-$failed_version/virt-temp.c"
 dpkg-deb --build --root-owner-group "$failed_root" "$failed_package" >/dev/null

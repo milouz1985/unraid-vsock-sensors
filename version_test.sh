@@ -95,6 +95,7 @@ expect_debian_version 1.7.0-rc.1 1.7.0~rc.1
 expect_debian_version 1.7.0-rc.2 1.7.0~rc.2
 expect_debian_version 1.7.0-dev.4.gabcdef 1.7.0+dev.4.gabcdef
 expect_debian_version 1.7.0-rc.1-dev.2.gabcdef 1.7.0~rc.1+dev.2.gabcdef
+expect_debian_version 0.0.0-vmtest.3 0.0.0~vmtest.3
 
 if command -v dpkg >/dev/null 2>&1; then
     debian_versions=(
