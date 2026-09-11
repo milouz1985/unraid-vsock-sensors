@@ -257,11 +257,14 @@ Un manifeste SHA256 est vérifié dans la VM après le transfert.
 
 Avant le démarrage, deux volumes SATA de `TEST_DISK_SIZE_GIB` Gio sont ajoutés
 avec les numéros de série `UVSSDISK1` et `UVSSDISK2`. Leurs noms `/dev/sdX`
-ne sont pas supposés stables : le test parcourt les disques entiers et les
-identifie avec le numéro de série exposé par sysfs. Il vérifie ensuite
-`ROTA=1`, génère un `disks.ini`, un `var.ini` et des rapports SMART en cache,
-puis exerce le collecteur sans aucune commande SMART matérielle. Le scénario
-couvre aussi l'expiration du cache, le failsafe hwmon et la récupération.
+ne sont pas supposés stables et le guest ne garantit pas la présence du numéro
+de série dans `device/serial` sous sysfs. Le test retrouve donc chaque disque
+par son identifiant udev persistant
+`/dev/disk/by-id/ata-QEMU_HARDDISK_<serial>`, résout dynamiquement sa cible
+`/dev/sdX`, puis vérifie dans sysfs que `queue/rotational` vaut `1`. Il génère
+ensuite un `disks.ini`, un `var.ini` et des rapports SMART en cache, puis exerce
+le collecteur sans aucune commande SMART matérielle. Le scénario couvre aussi
+l'expiration du cache, le failsafe hwmon et la récupération.
 
 Avant les tests, le lanceur vérifie par SSH le noyau démarré dans le clone et
 le marqueur du template contre `PVE_KERNEL_RELEASE`. Après une mise à jour du

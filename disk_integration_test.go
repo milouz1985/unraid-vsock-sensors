@@ -23,69 +23,68 @@ type vmTestDisk struct {
 
 func discoverVMTestDisks(t *testing.T) []vmTestDisk {
 	t.Helper()
-	wanted := []vmTestDisk{
+	disks := []vmTestDisk{
 		{name: "disk1", serial: "UVSSDISK1"},
 		{name: "disk2", serial: "UVSSDISK2"},
 	}
-	wantedSerials := make(map[string]struct{}, len(wanted))
-	for _, disk := range wanted {
-		wantedSerials[disk.serial] = struct{}{}
-	}
 
-	blockDevices, err := filepath.Glob("/sys/class/block/sd*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := make(map[string]string, len(wanted))
-	var observed []string
-	for _, sysfsPath := range blockDevices {
-		if _, err := os.Stat(filepath.Join(sysfsPath, "partition")); err == nil {
-			continue
-		} else if !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("inspect block device %s: %v", sysfsPath, err)
+	for index := range disks {
+		disk := &disks[index]
+		byID := filepath.Join("/dev/disk/by-id", "ata-QEMU_HARDDISK_"+disk.serial)
+		linkInfo, err := os.Lstat(byID)
+		if errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("QEMU SATA disk %s not found at %s", disk.serial, byID)
 		}
-		serialBytes, err := os.ReadFile(filepath.Join(sysfsPath, "device", "serial"))
 		if err != nil {
-			continue
+			t.Fatalf("inspect QEMU SATA disk link %s: %v", byID, err)
 		}
-		serial := strings.TrimSpace(string(serialBytes))
-		devicePath := filepath.Join("/dev", filepath.Base(sysfsPath))
-		if serial != "" {
-			observed = append(observed, fmt.Sprintf("%s=%s", devicePath, serial))
+		if linkInfo.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("invalid QEMU SATA disk link %s: expected a symlink", byID)
 		}
-		if _, ok := wantedSerials[serial]; !ok {
-			continue
-		}
-		if previous := found[serial]; previous != "" {
-			t.Fatalf("serial %s found on both %s and %s", serial, previous, devicePath)
-		}
-		found[serial] = devicePath
-	}
 
-	for index := range wanted {
-		wanted[index].path = found[wanted[index].serial]
-		if wanted[index].path == "" {
-			t.Fatalf("QEMU SATA disk %s not found through sysfs; observed: %v", wanted[index].serial, observed)
+		devicePath, err := filepath.EvalSymlinks(byID)
+		if err != nil {
+			t.Fatalf("resolve QEMU SATA disk %s via %s: %v", disk.serial, byID, err)
 		}
-		t.Logf("discovered QEMU SATA disk %s at %s", wanted[index].serial, wanted[index].path)
+		deviceInfo, err := os.Stat(devicePath)
+		if err != nil {
+			t.Fatalf("inspect target %s resolved from %s: %v", devicePath, byID, err)
+		}
+		if deviceInfo.Mode()&os.ModeDevice == 0 || deviceInfo.Mode()&os.ModeCharDevice != 0 {
+			t.Fatalf("invalid target %s resolved from %s: expected a block device", devicePath, byID)
+		}
+
+		deviceName := filepath.Base(devicePath)
+		sysfsPath := filepath.Join("/sys/class/block", deviceName)
+		if _, err := os.Stat(sysfsPath); err != nil {
+			t.Fatalf("invalid target %s resolved from %s: missing %s: %v", devicePath, byID, sysfsPath, err)
+		}
+		partitionPath := filepath.Join(sysfsPath, "partition")
+		if _, err := os.Stat(partitionPath); err == nil {
+			t.Fatalf("invalid target %s resolved from %s: expected a whole disk, got a partition", devicePath, byID)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inspect target %s resolved from %s: %v", devicePath, byID, err)
+		}
+
+		rotationalPath := filepath.Join(sysfsPath, "queue", "rotational")
+		rotational, err := os.ReadFile(rotationalPath)
+		if err != nil {
+			t.Fatalf("read rotational value for %s resolved from %s: %v", devicePath, byID, err)
+		}
+		if value := strings.TrimSpace(string(rotational)); value != "1" {
+			t.Fatalf("unexpected rotational value for %s resolved from %s: got %q, want 1", devicePath, byID, value)
+		}
+
+		disk.path = devicePath
+		t.Logf("discovered QEMU SATA disk %s at %s via %s", disk.serial, disk.path, byID)
 	}
-	return wanted
+	return disks
 }
 
 func TestVMUnraidSMARTCacheCollector(t *testing.T) {
 	requireVMIntegrationTest(t)
 
 	devices := discoverVMTestDisks(t)
-	for _, disk := range devices {
-		info, err := os.Stat(disk.path)
-		if err != nil || info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
-			t.Fatalf("expected QEMU SATA block device %s: %v", disk.path, err)
-		}
-		rotational, err := os.ReadFile("/sys/class/block/" + filepath.Base(disk.path) + "/queue/rotational")
-		if err != nil || strings.TrimSpace(string(rotational)) != "1" {
-			t.Fatalf("%s ROTA = %q, err=%v; want 1", disk.path, rotational, err)
-		}
-	}
 
 	directory := t.TempDir()
 	paths := diskDataPaths{
