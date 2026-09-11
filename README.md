@@ -466,9 +466,9 @@ make all                     # vérifie et construit tous les artefacts locaux
 make release VERSION=X.Y.Z   # valide et prépare une release complète
 ```
 
-Pour valider manuellement le pipeline complet sans publier le manifeste suivi,
-lancer d'abord le parcours VM, puis construire les artefacts locaux uniquement
-si cette validation réussit :
+Pour valider manuellement le pipeline complet sans modifier le descripteur .plg
+suivi, lancer d'abord le parcours VM, puis construire les artefacts locaux
+uniquement si cette validation réussit :
 
 ```sh
 make test-vm && make all
@@ -476,7 +476,8 @@ make test-vm && make all
 
 `make all` ne lance pas de VM ; les cibles `test-vm*` restent explicitement
 séparées parce qu'elles nécessitent un environnement Proxmox distant. La cible
-`release` enchaîne elle-même ces deux validations avant de publier le manifeste.
+`release` enchaîne elle-même ces deux validations avant de mettre à jour le
+descripteur .plg public.
 
 Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
 commit courant n'est pas exactement tagué. Une version explicite s'écrit sans
@@ -594,14 +595,14 @@ première installation ou le cycle de démarrage, utiliser un `.plg` dont l'URL
 de paquet pointe vers le `.txz` de développement.
 
 La construction écrit le descripteur dans `dist/unraid-vsock-sensors.plg` et ne
-modifie aucun fichier suivi par Git. Le manifeste public situé dans
+modifie aucun fichier suivi par Git. Le descripteur .plg public situé dans
 `unraid-plugin/` n'est remplacé que par la procédure explicite de release.
 
 ## Publier une release
 
 Partir d'un arbre propre et préparer la release en une seule commande. Cette
 cible valide d'abord le parcours VM, exécute `make all` avec la version finale,
-puis remplace le manifeste public par celui qui vient d'être construit :
+puis remplace le descripteur .plg public par celui qui vient d'être construit :
 
 ```sh
 make release VERSION=X.Y.Z
@@ -618,10 +619,10 @@ La dernière étape peut aussi être exécutée séparément après la construct
 make update-plg VERSION=X.Y.Z
 ```
 
-Elle refuse une version implicite ainsi qu'un manifeste absent ou construit
-pour une autre version. `release` et `update-plg` exigent toutes deux une
-version finale strictement au format `X.Y.Z`, sans prerelease ni métadonnée de
-build. Elle ne crée ni commit, ni tag et ne pousse rien.
+Elle refuse une version implicite ainsi qu'un descripteur .plg absent ou
+construit pour une autre version. `release` et `update-plg` exigent toutes deux
+une version finale strictement au format `X.Y.Z`, sans prerelease ni métadonnée
+de build. Elle ne crée ni commit, ni tag et ne pousse rien.
 
 Joindre à la release GitHub :
 

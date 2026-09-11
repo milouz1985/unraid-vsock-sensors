@@ -147,7 +147,7 @@ hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
 	GO="$(GO)" VERSION="$$version" DEBIAN_REVISION="$(DEBIAN_REVISION)" \
 		./virt-temp/package.sh
 
-update-plg: ## Met à jour dans Git le manifeste Unraid déjà construit
+update-plg: ## Met à jour dans Git le descripteur .plg Unraid déjà construit
 	@version="$(VERSION)"; \
 	if [ -z "$$version" ]; then \
 		echo "VERSION is required (example: make update-plg VERSION=1.7.0)" >&2; \
@@ -161,7 +161,7 @@ update-plg: ## Met à jour dans Git le manifeste Unraid déjà construit
 	fi; \
 	manifest_version="$$(awk -F'"' '/^<!ENTITY version / { print $$2; exit }' "$$manifest")"; \
 	if [ "$$manifest_version" != "$$version" ]; then \
-		echo "Manifest version $$manifest_version does not match VERSION=$$version" >&2; \
+		echo "PLG descriptor version $$manifest_version does not match VERSION=$$version" >&2; \
 		exit 1; \
 	fi; \
 	install -m 0644 "$$manifest" unraid-plugin/unraid-vsock-sensors.plg; \
