@@ -19,7 +19,8 @@
 //   - drivers/scsi/mpt3sas/mpt3sas_hwmon.c
 //     IO Unit Page 7 temperature semantics, including signed values and units.
 //
-// Upstream sources: https://github.com/torvalds/linux/tree/master/drivers/scsi/mpt3sas
+// Upstream sources (Linux commit 8cbaf7b1ab4dd9ced322b6ebf60b079cc3a3d8d2):
+// https://github.com/torvalds/linux/tree/8cbaf7b1ab4dd9ced322b6ebf60b079cc3a3d8d2/drivers/scsi/mpt3sas
 //
 // The byte layouts and offsets were also validated on Linux/amd64 against an
 // LSI SAS3008 using mpt3sas 54.100.00.00. The resulting IOC temperature matched

@@ -638,12 +638,14 @@ que le CID de VM configuré et limite chaque snapshot encadré à 1 Mio.
 
 Le backend HBA natif est une implémentation Go originale de l'ABI publique du
 pilote Linux `mpt3sas`. Il utilise les constantes, formats binaires et
-sémantiques MPI documentés dans les sources du noyau, notamment
-[`mpt3sas_ctl.h`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpt3sas_ctl.h),
-[`mpt3sas_ctl.c`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpt3sas_ctl.c),
-[`mpi2_cnfg.h`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpi/mpi2_cnfg.h)
+sémantiques MPI documentés dans la révision Linux
+[`8cbaf7b1ab4d`](https://github.com/torvalds/linux/commit/8cbaf7b1ab4dd9ced322b6ebf60b079cc3a3d8d2),
+notamment
+[`mpt3sas_ctl.h`](https://github.com/torvalds/linux/blob/8cbaf7b1ab4dd9ced322b6ebf60b079cc3a3d8d2/drivers/scsi/mpt3sas/mpt3sas_ctl.h),
+[`mpt3sas_ctl.c`](https://github.com/torvalds/linux/blob/8cbaf7b1ab4dd9ced322b6ebf60b079cc3a3d8d2/drivers/scsi/mpt3sas/mpt3sas_ctl.c),
+[`mpi2_cnfg.h`](https://github.com/torvalds/linux/blob/8cbaf7b1ab4dd9ced322b6ebf60b079cc3a3d8d2/drivers/scsi/mpt3sas/mpi/mpi2_cnfg.h)
 et
-[`mpt3sas_hwmon.c`](https://github.com/torvalds/linux/blob/master/drivers/scsi/mpt3sas/mpt3sas_hwmon.c).
+[`mpt3sas_hwmon.c`](https://github.com/torvalds/linux/blob/8cbaf7b1ab4dd9ced322b6ebf60b079cc3a3d8d2/drivers/scsi/mpt3sas/mpt3sas_hwmon.c).
 Ces références ont servi à documenter et vérifier les ioctl de `/dev/mpt3ctl`,
 les requêtes MPI CONFIG en lecture seule et le décodage de la température HBA ;
 le backend ne contient pas de code copié depuis le pilote Linux, LSIUtil ou
