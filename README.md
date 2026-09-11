@@ -267,20 +267,23 @@ rapports SMART. Pour un disque assigné, il contrôle le `mtime` de
 `poll_attributes + max(10 secondes, 20 % de poll_attributes)`. Ce calcul est
 entièrement local à Unraid et ne dépend pas de l'horloge Proxmox.
 
-`poll_attributes` est lu comme donnée depuis l'état runtime d'emhttpd,
-`/var/local/emhttp/var.ini`, jamais exécuté comme du shell. Une valeur absente,
-négative ou non numérique produit un warning et utilise un fallback interne de
-`30s` pour le seul calcul de fraîcheur. La valeur `0` désactive réellement le
-polling automatique Unraid et produit un warning distinct. Une cadence
-supérieure à `60s` produit également un warning, car elle augmente directement
-le délai de réaction thermique.
+Après chaque polling SMART, Unraid déclenche l'event `poll_attributes`. Le
+plugin utilise cet event pour envoyer `SIGUSR1` au daemon et relire immédiatement
+les températures fraîchement mises en cache. Les demandes rapprochées sont
+fusionnées et une seule collecte peut s'exécuter à la fois.
 
-L'event Unraid `poll_attributes` envoie `SIGUSR1` au daemon pour déclencher une
-relecture immédiate. Les demandes rapprochées sont fusionnées et une seule
-collecte peut s'exécuter à la fois. Un watchdog de cinq secondes relit les
-fichiers légers afin de détecter un event perdu, une expiration, un changement
-de veille, d'inventaire ou de configuration. Aucun de ces chemins n'accède au
-matériel SMART.
+La valeur du réglage `poll_attributes` est lue séparément dans l'état runtime
+d'emhttpd, `/var/local/emhttp/var.ini`, afin de déterminer la fenêtre de
+fraîcheur du cache SMART. Le fichier est traité comme de la donnée, jamais
+exécuté comme du shell. Une valeur absente, négative ou non numérique produit un
+warning et utilise un fallback interne de `30s` pour le seul calcul de
+fraîcheur. La valeur `0` désactive réellement le polling automatique Unraid et
+produit un warning distinct. Une cadence supérieure à `60s` produit également
+un warning, car elle augmente directement le délai de réaction thermique.
+
+Un watchdog de cinq secondes relit les fichiers légers afin de détecter un event
+perdu, une expiration, un changement de veille, d'inventaire ou de
+configuration. Aucun de ces chemins n'accède au matériel SMART.
 
 Un disque signalé en veille par `spundown="1"` est conservé dans l'inventaire
 avec une température de `0 °C`, même si son rapport est ancien. Après son réveil,
