@@ -7,6 +7,7 @@ VERSION ?=
 DEBIAN_REVISION ?= 1
 
 BASH_SCRIPTS := version.sh \
+	version_test.sh \
 	unraid-plugin/package.sh \
 	unraid-plugin/poll_attributes \
 	unraid-plugin/rc.unraid-vsock-sensors \
@@ -88,6 +89,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 		sh -n "$$script" || exit $$?; \
 	done
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
+	bash version_test.sh
 	bash unraid-plugin/rc_test.sh
 
 check: vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
@@ -139,7 +141,7 @@ release-manifest: ## Publie dans Git le manifeste Unraid déjà construit
 		echo "VERSION is required (example: make release-manifest VERSION=1.7.0)" >&2; \
 		exit 1; \
 	fi; \
-	version="$$(VERSION="$$version" ./version.sh)" || exit $$?; \
+	version="$$(VERSION="$$version" ./version.sh --release)" || exit $$?; \
 	manifest="dist/unraid-vsock-sensors.plg"; \
 	if [ ! -f "$$manifest" ]; then \
 		echo "Missing $$manifest; run make unraid-package VERSION=$$version first" >&2; \
@@ -159,7 +161,7 @@ release: ## Valide et prépare tous les artefacts d'une release
 		echo "VERSION is required (example: make release VERSION=1.7.0)" >&2; \
 		exit 1; \
 	fi; \
-	VERSION="$$version" ./version.sh >/dev/null; \
+	VERSION="$$version" ./version.sh --release >/dev/null; \
 	status="$$(git status --porcelain --untracked-files=normal)"; \
 	if [ -n "$$status" ]; then \
 		echo "A release requires a clean Git worktree:" >&2; \

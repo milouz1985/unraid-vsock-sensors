@@ -2,6 +2,20 @@
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+release_only=0
+
+case "$#" in
+    0) ;;
+    1)
+        if [[ "$1" == "--release" ]]; then
+            release_only=1
+        else
+            echo "Usage: $0 [--release]" >&2
+            exit 2
+        fi
+        ;;
+    *) echo "Usage: $0 [--release]" >&2; exit 2 ;;
+esac
 
 validate_version() {
     if [[ ! "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
@@ -10,8 +24,16 @@ validate_version() {
     fi
 }
 
+validate_selected_version() {
+    validate_version "$1"
+    if (( release_only )) && [[ ! "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+        echo "Version de release invalide : $1 (format attendu : X.Y.Z)" >&2
+        exit 1
+    fi
+}
+
 if [[ -n "${VERSION:-}" ]]; then
-    validate_version "$VERSION"
+    validate_selected_version "$VERSION"
     printf '%s\n' "$VERSION"
     exit 0
 fi
@@ -43,5 +65,5 @@ else
     fi
 fi
 
-validate_version "$version"
+validate_selected_version "$version"
 printf '%s\n' "$version"
