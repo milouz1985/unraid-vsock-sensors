@@ -402,10 +402,15 @@ func TestParseMPT3Temperature(t *testing.T) {
 }
 
 func TestParseStorCLI(t *testing.T) {
-	data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"}]}}]}`)
-	readings, err := parseStorCLI(data)
-	if err != nil || len(readings) != 1 || readings[0] != 49 {
-		t.Fatalf("got %#v, %v", readings, err)
+	for _, spelling := range []string{"Celsius", "Celcius"} {
+		t.Run(spelling, func(t *testing.T) {
+			property := "ROC temperature(Degree " + spelling + ")"
+			data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"` + property + `","Value":"49"}]}}]}`)
+			readings, err := parseStorCLI(data)
+			if err != nil || len(readings) != 1 || readings[0] != 49 {
+				t.Fatalf("got %#v, %v", readings, err)
+			}
+		})
 	}
 	bad := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"255"}]}}]}`)
 	if _, err := parseStorCLI(bad); err == nil {

@@ -179,7 +179,8 @@ func parseStorCLI(data []byte) (map[int]float64, error) {
 		}
 		found := false
 		for _, property := range controller.ResponseData.ControllerProperties {
-			if property.Property != "ROC temperature(Degree Celsius)" {
+			if property.Property != "ROC temperature(Degree Celsius)" &&
+				property.Property != "ROC temperature(Degree Celcius)" {
 				continue
 			}
 			temp, err := strconv.ParseFloat(property.Value, 64)
