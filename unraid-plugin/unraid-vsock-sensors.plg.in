@@ -15,8 +15,8 @@
         pluginURL="&pluginURL;" launch="Settings/UnraidVsockSensors"
         min="6.12.0" icon="icon.png">
 <DESCRIPTION>
-Pushes Unraid-cached disk temperatures and HBA temperatures over AF_VSOCK to
-the Proxmox host and the CoolerControl plugin.
+Pushes disk temperatures from Unraid's SMART cache and HBA temperatures over
+AF_VSOCK to the Proxmox host, where they are exposed as native hwmon sensors.
 </DESCRIPTION>
 <CHANGES>
 ### &version;
