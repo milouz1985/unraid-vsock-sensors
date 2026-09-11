@@ -251,10 +251,12 @@ donc sélectionner une fois les nouvelles sources dans CoolerControl ou adapter
 les `platform` configurées dans fan2go.
 
 L'agent conserve `disks.ini` comme source d'autorité pour les disques assignés
-et ajoute les Unassigned Devices décrits par `devs.ini`. Une unité présente
-temporairement dans les deux fichiers est dédupliquée par son ID stable, avec
-priorité à son entrée assignée. Le nom `/dev/sdX` d'un Unassigned Device sert
-uniquement à localiser son rapport SMART ; il ne devient jamais son identité.
+et ajoute les Unassigned Devices décrits par `devs.ini`. `devs.ini` est fourni
+par Unraid et ne nécessite pas l'installation du plugin Unassigned Devices. Une
+unité présente temporairement dans les deux fichiers est dédupliquée par son ID
+stable, avec priorité à son entrée assignée. Le nom `/dev/sdX` d'un Unassigned
+Device sert uniquement à localiser son rapport SMART ; il ne devient jamais son
+identité.
 La clé USB de démarrage `flash` reste exclue. Les disques rotationnels, y
 compris USB, rejoignent le maximum HDD. Un SSD utilisant un autre transport que
 SATA ou NVMe possède une sonde individuelle, mais ne crée pas de maximum dédié.
