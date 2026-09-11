@@ -13,8 +13,9 @@ import (
 	"log/syslog"
 	"os"
 	"os/signal"
-	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"unraid-vsock-sensors/internal/sensors"
 	"unraid-vsock-sensors/internal/vsockaddr"
@@ -152,10 +153,10 @@ func serve(args []string) error {
 	}
 	disks := newDiskCollector(defaultDiskDataPaths)
 	log.Printf("starting unraid-vsock-sensors v%s; pushing to host VSOCK port %d", version, *port)
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), unix.SIGINT, unix.SIGTERM)
 	defer stop()
 	refreshSignals := make(chan os.Signal, 1)
-	signal.Notify(refreshSignals, syscall.SIGUSR1)
+	signal.Notify(refreshSignals, unix.SIGUSR1)
 	defer signal.Stop(refreshSignals)
 	refreshRequests := make(chan struct{}, 1)
 	go forwardDiskRefreshSignals(ctx, refreshSignals, refreshRequests)

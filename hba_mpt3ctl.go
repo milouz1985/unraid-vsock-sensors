@@ -43,8 +43,9 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
@@ -126,7 +127,7 @@ func openMPT3() (*mpt3Device, error) {
 }
 
 func mpt3IOCTL(fd, request uintptr, argument unsafe.Pointer) error {
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, request, uintptr(argument))
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, fd, request, uintptr(argument))
 	if errno != 0 {
 		return errno
 	}
@@ -269,7 +270,7 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 		}
 		info, err := device.iocInfo(ioc)
 		if err != nil {
-			if errors.Is(err, syscall.ENODEV) || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENXIO) {
+			if errors.Is(err, unix.ENODEV) || errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENXIO) {
 				continue
 			}
 			return nil, fmt.Errorf("mpt3ctl IOC %d discovery: %w", ioc, err)

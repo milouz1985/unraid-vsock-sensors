@@ -9,7 +9,8 @@ import (
 	"math"
 	"os"
 	"strings"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -41,7 +42,7 @@ func publishHWMonFamilyWithWriter(
 	}
 
 	if err := write(path, namespace, "commit", current); err != nil {
-		if !errors.Is(err, syscall.ESTALE) {
+		if !errors.Is(err, unix.ESTALE) {
 			return false, err
 		}
 		if configureErr := write(path, namespace, "configure", current); configureErr != nil {

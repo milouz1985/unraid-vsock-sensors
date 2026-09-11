@@ -10,9 +10,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
@@ -79,14 +80,14 @@ func TestVMHWMon(t *testing.T) {
 	t.Log("a real ENOSPC write error is propagated without changing inventory")
 	before := append([]hwmonSensor(nil), disks.sensors...)
 	changed, err = publishHWMonFamily("/dev/full", "disk", &disks, diskSamples)
-	if changed || !errors.Is(err, syscall.ENOSPC) || strings.Contains(err.Error(), "reconfigure") || !reflect.DeepEqual(before, disks.sensors) {
+	if changed || !errors.Is(err, unix.ENOSPC) || strings.Contains(err.Error(), "reconfigure") || !reflect.DeepEqual(before, disks.sensors) {
 		t.Fatalf("changed=%v, err=%v, inventory=%v", changed, err, disks.sensors)
 	}
 	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
 
 	t.Log("reload loses kernel inventory; a real ESTALE triggers reconfiguration")
 	reloadTestVirtTemp(t)
-	if err := writeHWMonSamples(device, "disk", "commit", diskSamples); !errors.Is(err, syscall.ESTALE) {
+	if err := writeHWMonSamples(device, "disk", "commit", diskSamples); !errors.Is(err, unix.ESTALE) {
 		t.Fatalf("commit after reload = %v, want ESTALE", err)
 	}
 	publish("disk", &disks, diskSamples, true)

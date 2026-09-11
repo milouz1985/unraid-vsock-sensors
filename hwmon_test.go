@@ -15,9 +15,10 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"unraid-vsock-sensors/internal/sensors"
 
@@ -750,7 +751,7 @@ func TestPublisherReconfiguresAfterStaleCommit(t *testing.T) {
 	write := func(_, _, operation string, readings []hwmonSample) error {
 		operations = append(operations, operation)
 		if operation == "commit" {
-			return syscall.ESTALE
+			return unix.ESTALE
 		}
 		if !reflect.DeepEqual(readings, current) {
 			t.Fatalf("configured readings = %#v, want %#v", readings, current)

@@ -12,8 +12,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
-	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"unraid-vsock-sensors/internal/sensors"
 	"unraid-vsock-sensors/internal/vsockaddr"
@@ -76,7 +77,7 @@ func hwmon(args []string) error {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), unix.SIGINT, unix.SIGTERM)
 	defer stop()
 
 	listener, err := vsock.Listen(uint32(*port), nil)
