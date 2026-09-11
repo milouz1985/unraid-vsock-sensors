@@ -169,13 +169,12 @@ update-plg: ## Génère le descripteur .plg public depuis le paquet .txz
 	@VERSION="$(VERSION)" ./unraid-plugin/update-plg.sh
 
 release: ## Valide et prépare tous les artefacts d'une release
-	@version="$(VERSION)"; \
-	if [ -z "$$version" ]; then \
-		echo "VERSION is required (example: make release VERSION=1.7.0)" >&2; \
+	@if [ -z "$(VERSION)" ]; then \
+		echo "VERSION is required (example: make release VERSION=2.0.0)" >&2; \
 		exit 1; \
-	fi; \
-	VERSION="$$version" ./version.sh --release >/dev/null; \
-	status="$$(git status --porcelain --untracked-files=normal)"; \
+	fi
+	@VERSION="$(VERSION)" ./version.sh --release >/dev/null
+	@status="$$(git status --porcelain --untracked-files=normal)"; \
 	if [ -n "$$status" ]; then \
 		echo "A release requires a clean Git worktree:" >&2; \
 		printf '%s\n' "$$status" >&2; \
