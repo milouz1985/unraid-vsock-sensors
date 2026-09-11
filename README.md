@@ -460,7 +460,7 @@ make tidy                    # synchronise go.mod et go.sum
 make check                   # vérifie formatage, modules, Go, shell et PHP
 make test-race               # exécute les tests Go avec le détecteur de courses
 make build                   # crée bin/unraid-vsock-sensors
-make unraid-package          # crée le .txz et le .plg Unraid
+make unraid-package          # crée le .txz Unraid
 make hwmon-package           # crée le .deb Proxmox
 make artifacts               # produit tous les artefacts versionnés
 make all                     # vérifie et construit tous les artefacts locaux
@@ -485,7 +485,9 @@ commit courant n'est pas exactement tagué. Une version explicite s'écrit sans
 le préfixe `v`, par exemple `make all VERSION=1.4.2` ; le tag Git correspondant
 peut ensuite s'appeler `v1.4.2`. Une prerelease peut être construite avec, par
 exemple, `make all VERSION=1.4.3-rc.1`. Son paquet Debian utilise
-`1.4.3~rc.1-1`, afin de rester antérieur à la finale `1.4.3-1`.
+`1.4.3~rc.1-1`, afin de rester antérieur à la finale `1.4.3-1`. Cette commande
+produit uniquement le `.txz` et le `.deb` de la RC ; elle ne modifie pas le
+descripteur `.plg` public, car `update-plg` refuse les prereleases.
 
 ### Tests d'intégration dans une VM
 
@@ -595,9 +597,9 @@ redémarrage, puisque le système Unraid est chargé en mémoire. Pour valider u
 première installation ou le cycle de démarrage, utiliser un `.plg` dont l'URL
 de paquet pointe vers le `.txz` de développement.
 
-La construction écrit le descripteur dans `dist/unraid-vsock-sensors.plg` et ne
-modifie aucun fichier suivi par Git. Le descripteur .plg public situé dans
-`unraid-plugin/` n'est remplacé que par la procédure explicite de release.
+La construction du `.txz` ne génère aucun descripteur `.plg` et ne modifie aucun
+fichier suivi par Git. Le descripteur public situé dans `unraid-plugin/` est
+généré uniquement par la procédure explicite de release.
 
 ## Publier une release
 
@@ -621,10 +623,13 @@ La dernière étape peut aussi être exécutée séparément après la construct
 make update-plg VERSION=X.Y.Z
 ```
 
-Elle refuse une version implicite ainsi qu'un descripteur .plg absent ou
-construit pour une autre version. `release` et `update-plg` exigent toutes deux
-une version finale strictement au format `X.Y.Z`, sans prerelease ni métadonnée
-de build. Elle ne crée ni commit, ni tag et ne pousse rien.
+Cette cible calcule les sommes MD5 et SHA256 du `.txz` final déjà présent dans
+`dist/`, puis génère directement le descripteur public suivi par Git. Elle refuse
+une version implicite, une prerelease et un `.txz` absent. `release` et
+`update-plg` exigent toutes deux une version finale strictement au format
+`X.Y.Z`, sans prerelease ni métadonnée de build. Elle ne crée ni commit, ni tag
+et ne pousse rien. Aucun descripteur `.plg` intermédiaire n'est créé dans
+`dist/`.
 
 Joindre à la release GitHub :
 

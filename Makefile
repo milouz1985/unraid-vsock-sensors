@@ -10,6 +10,8 @@ DEBIAN_REVISION ?= 1
 BASH_SCRIPTS := version.sh \
 	version_test.sh \
 	unraid-plugin/package.sh \
+	unraid-plugin/update-plg.sh \
+	unraid-plugin/update_plg_test.sh \
 	unraid-plugin/poll_attributes \
 	unraid-plugin/rc.unraid-vsock-sensors \
 	unraid-plugin/rc_test.sh \
@@ -102,6 +104,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	done
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
 	bash version_test.sh
+	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/rc_test.sh
 
 check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
@@ -138,7 +141,7 @@ build: | $(BIN_DIR) ## Compile un binaire Linux statique
 
 .PHONY: unraid-package hwmon-package artifacts update-plg release
 
-unraid-package: ## Crée le plugin serveur installable dans Unraid
+unraid-package: ## Crée le paquet txz installable dans Unraid
 	@$(resolve-version) \
 	GO="$(GO)" VERSION="$$version" ./unraid-plugin/package.sh
 
@@ -149,25 +152,8 @@ hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
 
 artifacts: build unraid-package hwmon-package ## Produit tous les artefacts versionnés
 
-update-plg: ## Met à jour dans Git le descripteur .plg Unraid déjà construit
-	@version="$(VERSION)"; \
-	if [ -z "$$version" ]; then \
-		echo "VERSION is required (example: make update-plg VERSION=1.7.0)" >&2; \
-		exit 1; \
-	fi; \
-	version="$$(VERSION="$$version" ./version.sh --release)" || exit $$?; \
-	manifest="dist/unraid-vsock-sensors.plg"; \
-	if [ ! -f "$$manifest" ]; then \
-		echo "Missing $$manifest; run make unraid-package VERSION=$$version first" >&2; \
-		exit 1; \
-	fi; \
-	manifest_version="$$(awk -F'"' '/^<!ENTITY version / { print $$2; exit }' "$$manifest")"; \
-	if [ "$$manifest_version" != "$$version" ]; then \
-		echo "PLG descriptor version $$manifest_version does not match VERSION=$$version" >&2; \
-		exit 1; \
-	fi; \
-	install -m 0644 "$$manifest" unraid-plugin/unraid-vsock-sensors.plg; \
-	echo "unraid-plugin/unraid-vsock-sensors.plg"
+update-plg: ## Génère le descripteur .plg public depuis le paquet .txz
+	@VERSION="$(VERSION)" ./unraid-plugin/update-plg.sh
 
 release: ## Valide et prépare tous les artefacts d'une release
 	@version="$(VERSION)"; \

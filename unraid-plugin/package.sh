@@ -6,21 +6,13 @@ plugin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd -- "$plugin_dir/.." && pwd)"
 go_command="${GO:-go}"
 version="$(VERSION="${VERSION:-}" "$repo_dir/version.sh")"
-repository_url="${REPOSITORY_URL:-https://github.com/milouz1985/unraid-vsock-sensors}"
-plugin_url="${PLUGIN_URL:-https://raw.githubusercontent.com/milouz1985/unraid-vsock-sensors/main/unraid-plugin/unraid-vsock-sensors.plg}"
 package_version="${version//-/_}"
 package_version="${package_version//+/_}"
 package_name="unraid-vsock-sensors-${package_version}-x86_64-1.txz"
-package_url="${PACKAGE_URL:-$repository_url/releases/download/v$version/$package_name}"
 dist_dir="${DIST_DIR:-$repo_dir/dist}"
-plugin_output="$dist_dir/unraid-vsock-sensors.plg"
 build_dir="$(mktemp -d)"
 stage_dir="$build_dir/package"
 trap 'rm -rf "$build_dir"' EXIT
-
-case "$version$plugin_url$package_url" in
-    *'|'*|*'&'*) echo "Version and URLs must not contain | or &" >&2; exit 2 ;;
-esac
 
 mkdir -p \
     "$stage_dir/etc/rc.d" \
@@ -59,17 +51,5 @@ package_path="$dist_dir/$package_name"
 # Fixed metadata makes identical sources produce the same package checksum.
 tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
     -C "$stage_dir" -cJf "$package_path" .
-package_md5="$(md5sum "$package_path" | cut -d' ' -f1)"
-package_sha256="$(sha256sum "$package_path" | cut -d' ' -f1)"
-
-sed \
-    -e "s|@VERSION@|$version|g" \
-    -e "s|@PLUGIN_URL@|$plugin_url|g" \
-    -e "s|@PACKAGE_NAME@|$package_name|g" \
-    -e "s|@PACKAGE_URL@|$package_url|g" \
-    -e "s|@PACKAGE_MD5@|$package_md5|g" \
-    -e "s|@PACKAGE_SHA256@|$package_sha256|g" \
-    "$plugin_dir/unraid-vsock-sensors.plg.in" > "$plugin_output"
 
 echo "$package_path"
-echo "$plugin_output"
