@@ -507,7 +507,8 @@ static ssize_t device_write(struct file *file, const char __user *user,
 	 *
 	 *   sample\t<stable ID>\t<temperature in milli-Celsius>\t<label>\n
 	 *
-	 * or the command that atomically applies the session's samples:
+	 * or the command that validates the session's complete sample set before
+	 * applying the operation:
 	 *
 	 *   configure\t<namespace>\n
 	 *   commit\t<namespace>\n

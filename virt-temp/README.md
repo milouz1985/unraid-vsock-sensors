@@ -2,7 +2,9 @@
 
 Ce document décrit le composant Proxmox de `unraid-vsock-sensors`. Pour la
 procédure complète, depuis la configuration VSOCK jusqu'au plugin Unraid,
-consulter le [README principal](../README.md).
+consulter le [README principal](../README.md). La collecte des températures
+côté Unraid, la fraîcheur du cache SMART et l'architecture globale y sont
+documentées afin de conserver une seule source de vérité.
 
 ## Composants installés
 
@@ -97,17 +99,16 @@ nouvel inventaire est retiré du cache et aucune autre sonde ne récupère son
 identité. Un ancien périphérique restauré depuis le cache reste temporairement
 au failsafe jusqu'au premier snapshot valide, qui le retire si le matériel a
 réellement été supprimé.
-Une erreur globale de lecture ne constitue pas une nouvelle topologie : les
-anciens périphériques restent alors en place et atteignent le failsafe. Une
-température de disque indisponible n'interrompt pas les autres
-mises à jour : ce disque et le maximum de sa catégorie restent configurés mais
-sont omis des `commit`, tandis que les autres périphériques restent actualisés.
-Le noyau conserve donc leur dernière valeur jusqu'à l'expiration de
-`stale_timeout`, puis retourne `100 °C`. Une nouvelle configuration initialise
-directement les sondes indisponibles au failsafe. L'agent Unraid effectue un
-maximum de deux retries SMART espacés de deux secondes avant de reprendre
-l'intervalle normal. Un changement de label seul n'affecte pas l'identité, mais
-reconfigure la famille afin d'actualiser `temp1_label`, le nom hwmon et le cache.
+
+Un snapshot signalant une erreur globale ne constitue pas une nouvelle
+topologie : les anciens périphériques restent alors en place et atteignent le
+failsafe. Une sonde configurée mais omise d'un `commit` conserve sa dernière
+valeur jusqu'à l'expiration de `stale_timeout`, puis retourne `100 °C`, sans
+interrompre les autres mises à jour. Une nouvelle configuration initialise
+directement les sondes indisponibles au failsafe. Les règles qui déterminent
+cette indisponibilité côté Unraid sont décrites dans le README principal. Un
+changement de label seul n'affecte pas l'identité, mais reconfigure la famille
+afin d'actualiser `temp1_label`, le nom hwmon et le cache.
 
 Si l'enregistrement d'une nouvelle topologie échoue, le pilote tente de
 réenregistrer l'inventaire précédent au lieu de laisser disparaître les sondes.
@@ -122,11 +123,6 @@ inventaire.
 Le récepteur répond par une unique opération `configure`, restaure les
 périphériques et notifie les consommateurs comme lors de tout changement de
 topologie.
-
-Une erreur HBA invalide le relevé complet. L'inventaire précédent reste en
-place sans être actualisé et atteint donc le failsafe. StorCLI tente auparavant
-une redécouverte unique lorsque la topologie ou l'ensemble des contrôleurs a
-changé.
 
 Les logiciels qui n'observent pas les ajouts hwmon à chaud peuvent être
 relancés une première fois lorsque la VM répond, même si l'inventaire restauré
@@ -146,10 +142,6 @@ Le récepteur utilise `systemctl try-restart` : une unité absente ou inactive n
 pas démarrée. Si `systemctl` ne parvient pas à mettre la demande en file
 d'attente, une nouvelle tentative est programmée 30 secondes après chaque
 échec. La valeur reste vide par défaut.
-
-Chaque collecteur Unraid invalide son cache après son intervalle normal augmenté
-du délai maximal de collecte. Le snapshot signale alors une erreur et le
-récepteur cesse d'actualiser uniquement la famille concernée.
 
 Chaque canal applique un failsafe de `100000` millidegrés Celsius après
 10 secondes sans mise à jour. Ce délai, géré dans le module, couvre aussi une

@@ -68,7 +68,8 @@ func writeHWMonSamples(path, namespace, operation string, readings []hwmonSample
 
 // encodeHWMonSamples writes the text protocol consumed by virt-temp's
 // device_write(). Each sample is one tab-separated write. The final configure
-// or commit write atomically applies the samples staged on the open file.
+// or commit write makes the kernel validate every staged sample before applying
+// the operation.
 func encodeHWMonSamples(out io.Writer, namespace, operation string, readings []hwmonSample) error {
 	prefix := namespace + ":"
 	ids := make(map[string]struct{}, len(readings))
