@@ -6,6 +6,13 @@ BIN_DIR := bin
 BINARY := $(BIN_DIR)/unraid-vsock-sensors
 VERSION ?=
 DEBIAN_REVISION ?= 1
+FUZZTIME ?= 30s
+
+MPT3_FUZZ_TARGETS := FuzzParseMPT3PCIAddress \
+	FuzzParseMPT3Model \
+	FuzzParseMPT3SASAddress \
+	FuzzParseMPT3Temperature \
+	FuzzValidateMPT3ConfigReply
 
 BASH_SCRIPTS := version.sh \
 	version_test.sh \
@@ -64,7 +71,7 @@ help: ## Affiche les commandes disponibles
 		$(MAKEFILE_LIST)
 
 
-.PHONY: fmt fmt-check tidy tidy-check vet test test-race check-scripts lint-shell check all
+.PHONY: fmt fmt-check tidy tidy-check vet test test-race fuzz-mpt3 check-scripts lint-shell check all
 
 fmt: ## Formate tous les fichiers Go
 	$(GOFMT) -w .
@@ -91,6 +98,12 @@ test: ## Exécute tous les tests Go
 
 test-race: ## Exécute tous les tests Go avec le détecteur de courses
 	$(GO) test -race ./...
+
+fuzz-mpt3: ## Lance successivement les campagnes de fuzzing MPT3
+	@for target in $(MPT3_FUZZ_TARGETS); do \
+		echo "Fuzzing $$target for $(FUZZTIME)"; \
+		$(GO) test -run='^$$' -fuzz="^$${target}$$" -fuzztime="$(FUZZTIME)" . || exit $$?; \
+	done
 
 lint-shell: ## Analyse les scripts shell avec ShellCheck
 	shellcheck -x -P SCRIPTDIR $(BASH_SCRIPTS) $(POSIX_SCRIPTS)

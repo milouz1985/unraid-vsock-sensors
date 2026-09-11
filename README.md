@@ -505,6 +505,7 @@ make fmt                     # corrige le formatage des fichiers Go
 make tidy                    # synchronise go.mod et go.sum
 make check                   # vérifie formatage, modules, Go, shell et PHP
 make test-race               # exécute les tests Go avec le détecteur de courses
+make fuzz-mpt3               # lance les 5 fuzzers MPT3 pendant 30 s chacun
 make build                   # crée bin/unraid-vsock-sensors
 make unraid-package          # crée le .txz Unraid
 make hwmon-package           # crée le .deb Proxmox
@@ -512,6 +513,10 @@ make artifacts               # produit tous les artefacts versionnés
 make all                     # vérifie et construit tous les artefacts locaux
 make release VERSION=X.Y.Z   # valide et prépare une release complète
 ```
+
+La durée est configurable, par exemple `make fuzz-mpt3 FUZZTIME=2m`. Cette
+cible volontaire n'est pas incluse dans `make check` ni dans le pipeline de
+release ; les seeds des fuzzers restent toutefois exécutés par `go test ./...`.
 
 Pour valider manuellement le pipeline complet sans modifier le descripteur .plg
 suivi, exécuter les validations locales, le parcours VM, puis produire les
