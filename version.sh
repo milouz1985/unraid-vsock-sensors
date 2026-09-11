@@ -17,8 +17,36 @@ case "$#" in
 esac
 
 validate_version() {
-    if [[ ! "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-        echo "Version invalide : $1" >&2
+    local input="$1" version="$1" prerelease="" metadata="" identifier
+    local -a identifiers
+
+    if [[ "$version" == *+* ]]; then
+        metadata="${version#*+}"
+        version="${version%%+*}"
+        if [[ ! "$metadata" =~ ^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$ ]]; then
+            echo "Version invalide : $input" >&2
+            exit 1
+        fi
+    fi
+
+    if [[ "$version" == *-* ]]; then
+        prerelease="${version#*-}"
+        version="${version%%-*}"
+        if [[ ! "$prerelease" =~ ^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$ ]]; then
+            echo "Version invalide : $input" >&2
+            exit 1
+        fi
+        IFS='.' read -r -a identifiers <<< "$prerelease"
+        for identifier in "${identifiers[@]}"; do
+            if [[ "$identifier" =~ ^[0-9]+$ && "$identifier" != "0" && "$identifier" == 0* ]]; then
+                echo "Version invalide : $input" >&2
+                exit 1
+            fi
+        done
+    fi
+
+    if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+        echo "Version invalide : $input" >&2
         exit 1
     fi
 }

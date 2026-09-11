@@ -30,6 +30,14 @@ expect_development_version() {
     fi
 }
 
+expect_invalid_version() {
+    local version="$1"
+    if VERSION="$version" "$version_script" >/dev/null 2>&1; then
+        echo "invalid version $version was accepted" >&2
+        exit 1
+    fi
+}
+
 expect_debian_version() {
     local version="$1" expected="$2" output
     output="$(VERSION="$version" "$version_script" --debian)"
@@ -55,8 +63,32 @@ for version in 1.7.0-rc.1 1.7.0+build.1 01.2.3 1.02.3 1.2.03; do
     expect_non_release_version "$version"
 done
 
-expect_development_version 1.7.0-rc.1
-expect_development_version 1.7.0-dev.3.gabcdef
+for version in \
+    1.7.0-rc.1 \
+    1.7.0-dev.3.gabcdef \
+    1.7.0-dev.3.gabcdef.dirty \
+    1.7.0-alpha-beta \
+    1.7.0-0.3.7 \
+    1.7.0+build.1 \
+    1.7.0-rc.1+build.5; do
+    expect_development_version "$version"
+done
+
+for version in \
+    1.7.0-. \
+    1.7.0-.. \
+    1.7.0-rc..1 \
+    01.2.3 \
+    01.2.3-rc.1 \
+    1.02.3 \
+    1.2.03 \
+    1.7.0-rc.01 \
+    1.7.0- \
+    1.7.0+ \
+    1.7.0+build..1 \
+    1.7.0-rc_1; do
+    expect_invalid_version "$version"
+done
 
 expect_debian_version 1.7.0 1.7.0
 expect_debian_version 1.7.0-rc.1 1.7.0~rc.1
