@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"unraid-vsock-sensors/internal/sensors"
 )
 
 type diskTestEnvironment struct {
@@ -321,6 +323,101 @@ func TestParsePollAttributes(t *testing.T) {
 				t.Fatalf("parse = %s, %v; want %s, error=%v", got, err, test.want, test.err)
 			}
 		})
+	}
+}
+
+func TestHistoricalUnraidDevsFixtureWithoutTransport(t *testing.T) {
+	disks, err := readUnassignedDisks(filepath.Join("testdata", "unraid", "historical", "devs-no-transport.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disks) != 1 {
+		t.Fatalf("inventory = %#v; want one disk", disks)
+	}
+
+	disk := disks[0]
+	if disk.transport != "" {
+		t.Errorf("transport = %q; want absent", disk.transport)
+	}
+	if kind := (sensors.Disk{Device: disk.device, Transport: disk.transport, Rotational: disk.rotational}).Kind(); kind != sensors.DiskKindHDD {
+		t.Errorf("dev1 kind = %q, want %q", kind, sensors.DiskKindHDD)
+	}
+}
+
+func TestHistoricalUnraidDisksFixture(t *testing.T) {
+	disks, err := readDisks(filepath.Join("testdata", "unraid", "historical", "disks-array.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disks) != 3 {
+		t.Fatalf("inventory = %#v; want active disk and two pool devices", disks)
+	}
+
+	byName := make(map[string]unraidDisk, len(disks))
+	for _, disk := range disks {
+		byName[disk.name] = disk
+		if disk.smartName != disk.name {
+			t.Errorf("%s SMART name = %q, want logical name", disk.name, disk.smartName)
+		}
+	}
+	if _, exists := byName["disk18"]; exists {
+		t.Error("empty DISK_NP slot was included")
+	}
+	if _, exists := byName["parity2"]; exists {
+		t.Error("empty DISK_NP_DSBL slot was included")
+	}
+	if !byName["disk1"].rotational || !byName["cctv_pool"].rotational || byName["unraid_files"].transport != "nvme" {
+		t.Fatalf("parsed active inventory = %#v", byName)
+	}
+}
+
+func TestUnraid72MissingAssignmentFixtures(t *testing.T) {
+	disksINI := filepath.Join("testdata", "unraid", "7.2", "disks-missing-assignment.ini")
+	devsINI := filepath.Join("testdata", "unraid", "7.2", "devs-unassigned-ata.ini")
+
+	assigned, err := readDisks(disksINI)
+	if err != nil || len(assigned) != 0 {
+		t.Fatalf("assigned inventory = %#v, %v; want ignored DISK_NP_DSBL slot", assigned, err)
+	}
+	disks, err := readDiskInventory(disksINI, devsINI)
+	if err != nil || len(disks) != 1 {
+		t.Fatalf("merged inventory = %#v, %v; want unassigned disk", disks, err)
+	}
+	disk := disks[0]
+	if disk.id != "TOSHIBA_MG09ACA18TE_ANON0001" || disk.device != "sdc" || disk.transport != "ata" {
+		t.Fatalf("unassigned disk = %#v", disk)
+	}
+	if kind := (sensors.Disk{Device: disk.device, Transport: disk.transport, Rotational: disk.rotational}).Kind(); kind != sensors.DiskKindSATASSD {
+		t.Errorf("unassigned ATA disk kind = %q, want %q", kind, sensors.DiskKindSATASSD)
+	}
+}
+
+func TestUnraid72PresentAssignmentWithoutIdentityIsInvalid(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "unraid", "7.2", "disks-missing-assignment.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = bytes.Replace(data, []byte(`status="DISK_NP_DSBL"`), []byte(`status="DISK_INVALID"`), 1)
+	path := filepath.Join(t.TempDir(), "disks.ini")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readDisks(path); err == nil || !strings.Contains(err.Error(), "has no stable ID") {
+		t.Fatalf("read present disk without identity error = %v", err)
+	}
+}
+
+func TestCurrentUnraidVarFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "unraid", "current", "var.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := parsePollAttributesConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.pollAttributes != 30*time.Second || config.pollAttributesDefault != "30" || config.pollAttributesStatus != "default" {
+		t.Fatalf("poll attributes config = %#v", config)
 	}
 }
 

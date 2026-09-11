@@ -11,7 +11,7 @@ func TestDiskClassification(t *testing.T) {
 		want DiskKind
 	}{
 		{name: "NVMe transport", disk: Disk{Transport: "NVMe"}, want: DiskKindNVMe},
-		{name: "NVMe device", disk: Disk{Device: "nvme0n1"}, want: DiskKindNVMe},
+		{name: "NVMe device fallback without transport", disk: Disk{Device: "nvme0n1"}, want: DiskKindNVMe},
 		{name: "SATA SSD", disk: Disk{Transport: "ata"}, want: DiskKindSATASSD},
 		{name: "other SSD", disk: Disk{Transport: "sas"}, want: DiskKindOtherSSD},
 		{name: "rotational disk", disk: Disk{Transport: "ata", Rotational: true}, want: DiskKindHDD},

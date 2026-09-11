@@ -87,6 +87,12 @@ type diskObservation struct {
 	err         error
 }
 
+type pollAttributesConfig struct {
+	pollAttributes        time.Duration
+	pollAttributesDefault string
+	pollAttributesStatus  string
+}
+
 func newDiskCollector(paths diskDataPaths) *diskCollector {
 	return &diskCollector{
 		paths: paths, watchdog: diskWatchdogInterval, now: time.Now,
@@ -173,26 +179,36 @@ func smartFreshnessWindow(pollInterval time.Duration) time.Duration {
 }
 
 func parsePollAttributes(data []byte) (time.Duration, error) {
+	settings, err := parsePollAttributesConfig(data)
+	return settings.pollAttributes, err
+}
+
+func parsePollAttributesConfig(data []byte) (pollAttributesConfig, error) {
 	config, err := ini.Load(data)
 	if err != nil {
-		return 0, fmt.Errorf("parse var.ini: %w", err)
+		return pollAttributesConfig{}, fmt.Errorf("parse var.ini: %w", err)
 	}
-	key, err := config.Section(ini.DefaultSection).GetKey("poll_attributes")
+	section := config.Section(ini.DefaultSection)
+	key, err := section.GetKey("poll_attributes")
 	if err != nil {
-		return 0, errors.New("poll_attributes is missing")
+		return pollAttributesConfig{}, errors.New("poll_attributes is missing")
 	}
 	raw := strings.TrimSpace(key.String())
 	seconds, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("poll_attributes %q is not a number", raw)
+		return pollAttributesConfig{}, fmt.Errorf("poll_attributes %q is not a number", raw)
 	}
 	if seconds < 0 {
-		return 0, fmt.Errorf("poll_attributes %d is negative", seconds)
+		return pollAttributesConfig{}, fmt.Errorf("poll_attributes %d is negative", seconds)
 	}
 	if seconds > math.MaxInt64/int64(time.Second) {
-		return 0, fmt.Errorf("poll_attributes %d is too large", seconds)
+		return pollAttributesConfig{}, fmt.Errorf("poll_attributes %d is too large", seconds)
 	}
-	return time.Duration(seconds) * time.Second, nil
+	return pollAttributesConfig{
+		pollAttributes:        time.Duration(seconds) * time.Second,
+		pollAttributesDefault: strings.TrimSpace(section.Key("poll_attributes_default").String()),
+		pollAttributesStatus:  strings.TrimSpace(section.Key("poll_attributes_status").String()),
+	}, nil
 }
 
 func readPollAttributes(path string) (time.Duration, error) {
