@@ -450,8 +450,10 @@ sudo apt install shellcheck
 ```
 
 ```sh
-make check          # vérifie le Go, ShellCheck, la page PHP et le script rc
-make test-race      # exécute les tests Go avec le détecteur de courses
+make fmt                     # corrige le formatage des fichiers Go
+make tidy                    # synchronise go.mod et go.sum
+make check                   # vérifie formatage, modules, Go, shell et PHP
+make test-race               # exécute les tests Go avec le détecteur de courses
 make build                   # crée bin/unraid-vsock-sensors
 make unraid-package          # crée le .txz et le .plg Unraid
 make hwmon-package           # crée le .deb Proxmox

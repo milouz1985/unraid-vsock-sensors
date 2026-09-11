@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 
 GO ?= go
+GOFMT ?= gofmt
 BIN_DIR := bin
 BINARY := $(BIN_DIR)/unraid-vsock-sensors
 VERSION ?=
@@ -61,13 +62,24 @@ help: ## Affiche les commandes disponibles
 		$(MAKEFILE_LIST)
 
 
-.PHONY: fmt tidy vet test test-race check-scripts lint-shell check all
+.PHONY: fmt fmt-check tidy tidy-check vet test test-race check-scripts lint-shell check all
 
 fmt: ## Formate tous les fichiers Go
-	$(GO) fmt ./...
+	$(GOFMT) -w .
+
+fmt-check: ## Vérifie le formatage Go sans modifier les fichiers
+	@unformatted="$$($(GOFMT) -l .)" || exit $$?; \
+	if [ -n "$$unformatted" ]; then \
+		echo "Fichiers Go non formatés :" >&2; \
+		printf '%s\n' "$$unformatted" >&2; \
+		exit 1; \
+	fi
 
 tidy: ## Synchronise les dépendances Go
 	$(GO) mod tidy
+
+tidy-check: ## Vérifie go.mod et go.sum sans les modifier
+	$(GO) mod tidy -diff
 
 vet: ## Recherche les erreurs Go courantes
 	$(GO) vet ./...
@@ -92,7 +104,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	bash version_test.sh
 	bash unraid-plugin/rc_test.sh
 
-check: vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
+check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
 
 all: check test-race build unraid-package hwmon-package ## Vérifie, compile et crée tous les paquets
 
