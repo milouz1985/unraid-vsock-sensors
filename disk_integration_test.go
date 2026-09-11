@@ -89,10 +89,10 @@ func TestVMUnraidSMARTCacheCollector(t *testing.T) {
 
 	directory := t.TempDir()
 	paths := diskDataPaths{
-		disksINI:   filepath.Join(directory, "disks.ini"),
-		devsINI:    filepath.Join(directory, "devs.ini"),
-		smartDir:   filepath.Join(directory, "smart"),
-		diskConfig: filepath.Join(directory, "disk.cfg"),
+		disksINI: filepath.Join(directory, "disks.ini"),
+		devsINI:  filepath.Join(directory, "devs.ini"),
+		smartDir: filepath.Join(directory, "smart"),
+		varINI:   filepath.Join(directory, "var.ini"),
 	}
 	if err := os.Mkdir(paths.smartDir, 0700); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestVMUnraidSMARTCacheCollector(t *testing.T) {
 	if err := os.WriteFile(paths.devsINI, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.diskConfig, []byte("poll_attributes=30\n"), 0600); err != nil {
+	if err := os.WriteFile(paths.varINI, []byte("poll_attributes=30\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 

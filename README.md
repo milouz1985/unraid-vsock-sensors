@@ -267,12 +267,13 @@ rapports SMART. Pour un disque assigné, il contrôle le `mtime` de
 `poll_attributes + max(10 secondes, 20 % de poll_attributes)`. Ce calcul est
 entièrement local à Unraid et ne dépend pas de l'horloge Proxmox.
 
-`poll_attributes` est lu comme donnée depuis `/boot/config/disk.cfg`, jamais
-exécuté comme du shell. Une valeur absente, négative ou non numérique produit un
-warning et utilise un fallback interne de `30s` pour le seul calcul de
-fraîcheur. La valeur `0` désactive réellement le polling automatique Unraid et
-produit un warning distinct. Une cadence supérieure à `60s` produit également
-un warning, car elle augmente directement le délai de réaction thermique.
+`poll_attributes` est lu comme donnée depuis l'état runtime d'emhttpd,
+`/var/local/emhttp/var.ini`, jamais exécuté comme du shell. Une valeur absente,
+négative ou non numérique produit un warning et utilise un fallback interne de
+`30s` pour le seul calcul de fraîcheur. La valeur `0` désactive réellement le
+polling automatique Unraid et produit un warning distinct. Une cadence
+supérieure à `60s` produit également un warning, car elle augmente directement
+le délai de réaction thermique.
 
 L'event Unraid `poll_attributes` envoie `SIGUSR1` au daemon pour déclencher une
 relecture immédiate. Les demandes rapprochées sont fusionnées et une seule

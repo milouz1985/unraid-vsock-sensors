@@ -26,7 +26,7 @@ func newDiskTestEnvironment(t *testing.T, pollAttributes string) *diskTestEnviro
 	environment := &diskTestEnvironment{
 		paths: diskDataPaths{
 			disksINI: filepath.Join(root, "disks.ini"), devsINI: filepath.Join(root, "devs.ini"),
-			smartDir: filepath.Join(root, "smart"), diskConfig: filepath.Join(root, "disk.cfg"),
+			smartDir: filepath.Join(root, "smart"), varINI: filepath.Join(root, "var.ini"),
 		},
 		now: time.Unix(1_800_000_000, 0),
 	}
@@ -35,7 +35,7 @@ func newDiskTestEnvironment(t *testing.T, pollAttributes string) *diskTestEnviro
 	}
 	environment.write(t, environment.paths.disksINI, "[flash]\ndevice=sda\n")
 	environment.write(t, environment.paths.devsINI, "")
-	environment.write(t, environment.paths.diskConfig, "poll_attributes=\""+pollAttributes+"\"\n")
+	environment.write(t, environment.paths.varINI, "poll_attributes=\""+pollAttributes+"\"\n")
 	return environment
 }
 
@@ -324,45 +324,47 @@ func TestParsePollAttributes(t *testing.T) {
 	}
 }
 
-func TestInvalidPollAttributesUsesDocumentedFallback(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "disk.cfg")
-	if err := os.WriteFile(path, []byte("poll_attributes=\"legacy\"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	cache := diskConfigCache{path: path}
-	interval, changed, err := cache.load()
-	if interval != defaultPollAttributes || !changed || err == nil {
-		t.Fatalf("load = %s, changed=%v, err=%v", interval, changed, err)
-	}
-	if _, changed, _ := cache.load(); changed {
-		t.Fatal("unchanged disk.cfg was reparsed")
-	}
-}
-
-func TestDiskConfigCacheReloadsOnlyAfterFileChange(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "disk.cfg")
+func TestReadPollAttributesAlwaysReadsCurrentContents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "var.ini")
 	mtime := time.Unix(1_800_000_000, 0)
-	write := func(value string, timestamp time.Time) {
+	write := func(value string) {
 		t.Helper()
 		if err := os.WriteFile(path, []byte("poll_attributes=\""+value+"\"\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chtimes(path, timestamp, timestamp); err != nil {
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("30", mtime)
-	cache := diskConfigCache{path: path}
-	if interval, changed, err := cache.load(); interval != 30*time.Second || !changed || err != nil {
-		t.Fatalf("initial load = %s, changed=%v, err=%v", interval, changed, err)
-	}
-	if _, changed, _ := cache.load(); changed {
-		t.Fatal("unchanged disk.cfg was reparsed")
+
+	write("30")
+	if interval, err := readPollAttributes(path); interval != 30*time.Second || err != nil {
+		t.Fatalf("initial read = %s, %v", interval, err)
 	}
 
-	write("60", mtime.Add(time.Second))
-	if interval, changed, err := cache.load(); interval != 60*time.Second || !changed || err != nil {
-		t.Fatalf("reloaded config = %s, changed=%v, err=%v", interval, changed, err)
+	write("60")
+	if interval, err := readPollAttributes(path); interval != 60*time.Second || err != nil {
+		t.Fatalf("same-metadata read = %s, %v", interval, err)
+	}
+
+	write("xx")
+	if interval, err := readPollAttributes(path); interval != defaultPollAttributes || err == nil {
+		t.Fatalf("invalid read = %s, %v", interval, err)
+	}
+	write("90")
+	if interval, err := readPollAttributes(path); interval != 90*time.Second || err != nil {
+		t.Fatalf("read after parse error = %s, %v", interval, err)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if interval, err := readPollAttributes(path); interval != defaultPollAttributes || err == nil {
+		t.Fatalf("missing read = %s, %v", interval, err)
+	}
+	write("45")
+	if interval, err := readPollAttributes(path); interval != 45*time.Second || err != nil {
+		t.Fatalf("read after file error = %s, %v", interval, err)
 	}
 }
 

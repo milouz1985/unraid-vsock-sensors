@@ -18,8 +18,8 @@ $version = trim((string)shell_exec('/usr/local/sbin/unraid-vsock-sensors version
 if ($version === '') {
     $version = 'unavailable';
 }
-$diskCfg = @parse_ini_file('/boot/config/disk.cfg');
-$pollRaw = is_array($diskCfg) ? ($diskCfg['poll_attributes'] ?? null) : null;
+$unraidState = @parse_ini_file('/var/local/emhttp/var.ini');
+$pollRaw = is_array($unraidState) ? ($unraidState['poll_attributes'] ?? null) : null;
 $pollValid = is_string($pollRaw) && preg_match('/^\d+$/', $pollRaw) === 1;
 $pollAttributes = $pollValid ? filter_var($pollRaw, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]) : false;
 $pollValid = $pollValid && $pollAttributes !== false;

@@ -259,7 +259,7 @@ Avant le démarrage, deux volumes SATA de `TEST_DISK_SIZE_GIB` Gio sont ajoutés
 avec les numéros de série `UVSSDISK1` et `UVSSDISK2`. Leurs noms `/dev/sdX`
 ne sont pas supposés stables : le test parcourt les disques entiers et les
 identifie avec le numéro de série exposé par sysfs. Il vérifie ensuite
-`ROTA=1`, génère un `disks.ini`, un `disk.cfg` et des rapports SMART en cache,
+`ROTA=1`, génère un `disks.ini`, un `var.ini` et des rapports SMART en cache,
 puis exerce le collecteur sans aucune commande SMART matérielle. Le scénario
 couvre aussi l'expiration du cache, le failsafe hwmon et la récupération.
 

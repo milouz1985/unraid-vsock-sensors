@@ -26,7 +26,7 @@ const (
 	defaultDisksINIPath       = "/var/local/emhttp/disks.ini"
 	defaultDevsINIPath        = "/var/local/emhttp/devs.ini"
 	defaultSMARTCacheDir      = "/var/local/emhttp/smart"
-	defaultDiskConfigPath     = "/boot/config/disk.cfg"
+	defaultUnraidVarINIPath   = "/var/local/emhttp/var.ini"
 	defaultPollAttributes     = 30 * time.Second
 	diskWatchdogInterval      = 5 * time.Second
 	diskSnapshotTimeout       = 3 * diskWatchdogInterval
@@ -36,15 +36,15 @@ const (
 )
 
 type diskDataPaths struct {
-	disksINI   string
-	devsINI    string
-	smartDir   string
-	diskConfig string
+	disksINI string
+	devsINI  string
+	smartDir string
+	varINI   string
 }
 
 var defaultDiskDataPaths = diskDataPaths{
 	disksINI: defaultDisksINIPath, devsINI: defaultDevsINIPath,
-	smartDir: defaultSMARTCacheDir, diskConfig: defaultDiskConfigPath,
+	smartDir: defaultSMARTCacheDir, varINI: defaultUnraidVarINIPath,
 }
 
 type diskCollector struct {
@@ -58,7 +58,10 @@ type diskCollector struct {
 	err       error
 	updatedAt time.Time
 	state     diskStateTracker
-	config    diskConfigCache
+
+	pollLogInitialized bool
+	lastPollInterval   time.Duration
+	lastPollError      string
 }
 
 type diskState struct {
@@ -84,21 +87,11 @@ type diskObservation struct {
 	err         error
 }
 
-type diskConfigCache struct {
-	path        string
-	initialized bool
-	exists      bool
-	mtime       time.Time
-	size        int64
-	interval    time.Duration
-	err         error
-}
-
 func newDiskCollector(paths diskDataPaths) *diskCollector {
 	return &diskCollector{
 		paths: paths, watchdog: diskWatchdogInterval, now: time.Now,
 		err:   errors.New("disk temperatures have not been collected yet"),
-		state: make(diskStateTracker), config: diskConfigCache{path: paths.diskConfig},
+		state: make(diskStateTracker),
 	}
 }
 
@@ -134,10 +127,8 @@ func (c *diskCollector) refresh() {
 	defer c.refreshMu.Unlock()
 
 	now := c.now()
-	pollInterval, configChanged, configErr := c.config.load()
-	if configChanged {
-		logPollAttributes(pollInterval, configErr)
-	}
+	pollInterval, configErr := readPollAttributes(c.paths.varINI)
+	c.logPollAttributesChange(pollInterval, configErr)
 	freshness := smartFreshnessWindow(pollInterval)
 
 	disks, err := readDiskInventory(c.paths.disksINI, c.paths.devsINI)
@@ -184,7 +175,7 @@ func smartFreshnessWindow(pollInterval time.Duration) time.Duration {
 func parsePollAttributes(data []byte) (time.Duration, error) {
 	config, err := ini.Load(data)
 	if err != nil {
-		return 0, fmt.Errorf("parse disk.cfg: %w", err)
+		return 0, fmt.Errorf("parse var.ini: %w", err)
 	}
 	key, err := config.Section(ini.DefaultSection).GetKey("poll_attributes")
 	if err != nil {
@@ -204,41 +195,30 @@ func parsePollAttributes(data []byte) (time.Duration, error) {
 	return time.Duration(seconds) * time.Second, nil
 }
 
-func (c *diskConfigCache) load() (time.Duration, bool, error) {
-	info, statErr := os.Stat(c.path)
-	exists := statErr == nil
-	if c.initialized && c.exists == exists &&
-		(!exists || (c.mtime.Equal(info.ModTime()) && c.size == info.Size())) {
-		return c.interval, false, c.err
+func readPollAttributes(path string) (time.Duration, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return defaultPollAttributes, fmt.Errorf("read %s: %w", path, err)
 	}
+	interval, err := parsePollAttributes(data)
+	if err != nil {
+		return defaultPollAttributes, fmt.Errorf("read %s: %w", path, err)
+	}
+	return interval, nil
+}
 
-	interval := defaultPollAttributes
-	var parseErr error
-	if statErr != nil {
-		parseErr = fmt.Errorf("read %s: %w", c.path, statErr)
-	} else {
-		data, err := os.ReadFile(c.path)
-		if err != nil {
-			parseErr = fmt.Errorf("read %s: %w", c.path, err)
-		} else if parsed, err := parsePollAttributes(data); err != nil {
-			parseErr = fmt.Errorf("read %s: %w", c.path, err)
-		} else {
-			interval = parsed
-		}
+func (c *diskCollector) logPollAttributesChange(interval time.Duration, configErr error) {
+	errorMessage := ""
+	if configErr != nil {
+		errorMessage = configErr.Error()
 	}
-
-	c.initialized = true
-	c.exists = exists
-	if exists {
-		c.mtime = info.ModTime()
-		c.size = info.Size()
-	} else {
-		c.mtime = time.Time{}
-		c.size = 0
+	if c.pollLogInitialized && c.lastPollInterval == interval && c.lastPollError == errorMessage {
+		return
 	}
-	c.interval = interval
-	c.err = parseErr
-	return interval, true, parseErr
+	c.pollLogInitialized = true
+	c.lastPollInterval = interval
+	c.lastPollError = errorMessage
+	logPollAttributes(interval, configErr)
 }
 
 func logPollAttributes(interval time.Duration, configErr error) {
