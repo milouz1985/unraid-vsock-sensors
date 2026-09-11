@@ -462,22 +462,23 @@ make test-race               # exécute les tests Go avec le détecteur de cours
 make build                   # crée bin/unraid-vsock-sensors
 make unraid-package          # crée le .txz et le .plg Unraid
 make hwmon-package           # crée le .deb Proxmox
+make artifacts               # produit tous les artefacts versionnés
 make all                     # vérifie et construit tous les artefacts locaux
 make release VERSION=X.Y.Z   # valide et prépare une release complète
 ```
 
 Pour valider manuellement le pipeline complet sans modifier le descripteur .plg
-suivi, lancer d'abord le parcours VM, puis construire les artefacts locaux
-uniquement si cette validation réussit :
+suivi, exécuter les validations locales, le parcours VM, puis produire les
+artefacts uniquement si tous les tests réussissent :
 
 ```sh
-make test-vm && make all
+make check && make test-race && make test-vm && make artifacts
 ```
 
 `make all` ne lance pas de VM ; les cibles `test-vm*` restent explicitement
 séparées parce qu'elles nécessitent un environnement Proxmox distant. La cible
-`release` enchaîne elle-même ces deux validations avant de mettre à jour le
-descripteur .plg public.
+`release` enchaîne elle-même ces validations, puis produit les artefacts finaux
+avant de mettre à jour le descripteur .plg public.
 
 Sans `VERSION`, la version est dérivée de Git et reçoit un suffixe `-dev` si le
 commit courant n'est pas exactement tagué. Une version explicite s'écrit sans
@@ -601,8 +602,9 @@ modifie aucun fichier suivi par Git. Le descripteur .plg public situé dans
 ## Publier une release
 
 Partir d'un arbre propre et préparer la release en une seule commande. Cette
-cible valide d'abord le parcours VM, exécute `make all` avec la version finale,
-puis remplace le descripteur .plg public par celui qui vient d'être construit :
+cible exécute d'abord `make check` et `make test-race`, puis valide le parcours
+VM. Les artefacts finaux ne sont produits qu'après la réussite de tous les
+tests, avant le remplacement du descripteur .plg public :
 
 ```sh
 make release VERSION=X.Y.Z

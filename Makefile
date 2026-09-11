@@ -106,7 +106,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 
 check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
 
-all: check test-race build unraid-package hwmon-package ## Vérifie, compile et crée tous les paquets
+all: check test-race artifacts ## Vérifie, compile et crée tous les paquets
 
 
 .PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package
@@ -136,7 +136,7 @@ build: | $(BIN_DIR) ## Compile un binaire Linux statique
 		-o $(BINARY) .
 
 
-.PHONY: unraid-package hwmon-package update-plg release
+.PHONY: unraid-package hwmon-package artifacts update-plg release
 
 unraid-package: ## Crée le plugin serveur installable dans Unraid
 	@$(resolve-version) \
@@ -146,6 +146,8 @@ hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
 	@$(resolve-version) \
 	GO="$(GO)" VERSION="$$version" DEBIAN_REVISION="$(DEBIAN_REVISION)" \
 		./virt-temp/package.sh
+
+artifacts: build unraid-package hwmon-package ## Produit tous les artefacts versionnés
 
 update-plg: ## Met à jour dans Git le descripteur .plg Unraid déjà construit
 	@version="$(VERSION)"; \
@@ -180,8 +182,10 @@ release: ## Valide et prépare tous les artefacts d'une release
 		printf '%s\n' "$$status" >&2; \
 		exit 1; \
 	fi
+	+$(MAKE) --no-print-directory check
+	+$(MAKE) --no-print-directory test-race
 	+$(MAKE) --no-print-directory test-vm
-	+$(MAKE) --no-print-directory all VERSION="$(VERSION)"
+	+$(MAKE) --no-print-directory artifacts VERSION="$(VERSION)"
 	+$(MAKE) --no-print-directory update-plg VERSION="$(VERSION)"
 
 
