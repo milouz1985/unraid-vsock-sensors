@@ -420,7 +420,7 @@ func TestUnraidDiskIDSizeContract(t *testing.T) {
 			}
 			disks, err := readDisks(path, unknownBusSelector(t))
 			if test.wantErr {
-				if err == nil || !strings.Contains(err.Error(), "Unraid maximum is 79") {
+				if err == nil || !strings.Contains(err.Error(), "observed emhttpd limit is 79") {
 					t.Fatalf("readDisks() error = %v, want maximum-ID error", err)
 				}
 				return

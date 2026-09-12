@@ -24,7 +24,7 @@ type diskPolicyRow struct {
 
 func diskPolicyCommand(args []string, output io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("disks requires list or set")
+		return errors.New("disks requires list, set, validate or reset")
 	}
 	switch args[0] {
 	case "list":

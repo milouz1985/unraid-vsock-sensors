@@ -387,7 +387,7 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, requireVal
 			return nil, fmt.Errorf("active disk %q has no stable ID", name)
 		}
 		if len(id) > maxUnraidDiskIDSize {
-			return nil, fmt.Errorf("active disk %q has a %d-byte stable ID; Unraid maximum is %d", name, len(id), maxUnraidDiskIDSize)
+			return nil, fmt.Errorf("active disk %q has a %d-byte stable ID; observed emhttpd limit is %d", name, len(id), maxUnraidDiskIDSize)
 		}
 		if device == "" {
 			return nil, fmt.Errorf("active disk %q has no device", name)
@@ -454,7 +454,7 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs,
 			return nil, fmt.Errorf("unassigned disk %q has no stable ID", name)
 		}
 		if len(id) > maxUnraidDiskIDSize {
-			return nil, fmt.Errorf("unassigned disk %q has a %d-byte stable ID; Unraid maximum is %d", name, len(id), maxUnraidDiskIDSize)
+			return nil, fmt.Errorf("unassigned disk %q has a %d-byte stable ID; observed emhttpd limit is %d", name, len(id), maxUnraidDiskIDSize)
 		}
 		entries = append(entries, entry)
 	}
