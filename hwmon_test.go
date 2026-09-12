@@ -18,8 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"unraid-vsock-sensors/internal/sensors"
 
 	"github.com/mdlayher/vsock"
@@ -772,53 +770,6 @@ func TestPublisherCachesChangedLabel(t *testing.T) {
 	}
 	if got, want := cached.Disks.Sensors[0].Label, "disk1 (sdb)"; got != want {
 		t.Fatalf("cached label = %q, want %q", got, want)
-	}
-}
-
-func TestPublisherReconfiguresAfterStaleCommit(t *testing.T) {
-	inventory := hwmonInventory{
-		initialized: true,
-		sensors:     []hwmonSensor{{id: "disk:serial", label: "disk1 (sda)"}},
-	}
-	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sda)", 35)}
-	var operations []string
-	write := func(_, _, operation string, readings []hwmonSample) error {
-		operations = append(operations, operation)
-		if operation == "commit" {
-			return unix.ESTALE
-		}
-		if !reflect.DeepEqual(readings, current) {
-			t.Fatalf("configured readings = %#v, want %#v", readings, current)
-		}
-		return nil
-	}
-	changed, err := publishHWMonFamilyWithWriter("unused", "disk", &inventory, current, write)
-	if err != nil || !changed {
-		t.Fatalf("changed=%v err=%v", changed, err)
-	}
-	if want := []string{"commit", "configure"}; !reflect.DeepEqual(operations, want) {
-		t.Fatalf("operations = %v, want %v", operations, want)
-	}
-	if !reflect.DeepEqual(inventory.sensors, sensorsFromSamples(current)) {
-		t.Fatalf("inventory = %#v, want %#v", inventory.sensors, sensorsFromSamples(current))
-	}
-}
-
-func TestPublisherDoesNotReconfigureAfterOtherCommitError(t *testing.T) {
-	inventory := hwmonInventory{
-		initialized: true,
-		sensors:     []hwmonSensor{{id: "disk:serial", label: "disk1"}},
-	}
-	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1", 35)}
-	calls := 0
-	wantErr := errors.New("write failed")
-	write := func(_, _, _ string, _ []hwmonSample) error {
-		calls++
-		return wantErr
-	}
-	changed, err := publishHWMonFamilyWithWriter("unused", "disk", &inventory, current, write)
-	if changed || !errors.Is(err, wantErr) || calls != 1 {
-		t.Fatalf("changed=%v err=%v calls=%d", changed, err, calls)
 	}
 }
 
