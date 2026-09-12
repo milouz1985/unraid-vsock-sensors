@@ -474,12 +474,9 @@ func TestCurrentUnraidVarFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := parsePollAttributesConfig(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.pollAttributes != 30*time.Second || config.pollAttributesDefault != "30" || config.pollAttributesStatus != "default" {
-		t.Fatalf("poll attributes config = %#v", config)
+	interval, err := parsePollAttributes(data)
+	if err != nil || interval != 30*time.Second {
+		t.Fatalf("poll attributes interval = %s, %v; want 30s", interval, err)
 	}
 }
 
