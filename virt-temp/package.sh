@@ -9,6 +9,17 @@ architecture="${GOARCH:-amd64}"
 version="$(VERSION="${VERSION:-}" "$repo_dir/version.sh")"
 debian_upstream="$(VERSION="$version" "$repo_dir/version.sh" --debian)"
 debian_revision="${DEBIAN_REVISION:-1}"
+# A release builds its artifacts before the descriptor commit and tag exist.
+# Use the source commit timestamp unless the caller provides an explicit epoch.
+if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
+    SOURCE_DATE_EPOCH="$(git -C "$repo_dir" log -1 --format=%ct 2>/dev/null || true)"
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
+fi
+if [[ ! "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]; then
+    echo "SOURCE_DATE_EPOCH must be a non-negative Unix timestamp" >&2
+    exit 2
+fi
+export SOURCE_DATE_EPOCH
 output_dir="${DIST_DIR:-$repo_dir/dist}"
 package="unraid-vsock-sensors-hwmon"
 build_dir="$(mktemp -d)"

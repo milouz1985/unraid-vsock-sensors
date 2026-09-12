@@ -321,7 +321,10 @@ make artifacts VERSION=1.4.3-rc.1
 
 Une prerelease Debian utilise `~` (`1.4.3~rc.1-1`) afin de rester antérieure à
 la finale. La construction d'artefacts ne modifie jamais le descripteur `.plg`
-suivi par Git.
+suivi par Git. Sans `SOURCE_DATE_EPOCH` explicite, le paquet Debian utilise le
+timestamp du commit source `HEAD` pour produire des archives reproductibles
+(`0` hors dépôt Git). Pendant `make release`, ce commit précède le commit du
+descripteur, créé après la construction des artefacts.
 
 ### Tests d'intégration Proxmox
 
