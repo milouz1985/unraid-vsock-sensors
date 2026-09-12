@@ -59,6 +59,9 @@ func discoverVMTestDisks(t *testing.T) []vmTestDisk {
 		if _, err := os.Stat(sysfsPath); err != nil {
 			t.Fatalf("invalid target %s resolved from %s: missing %s: %v", devicePath, byID, sysfsPath, err)
 		}
+		if usb, err := isUSBBlockDevice(defaultSysBlockRoot, deviceName); err != nil || usb {
+			t.Fatalf("QEMU SATA disk %s physical bus: USB=%t, error=%v; want non-USB", deviceName, usb, err)
+		}
 		partitionPath := filepath.Join(sysfsPath, "partition")
 		if _, err := os.Stat(partitionPath); err == nil {
 			t.Fatalf("invalid target %s resolved from %s: expected a whole disk, got a partition", devicePath, byID)
@@ -88,10 +91,11 @@ func TestVMUnraidSMARTCacheCollector(t *testing.T) {
 
 	directory := t.TempDir()
 	paths := diskDataPaths{
-		disksINI: filepath.Join(directory, "disks.ini"),
-		devsINI:  filepath.Join(directory, "devs.ini"),
-		smartDir: filepath.Join(directory, "smart"),
-		varINI:   filepath.Join(directory, "var.ini"),
+		disksINI:   filepath.Join(directory, "disks.ini"),
+		devsINI:    filepath.Join(directory, "devs.ini"),
+		smartDir:   filepath.Join(directory, "smart"),
+		varINI:     filepath.Join(directory, "var.ini"),
+		policyFile: filepath.Join(directory, "disk-policies.json"),
 	}
 	if err := os.Mkdir(paths.smartDir, 0700); err != nil {
 		t.Fatal(err)

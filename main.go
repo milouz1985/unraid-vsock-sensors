@@ -71,6 +71,8 @@ func main() {
 		err = serve(os.Args[2:])
 	case "hwmon":
 		err = hwmon(os.Args[2:])
+	case "disks":
+		err = diskPolicyCommand(os.Args[2:], os.Stdout)
 	case "version", "--version":
 		fmt.Fprintln(os.Stdout, version)
 		return
@@ -86,11 +88,15 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
   %[1]s serve [options]
   %[1]s hwmon [options]
+  %[1]s disks list [options]
+  %[1]s disks set --id-base64 ID --policy {auto|include|exclude}
   %[1]s version
 
 Commands:
   serve                     Push sensor data to the Proxmox host over AF_VSOCK
   hwmon                     Publish fixed storage and HBA hwmon inventories
+  disks list                Show disk identity, physical bus and policy as JSON
+  disks set                 Save a policy by stable Unraid disk ID
   version                   Print the build version
 
 Serve options:

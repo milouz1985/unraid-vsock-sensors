@@ -163,11 +163,21 @@ Unraid et ne nécessite pas le plugin Unassigned Devices. Une unité présente
 dans les deux fichiers est dédupliquée par son ID stable, avec priorité à son
 entrée assignée. Le nom changeant `/dev/sdX` ne sert jamais d'identité.
 
-Une sonde est créée pour chaque disque. Lorsqu'au moins deux disques
+Une sonde est créée pour chaque disque inclus. Lorsqu'au moins deux disques
 appartiennent à une même catégorie, un maximum `HDD`, `SATA SSD` ou `NVMe SSD`
-est également publié. Les disques USB, y compris la clé de démarrage `flash`,
-sont exclus de l'inventaire thermique avant toute vérification du cache SMART
-et tout envoi VSOCK.
+est également publié. En mode `Auto`, les disques physiquement derrière USB
+sont exclus d'après la topologie sysfs, indépendamment du champ `transport`
+d'emhttpd. Si le bus ne peut pas être déterminé, le disque est inclus par
+sécurité thermique. La clé de démarrage `flash` reste toujours exclue.
+
+La page du plugin permet de choisir `Auto`, `Include` ou `Exclude` pour chaque
+ID Unraid stable. `Include` et `Exclude` remplacent la décision automatique,
+y compris lorsqu'un bridge USB présente un disque comme `transport=ata`.
+Les choix sont enregistrés dans
+`/boot/config/plugins/unraid-vsock-sensors/disk-policies.json` : un objet JSON
+qui associe chaque ID à `"include"` ou `"exclude"`. L'absence d'un ID signifie
+`Auto`. Ce fichier sur la clé Unraid survit aux redémarrages et aux mises à
+jour du plugin ; un changement de `/dev/sdX` n'affecte pas la politique.
 
 La température provient du champ `temp` d'Unraid. Le `mtime` du rapport
 `/var/local/emhttp/smart/<nom-logique>` pour un disque assigné, ou

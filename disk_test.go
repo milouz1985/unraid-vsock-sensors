@@ -34,16 +34,23 @@ func newDiskTestEnvironment(t *testing.T, pollAttributes string) *diskTestEnviro
 		paths: diskDataPaths{
 			disksINI: filepath.Join(root, "disks.ini"), devsINI: filepath.Join(root, "devs.ini"),
 			smartDir: filepath.Join(root, "smart"), varINI: filepath.Join(root, "var.ini"),
+			sysBlockRoot: filepath.Join(root, "class", "block"),
+			policyFile:   filepath.Join(root, "disk-policies.json"),
 		},
 		now: time.Unix(1_800_000_000, 0),
 	}
 	if err := os.Mkdir(environment.paths.smartDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	environment.write(t, environment.paths.disksINI, "[flash]\ndevice=sda\n")
+	environment.write(t, environment.paths.disksINI, "[flash]\ndevice=sdz\n")
 	environment.write(t, environment.paths.devsINI, "")
 	environment.write(t, environment.paths.varINI, "poll_attributes=\""+pollAttributes+"\"\n")
 	return environment
+}
+
+func unknownBusSelector(t *testing.T) *diskSelector {
+	t.Helper()
+	return &diskSelector{sysBlockRoot: filepath.Join(t.TempDir(), "class", "block")}
 }
 
 func (environment *diskTestEnvironment) write(t *testing.T, path, data string) {
@@ -203,6 +210,21 @@ func TestActiveDiskRejectsMissingReportAndInvalidTemperature(t *testing.T) {
 	}
 }
 
+func TestCachedTemperatureAllowsValuesOutsideTypicalSensorRange(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		want float64
+	}{
+		{raw: "-40.125", want: -40.125},
+		{raw: "151.5", want: 151.5},
+	} {
+		got, err := parseCachedTemperature(test.raw)
+		if err != nil || got != test.want {
+			t.Errorf("parseCachedTemperature(%q) = %g, %v; want %g", test.raw, got, err, test.want)
+		}
+	}
+}
+
 func TestSleepingDiskAllowsOldSMARTReport(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	directory := t.TempDir()
@@ -332,7 +354,7 @@ func TestParsePollAttributes(t *testing.T) {
 }
 
 func TestHistoricalUnraidDevsFixtureWithoutTransport(t *testing.T) {
-	disks, err := readUnassignedDisks(filepath.Join("testdata", "unraid", "historical", "devs-no-transport.ini"))
+	disks, err := readUnassignedDisks(filepath.Join("testdata", "unraid", "historical", "devs-no-transport.ini"), unknownBusSelector(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +372,7 @@ func TestHistoricalUnraidDevsFixtureWithoutTransport(t *testing.T) {
 }
 
 func TestHistoricalUnraidDisksFixture(t *testing.T) {
-	disks, err := readDisks(filepath.Join("testdata", "unraid", "historical", "disks-array.ini"))
+	disks, err := readDisks(filepath.Join("testdata", "unraid", "historical", "disks-array.ini"), unknownBusSelector(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +418,7 @@ func TestUnraidDiskIDSizeContract(t *testing.T) {
 			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 				t.Fatal(err)
 			}
-			disks, err := readDisks(path)
+			disks, err := readDisks(path, unknownBusSelector(t))
 			if test.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "Unraid maximum is 79") {
 					t.Fatalf("readDisks() error = %v, want maximum-ID error", err)
@@ -414,11 +436,12 @@ func TestUnraid72MissingAssignmentFixtures(t *testing.T) {
 	disksINI := filepath.Join("testdata", "unraid", "7.2", "disks-missing-assignment.ini")
 	devsINI := filepath.Join("testdata", "unraid", "7.2", "devs-unassigned-ata.ini")
 
-	assigned, err := readDisks(disksINI)
+	selector := unknownBusSelector(t)
+	assigned, err := readDisks(disksINI, selector)
 	if err != nil || len(assigned) != 0 {
 		t.Fatalf("assigned inventory = %#v, %v; want ignored DISK_NP_DSBL slot", assigned, err)
 	}
-	disks, err := readDiskInventory(disksINI, devsINI)
+	disks, err := readDiskInventory(disksINI, devsINI, selector)
 	if err != nil || len(disks) != 1 {
 		t.Fatalf("merged inventory = %#v, %v; want unassigned disk", disks, err)
 	}
@@ -441,7 +464,7 @@ func TestUnraid72PresentAssignmentWithoutIdentityIsInvalid(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readDisks(path); err == nil || !strings.Contains(err.Error(), "has no stable ID") {
+	if _, err := readDisks(path, unknownBusSelector(t)); err == nil || !strings.Contains(err.Error(), "has no stable ID") {
 		t.Fatalf("read present disk without identity error = %v", err)
 	}
 }
@@ -542,7 +565,8 @@ func TestDiskInventoryDeduplicatesAssignedAndUnassignedByStableID(t *testing.T) 
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntemp=35\n")
 	environment.write(t, environment.paths.devsINI, "[dev1]\nid=serial\ndevice=sdb\ntemp=35\n")
-	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI)
+	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI,
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil || len(disks) != 1 || disks[0].name != "disk1" || disks[0].smartName != "disk1" {
 		t.Fatalf("deduplicated inventory = %#v, %v", disks, err)
 	}
@@ -550,6 +574,10 @@ func TestDiskInventoryDeduplicatesAssignedAndUnassignedByStableID(t *testing.T) 
 
 func TestDiskInventoryExcludesUSBFromBothSourcesBeforeSMART(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", false)
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdb", false)
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdi", true)
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdj", true)
 	environment.write(t, environment.paths.disksINI, strings.TrimSpace(`
 		[disk1]
 		id=internal_hdd
@@ -587,7 +615,8 @@ func TestDiskInventoryExcludesUSBFromBothSourcesBeforeSMART(t *testing.T) {
 	environment.report(t, "disk1", environment.now)
 	environment.report(t, "sdb", environment.now)
 
-	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI)
+	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI,
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil || len(disks) != 2 {
 		t.Fatalf("inventory = %#v, %v; want two internal disks", disks, err)
 	}
@@ -636,22 +665,19 @@ func TestDiskInventoryExcludesUSBFromBothSourcesBeforeSMART(t *testing.T) {
 
 func TestUSBEntriesSkipIdentityValidation(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
-	environment.write(t, environment.paths.disksINI, "[disk1]\ntransport=usb\ndevice=../invalid\n")
-	environment.write(t, environment.paths.devsINI, "[external]\ntransport=\" USB \"\ndevice=../invalid\n")
-	for _, source := range []struct {
-		name string
-		read func(string) ([]unraidDisk, error)
-		path string
-	}{
-		{name: "assigned", read: readDisks, path: environment.paths.disksINI},
-		{name: "unassigned", read: readUnassignedDisks, path: environment.paths.devsINI},
-	} {
-		t.Run(source.name, func(t *testing.T) {
-			disks, err := source.read(source.path)
-			if err != nil || len(disks) != 0 {
-				t.Fatalf("USB-only inventory = %#v, %v; want no disks or identity error", disks, err)
-			}
-		})
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdi", true)
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdj", true)
+	environment.write(t, environment.paths.disksINI, "[disk1]\ntransport=usb\ndevice=sdi\n")
+	environment.write(t, environment.paths.devsINI, "[external]\ntransport=\" USB \"\ndevice=sdj\n")
+	entries, err := readAssignedEntries(environment.paths.disksINI,
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, true)
+	if err != nil || len(entries) != 1 || entries[0].included {
+		t.Fatalf("assigned USB entry = %#v, %v; want excluded disk without identity error", entries, err)
+	}
+	entries, err = readUnassignedEntries(environment.paths.devsINI,
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, nil, nil, true)
+	if err != nil || len(entries) != 1 || entries[0].included {
+		t.Fatalf("unassigned USB entry = %#v, %v; want excluded disk without identity error", entries, err)
 	}
 }
 
@@ -675,7 +701,7 @@ func TestReadInventorySkipsNoPhysicalDiskStatesAndKeepsDegradedDisk(t *testing.T
 		device=sde
 		status=DISK_INVALID
 	`)+"\n")
-	disks, err := readDisks(environment.paths.disksINI)
+	disks, err := readDisks(environment.paths.disksINI, &diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil || len(disks) != 1 || disks[0].id != "serial5" {
 		t.Fatalf("inventory = %#v, %v", disks, err)
 	}

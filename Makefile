@@ -23,6 +23,7 @@ BASH_SCRIPTS := version.sh \
 	unraid-plugin/rc.unraid-vsock-sensors \
 	unraid-plugin/rc_test.sh \
 	unraid-plugin/service.sh \
+	unraid-plugin/service_test.sh \
 	virt-temp/package.sh \
 	virt-temp/prepare-dkms.sh \
 	tests/vm/build-template.sh \
@@ -119,6 +120,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	bash version_test.sh
 	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/rc_test.sh
+	bash unraid-plugin/service_test.sh
 
 check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
 

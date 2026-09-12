@@ -39,15 +39,18 @@ const (
 )
 
 type diskDataPaths struct {
-	disksINI string
-	devsINI  string
-	smartDir string
-	varINI   string
+	disksINI     string
+	devsINI      string
+	smartDir     string
+	varINI       string
+	sysBlockRoot string
+	policyFile   string
 }
 
 var defaultDiskDataPaths = diskDataPaths{
 	disksINI: defaultDisksINIPath, devsINI: defaultDevsINIPath,
 	smartDir: defaultSMARTCacheDir, varINI: defaultUnraidVarINIPath,
+	sysBlockRoot: defaultSysBlockRoot, policyFile: defaultDiskPolicyFile,
 }
 
 type diskCollector struct {
@@ -61,6 +64,8 @@ type diskCollector struct {
 	err       error
 	updatedAt time.Time
 	state     diskStateTracker
+	busCache  map[string]diskBus
+	policyLog stickyErrorLog
 
 	pollLogInitialized bool
 	lastPollInterval   time.Duration
@@ -90,6 +95,13 @@ type diskObservation struct {
 	err         error
 }
 
+type diskInventoryEntry struct {
+	disk     unraidDisk
+	bus      diskBus
+	policy   diskPolicy
+	included bool
+}
+
 type pollAttributesConfig struct {
 	pollAttributes        time.Duration
 	pollAttributesDefault string
@@ -99,8 +111,10 @@ type pollAttributesConfig struct {
 func newDiskCollector(paths diskDataPaths) *diskCollector {
 	return &diskCollector{
 		paths: paths, watchdog: diskWatchdogInterval, now: time.Now,
-		err:   errors.New("disk temperatures have not been collected yet"),
-		state: make(diskStateTracker),
+		err:       errors.New("disk temperatures have not been collected yet"),
+		state:     make(diskStateTracker),
+		busCache:  make(map[string]diskBus),
+		policyLog: stickyErrorLog{context: "disk policies"},
 	}
 }
 
@@ -140,7 +154,14 @@ func (c *diskCollector) refresh() {
 	c.logPollAttributesChange(pollInterval, configErr)
 	freshness := smartFreshnessWindow(pollInterval)
 
-	disks, err := readDiskInventory(c.paths.disksINI, c.paths.devsINI)
+	policyFile := c.paths.policyFile
+	if policyFile == "" {
+		policyFile = defaultDiskPolicyFile
+	}
+	policies, policyErr := readDiskPolicies(policyFile)
+	c.policyLog.update(policyErr)
+	selector := &diskSelector{sysBlockRoot: c.paths.sysBlockRoot, policies: policies, busCache: c.busCache}
+	disks, err := readDiskInventory(c.paths.disksINI, c.paths.devsINI, selector)
 	var readings []sensors.Disk
 	if err != nil {
 		c.state.markFailure(now)
@@ -255,45 +276,83 @@ func logPollAttributes(interval time.Duration, configErr error) {
 	}
 }
 
-func readDiskInventory(disksINIPath, devsINIPath string) ([]unraidDisk, error) {
-	assigned, err := readDisks(disksINIPath)
+func readDiskInventory(disksINIPath, devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
+	entries, err := readDiskInventoryEntries(disksINIPath, devsINIPath, selector, true)
 	if err != nil {
 		return nil, err
 	}
-	unassigned, err := readUnassignedDisks(devsINIPath)
+	return includedDisks(entries), nil
+}
+
+func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSelector, requireValid bool) ([]diskInventoryEntry, error) {
+	assigned, err := readAssignedEntries(disksINIPath, selector, requireValid)
+	if err != nil {
+		return nil, err
+	}
+	flashIDs := make(map[string]struct{})
+	flashDevices := make(map[string]struct{})
+	for _, entry := range assigned {
+		if strings.EqualFold(entry.disk.name, "flash") {
+			if entry.disk.id != "" {
+				flashIDs[entry.disk.id] = struct{}{}
+			}
+			if entry.disk.device != "" {
+				flashDevices[entry.disk.device] = struct{}{}
+			}
+		}
+	}
+	unassigned, err := readUnassignedEntries(devsINIPath, selector, flashIDs, flashDevices, requireValid)
 	if err != nil {
 		return nil, err
 	}
 
-	merged := make([]unraidDisk, 0, len(assigned)+len(unassigned))
+	merged := make([]diskInventoryEntry, 0, len(assigned)+len(unassigned))
 	seen := make(map[string]struct{}, len(assigned)+len(unassigned))
-	for _, inventory := range [][]unraidDisk{assigned, unassigned} {
-		for _, disk := range inventory {
-			if _, duplicate := seen[disk.id]; duplicate {
+	for _, inventory := range [][]diskInventoryEntry{assigned, unassigned} {
+		for _, entry := range inventory {
+			if _, duplicate := seen[entry.disk.id]; duplicate && entry.disk.id != "" {
 				continue
 			}
-			seen[disk.id] = struct{}{}
-			merged = append(merged, disk)
+			seen[entry.disk.id] = struct{}{}
+			merged = append(merged, entry)
 		}
 	}
 	sort.Slice(merged, func(i, j int) bool {
-		if merged[i].name == merged[j].name {
-			return merged[i].id < merged[j].id
+		if merged[i].disk.name == merged[j].disk.name {
+			return merged[i].disk.id < merged[j].disk.id
 		}
-		return merged[i].name < merged[j].name
+		return merged[i].disk.name < merged[j].disk.name
 	})
 	return merged, nil
 }
 
+func includedDisks(entries []diskInventoryEntry) []unraidDisk {
+	var disks []unraidDisk
+	for _, entry := range entries {
+		if entry.included {
+			disks = append(disks, entry.disk)
+		}
+	}
+	return disks
+}
+
 // readDisks reads assigned-disk state from Unraid. The logical section name
 // selects the SMART cache report (for example disk1 -> smart/disk1).
-func readDisks(disksINIPath string) ([]unraidDisk, error) {
+func readDisks(disksINIPath string, selector *diskSelector) ([]unraidDisk, error) {
+	entries, err := readAssignedEntries(disksINIPath, selector, true)
+	if err != nil {
+		return nil, err
+	}
+	return includedDisks(entries), nil
+}
+
+func readAssignedEntries(disksINIPath string, selector *diskSelector, requireValid bool) ([]diskInventoryEntry, error) {
 	config, err := ini.Load(disksINIPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var disks []unraidDisk
+	var entries []diskInventoryEntry
 	sections := 0
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
@@ -307,8 +366,16 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 		status := strings.ToUpper(strings.TrimSpace(section.Key("status").String()))
 		// Unraid uses the _NP marker for states without a physical disk. Keep
 		// every other state so degraded, disabled and emulated disks remain.
-		// External USB disks and the boot flash device are outside this inventory.
-		if strings.Contains(status, "_NP") || strings.EqualFold(name, "flash") || transport == "usb" {
+		if strings.Contains(status, "_NP") {
+			continue
+		}
+		bus, policy, included := selector.evaluate(id, name, device)
+		entry := diskInventoryEntry{
+			disk: diskFromSection(section, id, name, device, name, transport),
+			bus:  bus, policy: policy, included: included,
+		}
+		if !included || !requireValid {
+			entries = append(entries, entry)
 			continue
 		}
 		if id == "" {
@@ -320,34 +387,54 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 		if device == "" {
 			return nil, fmt.Errorf("active disk %q has no device", name)
 		}
-		disks = append(disks, diskFromSection(section, id, name, device, name, transport))
+		entries = append(entries, entry)
 	}
 	if sections == 0 {
 		return nil, errors.New("disk inventory contains no sections")
 	}
-	return disks, nil
+	return entries, nil
 }
 
 // readUnassignedDisks reads Unraid's native unassigned-device inventory. The
 // device name only selects the SMART report; the sensor identity remains id.
-func readUnassignedDisks(devsINIPath string) ([]unraidDisk, error) {
+func readUnassignedDisks(devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
+	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	return includedDisks(entries), nil
+}
+
+func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs, flashDevices map[string]struct{}, requireValid bool) ([]diskInventoryEntry, error) {
 	config, err := ini.Load(devsINIPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var disks []unraidDisk
+	var entries []diskInventoryEntry
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
 		}
 		name := strings.Trim(section.Name(), "\"")
 		transport := diskTransport(section)
-		if transport == "usb" {
+		id := strings.TrimSpace(section.Key("id").String())
+		if _, flash := flashIDs[id]; flash {
 			continue
 		}
-		id := strings.TrimSpace(section.Key("id").String())
 		device := normalizeDiskDevice(section.Key("device").String())
+		if _, flash := flashDevices[device]; flash {
+			continue
+		}
+		bus, policy, included := selector.evaluate(id, name, device)
+		entry := diskInventoryEntry{
+			disk: diskFromSection(section, id, name, device, device, transport),
+			bus:  bus, policy: policy, included: included,
+		}
+		if !included || !requireValid {
+			entries = append(entries, entry)
+			continue
+		}
 		if device == "" {
 			continue
 		}
@@ -357,9 +444,9 @@ func readUnassignedDisks(devsINIPath string) ([]unraidDisk, error) {
 		if len(id) > maxUnraidDiskIDSize {
 			return nil, fmt.Errorf("unassigned disk %q has a %d-byte stable ID; Unraid maximum is %d", name, len(id), maxUnraidDiskIDSize)
 		}
-		disks = append(disks, diskFromSection(section, id, name, device, device, transport))
+		entries = append(entries, entry)
 	}
-	return disks, nil
+	return entries, nil
 }
 
 func diskTransport(section *ini.Section) string {
@@ -418,7 +505,7 @@ func parseCachedTemperature(raw string) (float64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("cached temperature %q is not numeric", raw)
 	}
-	if math.IsNaN(temperature) || math.IsInf(temperature, 0) || temperature < 0 || temperature > 150 {
+	if math.IsNaN(temperature) || math.IsInf(temperature, 0) {
 		return 0, fmt.Errorf("cached temperature %q is invalid", raw)
 	}
 	return temperature, nil
