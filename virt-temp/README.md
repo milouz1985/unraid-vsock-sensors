@@ -46,7 +46,7 @@ commit<TAB><famille>
 
 Les tabulations et retours à la ligne sont interdits dans les ID et labels.
 Chaque ligne est transmise par une écriture distincte sur la même session.
-Un ID doit contenir entre 1 et 63 octets et commencer par le nom de sa famille
+Un ID doit contenir entre 1 et 84 octets et commencer par le nom de sa famille
 suivi de `:`. Un label doit contenir entre 1 et 95 octets. Une température doit
 être un entier signé en milli°C représentable par le noyau ; aucune plage de
 plausibilité matérielle n'est imposée. Les seules familles acceptées sont `disk`

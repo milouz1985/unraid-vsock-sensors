@@ -57,6 +57,16 @@ func TestVMHWMon(t *testing.T) {
 		t.Fatalf("HBA hwmon name = %q, want unraid_vm_hba_a", got)
 	}
 
+	t.Log("a maximum-length Unraid disk ID reaches real sysfs")
+	maximumDiskID := "disk:" + strings.Repeat("a", maxUnraidDiskIDSize)
+	maximumSamples := []hwmonSample{
+		diskSamples[0],
+		hwmonTestSample(maximumDiskID, "Maximum ID", 39),
+	}
+	publish("disk", &disks, maximumSamples, true)
+	requireVMHWMonTemp(t, "disk", maximumDiskID, "39000")
+	publish("disk", &disks, diskSamples, true)
+
 	t.Log("signed temperatures outside common hardware ranges reach real sysfs")
 	hbaSamples[0].temperature = -40
 	publish("hba", &hbas, hbaSamples, false)

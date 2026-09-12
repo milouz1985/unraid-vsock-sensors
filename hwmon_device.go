@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	maxHWMonIDSize    = 63
-	maxHWMonLabelSize = 95
+	maxDiskHWMonIDSize = len("disk:") + maxUnraidDiskIDSize
+	maxHBAHWMonIDSize  = len("hba:") + maxHBAStableIDSize
+	maxHWMonIDSize     = max(maxDiskHWMonIDSize, maxHBAHWMonIDSize)
+	maxHWMonLabelSize  = 95
 )
 
 func publishHWMonFamily(

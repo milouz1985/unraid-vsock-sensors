@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,6 +17,10 @@ import (
 
 	"unraid-vsock-sensors/internal/sensors"
 )
+
+// Representative anonymized SCSI identity at the 79-byte length observed in
+// Unraid tests. Its model_serial shape matters; the original value does not.
+const maxLengthUnraidDiskID = "SEAGATE_EXOS_X24_ST24000NM002H-3KS133_ANONYMIZED_SERIAL_00000000000000000000000"
 
 type diskTestEnvironment struct {
 	paths diskDataPaths
@@ -368,6 +373,40 @@ func TestHistoricalUnraidDisksFixture(t *testing.T) {
 	}
 	if !byName["disk1"].rotational || !byName["cctv_pool"].rotational || byName["unraid_files"].transport != "nvme" {
 		t.Fatalf("parsed active inventory = %#v", byName)
+	}
+}
+
+func TestUnraidDiskIDSizeContract(t *testing.T) {
+	if got := len(maxLengthUnraidDiskID); got != maxUnraidDiskIDSize {
+		t.Fatalf("maximum-length test ID is %d bytes, want %d", got, maxUnraidDiskIDSize)
+	}
+	tests := []struct {
+		name    string
+		id      string
+		wantErr bool
+	}{
+		{name: "78 bytes", id: maxLengthUnraidDiskID[:maxUnraidDiskIDSize-1]},
+		{name: "79 bytes", id: maxLengthUnraidDiskID},
+		{name: "80 bytes", id: maxLengthUnraidDiskID + "X", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "disks.ini")
+			data := fmt.Sprintf("[disk1]\nid=%q\ndevice=sdz\nstatus=DISK_OK\n", test.id)
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			disks, err := readDisks(path)
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "Unraid maximum is 79") {
+					t.Fatalf("readDisks() error = %v, want maximum-ID error", err)
+				}
+				return
+			}
+			if err != nil || len(disks) != 1 || disks[0].id != test.id {
+				t.Fatalf("readDisks() = %#v, %v", disks, err)
+			}
+		})
 	}
 }
 

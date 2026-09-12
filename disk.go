@@ -33,6 +33,9 @@ const (
 	diskFailureMargin         = 5 * time.Second
 	minimumSMARTFreshness     = 10 * time.Second
 	maximumRecommendedPolling = 60 * time.Second
+	// Tests on Unraid suggest disk IDs in disks.ini and devs.ini are truncated
+	// to 79 bytes. This is an observed limit, not a documented guarantee.
+	maxUnraidDiskIDSize = 79
 )
 
 type diskDataPaths struct {
@@ -309,6 +312,9 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 		if id == "" {
 			return nil, fmt.Errorf("active disk %q has no stable ID", name)
 		}
+		if len(id) > maxUnraidDiskIDSize {
+			return nil, fmt.Errorf("active disk %q has a %d-byte stable ID; Unraid maximum is %d", name, len(id), maxUnraidDiskIDSize)
+		}
 		if device == "" {
 			return nil, fmt.Errorf("active disk %q has no device", name)
 		}
@@ -341,6 +347,9 @@ func readUnassignedDisks(devsINIPath string) ([]unraidDisk, error) {
 		}
 		if id == "" {
 			return nil, fmt.Errorf("unassigned disk %q has no stable ID", name)
+		}
+		if len(id) > maxUnraidDiskIDSize {
+			return nil, fmt.Errorf("unassigned disk %q has a %d-byte stable ID; Unraid maximum is %d", name, len(id), maxUnraidDiskIDSize)
 		}
 		disks = append(disks, diskFromSection(section, id, name, device, device))
 	}

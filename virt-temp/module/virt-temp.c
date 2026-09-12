@@ -6,6 +6,7 @@
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
+#include <linux/limits.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -16,12 +17,20 @@
 
 #define FAILSAFE_MILLIC 100000L
 #define MAX_STALE_TIMEOUT 300U
-#define ID_SIZE 64
+/*
+ * Tests on Unraid suggest disk IDs are truncated to 79 bytes. UVSS adds the
+ * "disk:" prefix, yielding at most 84 bytes plus the terminating NUL.
+ */
+#define ID_SIZE 85
 #define LABEL_SIZE 96
 #define PLATFORM_NAME_SIZE (sizeof("unraid_disk_") + 2 * (ID_SIZE - 1))
 #define HWMON_NAME_SIZE (sizeof("unraid_") + LABEL_SIZE - 1)
 #define MAX_RECORDS 1024
 #define MAX_WRITE_SIZE 256
+
+/* The longest hexadecimal platform name is 180 bytes plus its terminating NUL. */
+static_assert(PLATFORM_NAME_SIZE <= NAME_MAX + 1,
+	      "virt_temp platform name exceeds NAME_MAX");
 
 struct virt_temp_sensor {
 	char id[ID_SIZE];

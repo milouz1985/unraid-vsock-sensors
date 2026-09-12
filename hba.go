@@ -33,6 +33,16 @@ type hbaMetadata struct {
 	pciAddress string
 }
 
+const (
+	maxSASAddressSize           = 16
+	maxPCIAddressSize           = len("0000:00:00.0")
+	maxMegaRAIDControllerSerial = 32 // Firmware controller information uses serial_no[32].
+	maxSASHBAStableIDSize       = len("sas:") + maxSASAddressSize
+	maxPCIHBAStableIDSize       = len("pci:") + maxPCIAddressSize
+	maxSerialHBAStableIDSize    = len("serial:") + maxMegaRAIDControllerSerial
+	maxHBAStableIDSize          = max(maxSASHBAStableIDSize, maxPCIHBAStableIDSize, maxSerialHBAStableIDSize)
+)
+
 // hbaStableID gives every backend the same controller identity. Prefer the SAS
 // address shared by mpt3ctl and StorCLI, then progressively weaker fallbacks.
 func hbaStableID(sasAddress, pciAddress, serial string) string {

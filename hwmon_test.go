@@ -353,6 +353,23 @@ func TestEncodeHWMonSamples(t *testing.T) {
 	}
 }
 
+func TestEncodeHWMonSamplesIDSizeBoundary(t *testing.T) {
+	maximumID := "disk:" + strings.Repeat("a", maxHWMonIDSize-len("disk:"))
+	if got := len(maximumID); got != maxHWMonIDSize {
+		t.Fatalf("maximum disk hwmon ID is %d bytes, want %d", got, maxHWMonIDSize)
+	}
+	if err := encodeHWMonSamples(&bytes.Buffer{}, "disk", "commit", []hwmonSample{
+		hwmonTestSample(maximumID, "Maximum ID", 30),
+	}); err != nil {
+		t.Fatalf("maximum-length ID rejected: %v", err)
+	}
+	if err := encodeHWMonSamples(&bytes.Buffer{}, "disk", "commit", []hwmonSample{
+		hwmonTestSample(maximumID+"X", "Oversized ID", 30),
+	}); err == nil {
+		t.Fatal("ID larger than maxHWMonIDSize accepted")
+	}
+}
+
 func TestEncodeHWMonSamplesAllowsSignedTemperaturesOutsideHardwareRanges(t *testing.T) {
 	readings := []hwmonSample{
 		hwmonTestSample("hba:sas:negative", "Negative", -40.125),
