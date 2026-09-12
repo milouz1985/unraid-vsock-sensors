@@ -182,3 +182,21 @@ func writeDiskPolicy(path, id string, policy diskPolicy) error {
 	}
 	return os.Rename(file.Name(), path)
 }
+
+func resetDiskPolicies(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("disk policies path %q is a directory", path)
+	}
+	err = os.Remove(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}

@@ -90,6 +90,8 @@ func usage() {
   %[1]s hwmon [options]
   %[1]s disks list [options]
   %[1]s disks set --id-base64 ID --policy {auto|include|exclude}
+  %[1]s disks validate [options]
+  %[1]s disks reset [options]
   %[1]s version
 
 Commands:
@@ -97,6 +99,8 @@ Commands:
   hwmon                     Publish fixed storage and HBA hwmon inventories
   disks list                Show disk identity, physical bus and policy as JSON
   disks set                 Save a policy by stable Unraid disk ID
+  disks validate            Check the disk policy file
+  disks reset               Remove all disk policy overrides
   version                   Print the build version
 
 Serve options:

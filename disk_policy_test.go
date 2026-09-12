@@ -283,7 +283,10 @@ func TestDiskListCanExposeInvalidDeviceForExclusion(t *testing.T) {
 
 func TestInvalidDiskPolicyFileDoesNotBlockCollector(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
-	environment.write(t, environment.paths.disksINI, "[disk1]\nid=internal\ndevice=sda\ntemp=35\n")
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", false)
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdi", true)
+	environment.write(t, environment.paths.disksINI,
+		"[disk1]\nid=internal\ndevice=sda\ntemp=35\n[disk2]\nid=external\ndevice=sdi\ntransport=ata\ntemp=36\n")
 	environment.write(t, environment.paths.policyFile, `{ "internal": "invalid" }`)
 	environment.report(t, "disk1", environment.now)
 	collector := environment.collector()
@@ -291,7 +294,64 @@ func TestInvalidDiskPolicyFileDoesNotBlockCollector(t *testing.T) {
 	if disk := requireSingleDisk(t, collector); disk.id != "internal" || disk.unavailable {
 		t.Fatalf("collector with invalid policies = %#v", disk)
 	}
+	if len(collector.state) != 1 {
+		t.Fatalf("collector state with invalid policies = %#v; want internal disk only", collector.state)
+	}
+	listArgs := []string{"list", "--disks-ini", environment.paths.disksINI,
+		"--devs-ini", environment.paths.devsINI, "--sys-block-root", environment.paths.sysBlockRoot,
+		"--policy-file", environment.paths.policyFile}
+	var output bytes.Buffer
+	if err := diskPolicyCommand(listArgs, &output); err == nil || !strings.Contains(err.Error(), "invalid disk policy") {
+		t.Fatalf("disks list with invalid policies error = %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("disks list wrote output despite invalid policies: %q", output.String())
+	}
+	if err := diskPolicyCommand([]string{"validate", "--policy-file", environment.paths.policyFile}, &output); err == nil {
+		t.Fatal("disks validate accepted invalid policies")
+	}
 	if err := writeDiskPolicy(environment.paths.policyFile, "internal", diskPolicyExclude); err == nil || !strings.Contains(err.Error(), "invalid disk policy") {
 		t.Fatalf("overwriting invalid policy file error = %v", err)
+	}
+	encodedID := base64.StdEncoding.EncodeToString([]byte("internal"))
+	if err := diskPolicyCommand([]string{"set", "--id-base64", encodedID, "--policy", "exclude",
+		"--policy-file", environment.paths.policyFile}, &output); err == nil {
+		t.Fatal("disks set overwrote invalid policies")
+	}
+	if err := diskPolicyCommand([]string{"reset", "--policy-file", environment.paths.policyFile}, &output); err != nil {
+		t.Fatalf("disks reset: %v", err)
+	}
+	if _, err := os.Stat(environment.paths.policyFile); !os.IsNotExist(err) {
+		t.Fatalf("policy file after reset: %v; want absent", err)
+	}
+	if err := diskPolicyCommand([]string{"reset", "--policy-file", environment.paths.policyFile}, &output); err != nil {
+		t.Fatalf("disks reset with absent file: %v", err)
+	}
+	if err := diskPolicyCommand([]string{"validate", "--policy-file", environment.paths.policyFile}, &output); err != nil {
+		t.Fatalf("disks validate after reset: %v", err)
+	}
+	output.Reset()
+	if err := diskPolicyCommand(listArgs, &output); err != nil {
+		t.Fatalf("disks list after reset: %v", err)
+	}
+	var rows []diskPolicyRow
+	if err := json.Unmarshal(output.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Policy != diskPolicyAuto || rows[1].Policy != diskPolicyAuto {
+		t.Fatalf("disks list after reset = %#v; want Auto for all disks", rows)
+	}
+}
+
+func TestDiskPoliciesResetRejectsDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disk-policies.json")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetDiskPolicies(path); err == nil {
+		t.Fatal("reset removed a directory instead of a policy file")
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Fatalf("policy directory after failed reset = %v, %v", info, err)
 	}
 }

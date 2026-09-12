@@ -6,4 +6,9 @@ if [[ "${1:-}" == "set-disk-policy" ]]; then
     "$binary" disks set --id-base64 "$2" --policy "$3" 2>&1 || exit $?
     exec "$rc" refresh 2>&1
 fi
+if [[ "${1:-}" == "reset-disk-policies" ]]; then
+    [[ $# == 1 ]] || { echo "Usage: service.sh reset-disk-policies" >&2; exit 2; }
+    "$binary" disks reset 2>&1 || exit $?
+    exec "$rc" refresh 2>&1
+fi
 exec "$rc" "$@"

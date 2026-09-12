@@ -33,6 +33,11 @@ if (!$pollValid) {
 $diskOutput = [];
 exec('/usr/local/sbin/unraid-vsock-sensors disks list 2>/dev/null', $diskOutput, $diskStatus);
 $diskRows = $diskStatus === 0 ? json_decode(implode("\n", $diskOutput), true) : null;
+$diskPoliciesInvalid = false;
+if ($diskStatus !== 0 && is_executable('/usr/local/sbin/unraid-vsock-sensors')) {
+    exec('/usr/local/sbin/unraid-vsock-sensors disks validate 2>/dev/null', $policyOutput, $policyStatus);
+    $diskPoliciesInvalid = $policyStatus !== 0;
+}
 ?>
 
 <style>
@@ -123,7 +128,14 @@ _(HBA refresh interval)_:
 
 <p>Auto excludes disks physically connected through USB. Include and Exclude override this choice. If the physical bus cannot be determined, Auto includes the disk for thermal safety. The Unraid boot flash device is always excluded.</p>
 
-<?php if (!is_array($diskRows)): ?>
+<?php if ($diskPoliciesInvalid): ?>
+<p class="red">Disk policies are invalid. The daemon ignores all overrides and continues in Auto mode for every disk.</p>
+<form id="uvss-reset-disk-policies" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#command" value="/plugins/unraid-vsock-sensors/service.sh">
+<input type="hidden" name="#arg[1]" value="reset-disk-policies">
+<button type="submit">Reset disk policies</button>
+</form>
+<?php elseif (!is_array($diskRows)): ?>
 <p>Disk inventory unavailable. Check the daemon configuration and Unraid inventory files.</p>
 <?php elseif (count($diskRows) === 0): ?>
 <p>No disks are currently known.</p>
@@ -191,5 +203,13 @@ _(HBA refresh interval)_:
 
     backend.addEventListener('change', function () { refreshIntervals(false); });
     refreshIntervals(true);
+
+    const resetForm = document.getElementById('uvss-reset-disk-policies');
+    const progressFrame = document.getElementById('progressFrame');
+    if (resetForm && progressFrame) {
+        resetForm.addEventListener('submit', function () {
+            progressFrame.addEventListener('load', function () { window.location.reload(); }, {once: true});
+        });
+    }
 }());
 </script>

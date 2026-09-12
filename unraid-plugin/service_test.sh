@@ -34,3 +34,18 @@ if "$script_dir/service.sh" set-disk-policy V0RDX0lE exclude; then
     exit 1
 fi
 [[ ! -e "$test_dir/rc.args" ]]
+
+unset UVSS_SERVICE_TEST_BINARY_STATUS
+"$script_dir/service.sh" reset-disk-policies
+mapfile -t binary_args < "$test_dir/binary.args"
+mapfile -t rc_args < "$test_dir/rc.args"
+[[ "${binary_args[*]}" == "disks reset" ]]
+[[ "${rc_args[*]}" == "refresh" ]]
+
+rm -f "$test_dir/rc.args"
+export UVSS_SERVICE_TEST_BINARY_STATUS=7
+if "$script_dir/service.sh" reset-disk-policies; then
+    echo "service accepted a failed disk policy reset" >&2
+    exit 1
+fi
+[[ ! -e "$test_dir/rc.args" ]]

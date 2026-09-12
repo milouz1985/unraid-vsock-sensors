@@ -77,6 +77,24 @@ func diskPolicyCommand(args []string, output io.Writer) error {
 		}
 		_, err = fmt.Fprintln(output, "disk policy saved")
 		return err
+	case "validate", "reset":
+		fs := flag.NewFlagSet("disks "+args[0], flag.ContinueOnError)
+		policyFile := fs.String("policy-file", defaultDiskPolicyFile, "persistent disk policies")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return fmt.Errorf("disks %s does not accept positional arguments", args[0])
+		}
+		if args[0] == "validate" {
+			_, err := readDiskPolicies(*policyFile)
+			return err
+		}
+		if err := resetDiskPolicies(*policyFile); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(output, "disk policies reset")
+		return err
 	default:
 		return fmt.Errorf("unknown disks command %q", args[0])
 	}
