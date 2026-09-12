@@ -149,7 +149,7 @@ test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
 
 build: | $(BIN_DIR) ## Compile un binaire Linux statique
 	@$(resolve-version) \
-	CGO_ENABLED=0 GOOS=linux $(GO) build -buildvcs=false -trimpath \
+	CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 $(GO) build -buildvcs=false -trimpath \
 		-ldflags="-s -w -X main.version=$$version" \
 		-o $(BINARY) .
 
