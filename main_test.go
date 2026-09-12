@@ -42,6 +42,13 @@ func TestResolveHBAInterval(t *testing.T) {
 	}
 }
 
+func TestResolveHBAIntervalRejectsInvalidBackendWithExplicitInterval(t *testing.T) {
+	interval, err := resolveHBAInterval("unknown", 45*time.Second, true)
+	if interval != 0 || err == nil || !strings.Contains(err.Error(), "invalid HBA backend") {
+		t.Fatalf("resolveHBAInterval() = %s, %v; want invalid backend error", interval, err)
+	}
+}
+
 func TestServeRejectsInvalidExplicitHBAInterval(t *testing.T) {
 	for _, value := range []string{"0", "-1s", "invalid"} {
 		t.Run(value, func(t *testing.T) {

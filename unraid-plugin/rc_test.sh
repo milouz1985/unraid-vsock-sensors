@@ -174,15 +174,48 @@ for backend in mpt3ctl storcli; do
     fi
     run_rc stop >/dev/null
 
-    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="45s"\n' "$backend" > "$test_dir/hba.cfg"
+    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="1m"\n' "$backend" > "$test_dir/hba.cfg"
     run_rc start 0 "$test_dir/hba.cfg" >/dev/null
     mapfile -t daemon_args < "$args_file"
-    expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval 45s --syslog)
+    expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval 1m --syslog)
     if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
         echo "$backend explicit interval was lost: ${daemon_args[*]}" >&2
         exit 1
     fi
     run_rc stop >/dev/null
+
+    if [[ "$backend" == mpt3ctl ]]; then
+        backend_interval=10s
+        other_interval=5m
+    else
+        backend_interval=5m
+        other_interval=15s
+    fi
+    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="%s"\n' "$backend" "$backend_interval" > "$test_dir/hba.cfg"
+    run_rc start 0 "$test_dir/hba.cfg" >/dev/null
+    mapfile -t daemon_args < "$args_file"
+    expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval "$backend_interval" --syslog)
+    if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
+        echo "$backend rejected its own interval: ${daemon_args[*]}" >&2
+        exit 1
+    fi
+    run_rc stop >/dev/null
+
+    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="45s"\n' "$backend" > "$test_dir/hba.cfg"
+    if run_rc start 0 "$test_dir/hba.cfg" > "$test_dir/invalid.output" 2>&1; then
+        echo "$backend accepted an interval outside its fixed choices" >&2
+        exit 1
+    fi
+    if ! grep -Fq "refresh interval: 45s" "$test_dir/invalid.output"; then
+        echo "unexpected $backend invalid interval error: $(cat "$test_dir/invalid.output")" >&2
+        exit 1
+    fi
+
+    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="%s"\n' "$backend" "$other_interval" > "$test_dir/hba.cfg"
+    if run_rc start 0 "$test_dir/hba.cfg" > "$test_dir/invalid.output" 2>&1; then
+        echo "$backend accepted an interval reserved for the other backend" >&2
+        exit 1
+    fi
 done
 
 refresh_output="$(run_rc refresh)"

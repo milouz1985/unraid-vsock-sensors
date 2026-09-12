@@ -51,7 +51,18 @@ load_config() {
         *) echo "Invalid HBA mode: $HBA_MODE" >&2; return 1 ;;
     esac
     case "$HBA_BACKEND" in
-        mpt3ctl|storcli) ;;
+        mpt3ctl)
+            case "$HBA_INTERVAL" in
+                ""|10s|15s|30s|1m) ;;
+                *) echo "Invalid mpt3ctl refresh interval: $HBA_INTERVAL" >&2; return 1 ;;
+            esac
+            ;;
+        storcli)
+            case "$HBA_INTERVAL" in
+                ""|30s|1m|5m) ;;
+                *) echo "Invalid StorCLI refresh interval: $HBA_INTERVAL" >&2; return 1 ;;
+            esac
+            ;;
         *) echo "Invalid HBA backend: $HBA_BACKEND" >&2; return 1 ;;
     esac
 }

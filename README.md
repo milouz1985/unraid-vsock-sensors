@@ -74,11 +74,14 @@ Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
   StorCLI par défaut.
 
 Le CLI et le plugin utilisent le défaut du backend si aucun intervalle n'est
-fourni. Un intervalle choisi explicitement le remplace et reste sélectionné
-lors d'un changement de backend ; choisir **Default** pour revenir au défaut
-automatique. StorCLI utilise volontairement `30s` plutôt que `15s` car sa
-collecte par commande est plus coûteuse que l'accès ioctl natif MPT3. Une
-ancienne configuration contenant `HBA_INTERVAL` conserve sa valeur explicite.
+fourni. Le plugin propose des choix fixes : `10s`, `15s`, `30s`, `1m` pour
+`mpt3ctl` ; `30s`, `1m`, `5m` pour StorCLI. Une valeur commune reste sélectionnée
+lors d'un changement de backend. Si elle n'est pas disponible avec le nouveau
+backend, l'interface affiche un avertissement et sélectionne **Default** à
+enregistrer. Le CLI accepte aussi une durée positive explicite hors de ces
+choix. StorCLI utilise volontairement `30s` plutôt que `15s` car sa collecte
+par commande est plus coûteuse que l'accès ioctl natif MPT3. Une ancienne
+configuration contenant un `HBA_INTERVAL` autorisé conserve sa valeur explicite.
 
 Le backend natif ne nécessite aucun utilitaire, mais seulement un contrôleur
 géré par `mpt3sas`. Il est expérimental : il est utilisé par l'auteur sur un LSI

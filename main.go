@@ -186,15 +186,17 @@ func serve(args []string) error {
 }
 
 func resolveHBAInterval(backend hbaBackendMode, interval time.Duration, explicit bool) (time.Duration, error) {
-	if !explicit {
-		switch backend {
-		case hbaBackendMPT3CTL:
+	switch backend {
+	case hbaBackendMPT3CTL:
+		if !explicit {
 			interval = 15 * time.Second
-		case hbaBackendStorCLI:
-			interval = 30 * time.Second
-		default:
-			return 0, fmt.Errorf("invalid HBA backend %q", backend)
 		}
+	case hbaBackendStorCLI:
+		if !explicit {
+			interval = 30 * time.Second
+		}
+	default:
+		return 0, fmt.Errorf("invalid HBA backend %q", backend)
 	}
 	if interval <= 0 {
 		return 0, errors.New("hba-interval must be greater than zero")
