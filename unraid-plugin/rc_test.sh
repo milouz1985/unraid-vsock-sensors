@@ -61,10 +61,10 @@ exec 9> >(cat >/dev/null)
 pipe_reader_pid=$!
 
 run_rc() {
-    local action="$1" ignore_term="${2:-0}"
+    local action="$1" ignore_term="${2:-0}" config_path="${3:-$test_dir/missing.cfg}"
     timeout 10 env \
         UVSS_RC_BINARY="$script_dir/rc_test.sh" \
-        UVSS_RC_CONFIG="$test_dir/missing.cfg" \
+        UVSS_RC_CONFIG="$config_path" \
         UVSS_RC_PID_FILE="$pid_file" \
         UVSS_RC_LOCK_FILE="$lock_file" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
@@ -116,7 +116,7 @@ if ! grep -Fxq -- "--syslog" "$args_file"; then
     exit 1
 fi
 mapfile -t daemon_args < "$args_file"
-expected_args=(serve --port 990 --hba-mode enabled --hba-backend mpt3ctl --hba-interval 15s --syslog)
+expected_args=(serve --port 990 --hba-mode enabled --hba-backend mpt3ctl --syslog)
 if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
     echo "unexpected daemon arguments: ${daemon_args[*]}" >&2
     exit 1
@@ -154,6 +154,36 @@ if ! kill -0 "$daemon_pid" 2>/dev/null; then
 fi
 
 run_rc stop >/dev/null
+
+run_rc start 0 "$script_dir/default.cfg" >/dev/null
+mapfile -t daemon_args < "$args_file"
+if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
+    echo "default plugin config forced an interval: ${daemon_args[*]}" >&2
+    exit 1
+fi
+run_rc stop >/dev/null
+
+for backend in mpt3ctl storcli; do
+    printf 'HBA_BACKEND="%s"\n' "$backend" > "$test_dir/hba.cfg"
+    run_rc start 0 "$test_dir/hba.cfg" >/dev/null
+    mapfile -t daemon_args < "$args_file"
+    expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --syslog)
+    if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
+        echo "$backend default forced an interval: ${daemon_args[*]}" >&2
+        exit 1
+    fi
+    run_rc stop >/dev/null
+
+    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="45s"\n' "$backend" > "$test_dir/hba.cfg"
+    run_rc start 0 "$test_dir/hba.cfg" >/dev/null
+    mapfile -t daemon_args < "$args_file"
+    expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval 45s --syslog)
+    if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
+        echo "$backend explicit interval was lost: ${daemon_args[*]}" >&2
+        exit 1
+    fi
+    run_rc stop >/dev/null
+done
 
 refresh_output="$(run_rc refresh)"
 if [[ "$refresh_output" != *"is not running"* ]]; then

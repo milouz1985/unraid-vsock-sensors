@@ -20,7 +20,7 @@ load_config() {
     PORT="990"
     HBA_MODE="enabled"
     HBA_BACKEND="mpt3ctl"
-    HBA_INTERVAL="15s"
+    HBA_INTERVAL=""
 
     if [[ -r "$config" ]]; then
         local line key value line_number=0
@@ -51,18 +51,7 @@ load_config() {
         *) echo "Invalid HBA mode: $HBA_MODE" >&2; return 1 ;;
     esac
     case "$HBA_BACKEND" in
-        mpt3ctl)
-            case "$HBA_INTERVAL" in
-                10s|15s|30s|1m) ;;
-                *) echo "Invalid mpt3ctl refresh interval: $HBA_INTERVAL" >&2; return 1 ;;
-            esac
-            ;;
-        storcli)
-            case "$HBA_INTERVAL" in
-                30s|1m|5m) ;;
-                *) echo "Invalid StorCLI refresh interval: $HBA_INTERVAL" >&2; return 1 ;;
-            esac
-            ;;
+        mpt3ctl|storcli) ;;
         *) echo "Invalid HBA backend: $HBA_BACKEND" >&2; return 1 ;;
     esac
 }
@@ -83,6 +72,7 @@ running_pid() {
 
 start() {
     local pid running
+    local -a interval_args=()
     if pid="$(running_pid)"; then
         echo "$name is already running (PID $pid)"
         return 0
@@ -94,13 +84,17 @@ start() {
         return 1
     fi
 
+    if [[ -n "$HBA_INTERVAL" ]]; then
+        interval_args=(--hba-interval "$HBA_INTERVAL")
+    fi
+
     # Plugin Manager invokes this script with private pipes and extra file
     # descriptors. Detach completely before exec so the long-lived daemon can
     # never keep an install or update operation pending.
     (
         close_inherited_fds
         exec nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" \
-            --hba-backend "$HBA_BACKEND" --hba-interval "$HBA_INTERVAL" --syslog
+            --hba-backend "$HBA_BACKEND" "${interval_args[@]}" --syslog
     ) </dev/null >/dev/null 2>&1 &
     pid=$!
     if ! printf '%s\n' "$pid" > "$pid_file"; then

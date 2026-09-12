@@ -8,7 +8,7 @@ $cfg = parse_plugin_cfg($plugin);
 $port = htmlspecialchars($cfg['PORT'] ?? '990', ENT_QUOTES);
 $hbaMode = $cfg['HBA_MODE'] ?? 'enabled';
 $hbaBackend = $cfg['HBA_BACKEND'] ?? 'mpt3ctl';
-$hbaInterval = $cfg['HBA_INTERVAL'] ?? ($hbaBackend === 'storcli' ? '30s' : '15s');
+$hbaInterval = $cfg['HBA_INTERVAL'] ?? '';
 
 $statusOutput = [];
 exec('/etc/rc.d/rc.unraid-vsock-sensors status 2>/dev/null', $statusOutput, $statusCode);
@@ -117,7 +117,7 @@ _(HBA refresh interval)_:
 : <select id="hba-interval" name="HBA_INTERVAL" data-current="<?=htmlspecialchars($hbaInterval, ENT_QUOTES)?>">
 </select>
 
-> Native access offers shorter intervals than StorCLI. Each new HBA state is pushed to Proxmox.
+> Default uses 15 seconds with native mpt3ctl and 30 seconds with StorCLI because the StorCLI collection is more expensive. An explicit interval is kept when changing backends. Each new HBA state is pushed to Proxmox.
 
 &nbsp;
 
@@ -185,19 +185,20 @@ _(HBA refresh interval)_:
         mpt3ctl: [['10s', '10 seconds'], ['15s', '15 seconds'], ['30s', '30 seconds'], ['1m', '1 minute']],
         storcli: [['30s', '30 seconds'], ['1m', '1 minute'], ['5m', '5 minutes']]
     };
+    const defaults = {mpt3ctl: '15 seconds', storcli: '30 seconds'};
 
     function refreshIntervals(keepCurrent) {
         const previous = keepCurrent ? interval.dataset.current : interval.value;
         const values = choices[backend.value];
         interval.replaceChildren();
+        interval.add(new Option('Default (' + defaults[backend.value] + ')', ''));
         for (const [value, label] of values) {
-            const option = new Option(label, value);
-            option.selected = value === previous;
-            interval.add(option);
+            interval.add(new Option(label, value));
         }
-        if (!values.some(([value]) => value === previous)) {
-            interval.value = backend.value === 'mpt3ctl' ? '15s' : '30s';
+        if (previous !== '' && !values.some(([value]) => value === previous)) {
+            interval.add(new Option(previous + ' (custom)', previous));
         }
+        interval.value = previous;
         interval.dataset.current = interval.value;
     }
 

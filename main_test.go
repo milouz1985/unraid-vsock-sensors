@@ -6,12 +6,51 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
+
+func TestResolveHBAInterval(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		backend  hbaBackendMode
+		interval time.Duration
+		explicit bool
+		want     time.Duration
+		wantErr  bool
+	}{
+		{name: "native default", backend: hbaBackendMPT3CTL, want: 15 * time.Second},
+		{name: "StorCLI default", backend: hbaBackendStorCLI, want: 30 * time.Second},
+		{name: "native explicit", backend: hbaBackendMPT3CTL, interval: 45 * time.Second, explicit: true, want: 45 * time.Second},
+		{name: "StorCLI explicit", backend: hbaBackendStorCLI, interval: 45 * time.Second, explicit: true, want: 45 * time.Second},
+		{name: "explicit zero", backend: hbaBackendMPT3CTL, explicit: true, wantErr: true},
+		{name: "negative interval", backend: hbaBackendStorCLI, interval: -time.Second, explicit: true, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := resolveHBAInterval(test.backend, test.interval, test.explicit)
+			if got != test.want || (err != nil) != test.wantErr {
+				t.Fatalf("resolveHBAInterval() = %s, %v; want %s, error=%v", got, err, test.want, test.wantErr)
+			}
+			if test.wantErr && !strings.Contains(err.Error(), "hba-interval") {
+				t.Fatalf("interval error = %v", err)
+			}
+		})
+	}
+}
+
+func TestServeRejectsInvalidExplicitHBAInterval(t *testing.T) {
+	for _, value := range []string{"0", "-1s", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			if err := serve([]string{"--hba-backend", "storcli", "--hba-interval", value}); err == nil {
+				t.Fatalf("serve accepted interval %q", value)
+			}
+		})
+	}
+}
 
 func TestPublishedSnapshotMetadata(t *testing.T) {
 	response := collectorSnapshot(

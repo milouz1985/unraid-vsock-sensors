@@ -73,6 +73,13 @@ Ouvrir ensuite **Settings → Unraid VSOCK Sensors** et vérifier :
 - **HBA refresh interval** : `15 seconds` avec `mpt3ctl`, `30 seconds` avec
   StorCLI par défaut.
 
+Le CLI et le plugin utilisent le défaut du backend si aucun intervalle n'est
+fourni. Un intervalle choisi explicitement le remplace et reste sélectionné
+lors d'un changement de backend ; choisir **Default** pour revenir au défaut
+automatique. StorCLI utilise volontairement `30s` plutôt que `15s` car sa
+collecte par commande est plus coûteuse que l'accès ioctl natif MPT3. Une
+ancienne configuration contenant `HBA_INTERVAL` conserve sa valeur explicite.
+
 Le backend natif ne nécessite aucun utilitaire, mais seulement un contrôleur
 géré par `mpt3sas`. Il est expérimental : il est utilisé par l'auteur sur un LSI
 SAS3008, mais n'a pas été validé sur un large éventail de contrôleurs et de

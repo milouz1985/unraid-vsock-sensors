@@ -107,7 +107,7 @@ Serve options:
   --port PORT               AF_VSOCK port (default: 990)
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
-  --hba-interval DURATION   Delay between HBA temperature refreshes (default: 30s)
+  --hba-interval DURATION   Delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)
   --syslog                  Send service logs to the system logger
 
 Hwmon options:
@@ -130,7 +130,7 @@ func serve(args []string) error {
 	port := fs.Uint("port", defaultPort, "vsock port")
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
-	hbaInterval := fs.Duration("hba-interval", 30*time.Second, "delay between HBA temperature refreshes")
+	hbaIntervalValue := fs.Duration("hba-interval", 0, "delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)")
 	useSyslog := fs.Bool("syslog", false, "send service logs to syslog")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -138,6 +138,12 @@ func serve(args []string) error {
 	if fs.NArg() != 0 {
 		return errors.New("serve does not accept positional arguments")
 	}
+	intervalExplicit := false
+	fs.Visit(func(option *flag.Flag) {
+		if option.Name == "hba-interval" {
+			intervalExplicit = true
+		}
+	})
 	if *useSyslog {
 		writer, err := syslog.New(syslog.LOG_INFO|syslog.LOG_DAEMON, "unraid-vsock-sensors")
 		if err != nil {
@@ -147,9 +153,6 @@ func serve(args []string) error {
 		// returned by serve and logged by main use the same destination.
 		log.SetOutput(writer)
 	}
-	if *hbaInterval <= 0 {
-		return errors.New("hba-interval must be greater than zero")
-	}
 	hbaMode := hbaMode(*hbaModeValue)
 	if hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
 		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
@@ -157,6 +160,10 @@ func serve(args []string) error {
 	hbaBackend := hbaBackendMode(*hbaBackendValue)
 	if hbaBackend != hbaBackendMPT3CTL && hbaBackend != hbaBackendStorCLI {
 		return fmt.Errorf("invalid HBA backend %q (expected mpt3ctl or storcli)", *hbaBackendValue)
+	}
+	hbaInterval, err := resolveHBAInterval(hbaBackend, *hbaIntervalValue, intervalExplicit)
+	if err != nil {
+		return err
 	}
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
@@ -170,12 +177,29 @@ func serve(args []string) error {
 	defer signal.Stop(refreshSignals)
 	refreshRequests := make(chan struct{}, 1)
 	go forwardDiskRefreshSignals(ctx, refreshSignals, refreshRequests)
-	hbas := newConfiguredHBACollector(*hbaInterval, hbaMode, hbaBackend)
+	hbas := newConfiguredHBACollector(hbaInterval, hbaMode, hbaBackend)
 	// Collection remains independent from publication so a disk or controller
 	// command can never block the VSOCK heartbeat.
 	go disks.run(ctx, refreshRequests)
 	go hbas.run(ctx)
 	return publishSnapshots(ctx, uint32(*port), disks, hbas)
+}
+
+func resolveHBAInterval(backend hbaBackendMode, interval time.Duration, explicit bool) (time.Duration, error) {
+	if !explicit {
+		switch backend {
+		case hbaBackendMPT3CTL:
+			interval = 15 * time.Second
+		case hbaBackendStorCLI:
+			interval = 30 * time.Second
+		default:
+			return 0, fmt.Errorf("invalid HBA backend %q", backend)
+		}
+	}
+	if interval <= 0 {
+		return 0, errors.New("hba-interval must be greater than zero")
+	}
+	return interval, nil
 }
 
 func forwardDiskRefreshSignals(ctx context.Context, signals <-chan os.Signal, refresh chan<- struct{}) {
