@@ -52,7 +52,7 @@ name="unraid-vsock-sensors"
 cfgdir="/boot/config/plugins/$name"
 "/etc/rc.d/rc.$name" stop 2>/dev/null || true
 /sbin/removepkg "$name" >/dev/null 2>&1 || true
-rm -f "$cfgdir/$name.cfg" "$cfgdir"/$name-*.txz
+rm -f "$cfgdir/$name.cfg" "$cfgdir/disk-policies.json" "$cfgdir"/$name-*.txz
 rmdir "$cfgdir" 2>/dev/null || true
 ]]></INLINE>
 </FILE>

@@ -263,10 +263,11 @@ en secondes. Un fichier illisible ou une valeur invalide utilise le fallback de
 
 ## Mise à jour et désinstallation
 
-Une mise à jour du plugin Unraid conserve
-`/boot/config/plugins/unraid-vsock-sensors/unraid-vsock-sensors.cfg`. Sa
-désinstallation arrête le service et supprime cette configuration ainsi que le
-paquet conservé sur la clé USB.
+Un redémarrage, une mise à jour du plugin ou une réinstallation de son paquet
+conserve `unraid-vsock-sensors.cfg` et `disk-policies.json` dans
+`/boot/config/plugins/unraid-vsock-sensors/`. Une désinstallation explicite du
+plugin arrête le service et supprime ces deux fichiers ainsi que le paquet
+conservé sur la clé USB.
 
 Sur Proxmox, installer une nouvelle version avec :
 
