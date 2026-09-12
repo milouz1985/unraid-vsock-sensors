@@ -548,6 +548,113 @@ func TestDiskInventoryDeduplicatesAssignedAndUnassignedByStableID(t *testing.T) 
 	}
 }
 
+func TestDiskInventoryExcludesUSBFromBothSourcesBeforeSMART(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	environment.write(t, environment.paths.disksINI, strings.TrimSpace(`
+		[disk1]
+		id=internal_hdd
+		device=sda
+		transport=ata
+		rotational=1
+		spundown=0
+		temp=35
+
+		[disk2]
+		id=USB_external_serial
+		device=sdi
+		transport=" USB "
+		rotational=1
+		spundown=0
+		temp=36
+	`)+"\n")
+	environment.write(t, environment.paths.devsINI, strings.TrimSpace(`
+		[internal]
+		id=internal_ssd
+		device=sdb
+		transport=ata
+		rotational=0
+		spundown=0
+		temp=42
+
+		[external]
+		id=USB_unassigned_serial
+		device=sdj
+		transport=usb
+		rotational=1
+		spundown=0
+		temp=37
+	`)+"\n")
+	environment.report(t, "disk1", environment.now)
+	environment.report(t, "sdb", environment.now)
+
+	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI)
+	if err != nil || len(disks) != 2 {
+		t.Fatalf("inventory = %#v, %v; want two internal disks", disks, err)
+	}
+	byID := make(map[string]unraidDisk, len(disks))
+	for _, disk := range disks {
+		byID[disk.id] = disk
+	}
+	if byID["internal_hdd"].smartName != "disk1" || byID["internal_ssd"].smartName != "sdb" {
+		t.Fatalf("internal inventory = %#v", byID)
+	}
+	if _, exists := byID["USB_external_serial"]; exists {
+		t.Fatal("assigned USB disk entered the inventory")
+	}
+	if _, exists := byID["USB_unassigned_serial"]; exists {
+		t.Fatal("unassigned USB disk entered the inventory")
+	}
+
+	collector := environment.collector()
+	collector.refresh()
+	readings, err := collector.snapshot()
+	if err != nil || len(readings) != 2 {
+		t.Fatalf("snapshot = %#v, %v; want two internal disks", readings, err)
+	}
+	hddCount := 0
+	for _, reading := range readings {
+		switch reading.ID {
+		case "internal_hdd":
+			if reading.Temp != 35 || reading.Unavailable || reading.Kind() != sensors.DiskKindHDD {
+				t.Errorf("internal HDD reading = %#v", reading)
+			}
+		case "internal_ssd":
+			if reading.Temp != 42 || reading.Unavailable || reading.Kind() != sensors.DiskKindSATASSD {
+				t.Errorf("unassigned SATA SSD reading = %#v", reading)
+			}
+		default:
+			t.Errorf("unexpected disk reading = %#v", reading)
+		}
+		if reading.Kind() == sensors.DiskKindHDD {
+			hddCount++
+		}
+	}
+	if hddCount != 1 || len(collector.state) != 2 {
+		t.Fatalf("HDD count = %d, disk state = %#v; want only internal disks", hddCount, collector.state)
+	}
+}
+
+func TestUSBEntriesSkipIdentityValidation(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	environment.write(t, environment.paths.disksINI, "[disk1]\ntransport=usb\ndevice=../invalid\n")
+	environment.write(t, environment.paths.devsINI, "[external]\ntransport=\" USB \"\ndevice=../invalid\n")
+	for _, source := range []struct {
+		name string
+		read func(string) ([]unraidDisk, error)
+		path string
+	}{
+		{name: "assigned", read: readDisks, path: environment.paths.disksINI},
+		{name: "unassigned", read: readUnassignedDisks, path: environment.paths.devsINI},
+	} {
+		t.Run(source.name, func(t *testing.T) {
+			disks, err := source.read(source.path)
+			if err != nil || len(disks) != 0 {
+				t.Fatalf("USB-only inventory = %#v, %v; want no disks or identity error", disks, err)
+			}
+		})
+	}
+}
+
 func TestReadInventorySkipsNoPhysicalDiskStatesAndKeepsDegradedDisk(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI, strings.TrimSpace(`

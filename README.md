@@ -165,8 +165,9 @@ entrée assignée. Le nom changeant `/dev/sdX` ne sert jamais d'identité.
 
 Une sonde est créée pour chaque disque. Lorsqu'au moins deux disques
 appartiennent à une même catégorie, un maximum `HDD`, `SATA SSD` ou `NVMe SSD`
-est également publié. La clé USB `flash` est exclue ; les disques rotationnels,
-y compris USB, appartiennent au groupe HDD.
+est également publié. Les disques USB, y compris la clé de démarrage `flash`,
+sont exclus de l'inventaire thermique avant toute vérification du cache SMART
+et tout envoi VSOCK.
 
 La température provient du champ `temp` d'Unraid. Le `mtime` du rapport
 `/var/local/emhttp/smart/<nom-logique>` pour un disque assigné, ou

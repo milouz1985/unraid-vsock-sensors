@@ -301,12 +301,14 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 		}
 		sections++
 		name := strings.Trim(section.Name(), "\"")
+		transport := diskTransport(section)
 		id := strings.TrimSpace(section.Key("id").String())
 		device := normalizeDiskDevice(section.Key("device").String())
 		status := strings.ToUpper(strings.TrimSpace(section.Key("status").String()))
 		// Unraid uses the _NP marker for states without a physical disk. Keep
 		// every other state so degraded, disabled and emulated disks remain.
-		if strings.Contains(status, "_NP") || strings.EqualFold(name, "flash") {
+		// External USB disks and the boot flash device are outside this inventory.
+		if strings.Contains(status, "_NP") || strings.EqualFold(name, "flash") || transport == "usb" {
 			continue
 		}
 		if id == "" {
@@ -318,7 +320,7 @@ func readDisks(disksINIPath string) ([]unraidDisk, error) {
 		if device == "" {
 			return nil, fmt.Errorf("active disk %q has no device", name)
 		}
-		disks = append(disks, diskFromSection(section, id, name, device, name))
+		disks = append(disks, diskFromSection(section, id, name, device, name, transport))
 	}
 	if sections == 0 {
 		return nil, errors.New("disk inventory contains no sections")
@@ -340,6 +342,10 @@ func readUnassignedDisks(devsINIPath string) ([]unraidDisk, error) {
 			continue
 		}
 		name := strings.Trim(section.Name(), "\"")
+		transport := diskTransport(section)
+		if transport == "usb" {
+			continue
+		}
 		id := strings.TrimSpace(section.Key("id").String())
 		device := normalizeDiskDevice(section.Key("device").String())
 		if device == "" {
@@ -351,15 +357,19 @@ func readUnassignedDisks(devsINIPath string) ([]unraidDisk, error) {
 		if len(id) > maxUnraidDiskIDSize {
 			return nil, fmt.Errorf("unassigned disk %q has a %d-byte stable ID; Unraid maximum is %d", name, len(id), maxUnraidDiskIDSize)
 		}
-		disks = append(disks, diskFromSection(section, id, name, device, device))
+		disks = append(disks, diskFromSection(section, id, name, device, device, transport))
 	}
 	return disks, nil
 }
 
-func diskFromSection(section *ini.Section, id, name, device, smartName string) unraidDisk {
+func diskTransport(section *ini.Section) string {
+	return strings.ToLower(strings.TrimSpace(section.Key("transport").String()))
+}
+
+func diskFromSection(section *ini.Section, id, name, device, smartName, transport string) unraidDisk {
 	return unraidDisk{
 		id: id, name: name, device: device, smartName: smartName,
-		transport:   strings.ToLower(strings.TrimSpace(section.Key("transport").String())),
+		transport:   transport,
 		temperature: strings.TrimSpace(section.Key("temp").String()),
 		rotational:  strings.TrimSpace(section.Key("rotational").String()) == "1",
 		spundown:    strings.TrimSpace(section.Key("spundown").String()) == "1",
