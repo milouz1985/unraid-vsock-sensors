@@ -374,12 +374,17 @@ git diff -- unraid-plugin/unraid-vsock-sensors.plg
 git add unraid-plugin/unraid-vsock-sensors.plg
 git commit -m "Publie le descripteur Unraid X.Y.Z"
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin main vX.Y.Z
+git push github vX.Y.Z
 ```
 
 `make release` exige une version finale `X.Y.Z`, lance `check`, `test-race` et
-les tests VM, construit les artefacts, puis actualise le `.plg` public. Cette
-commande ne crée ni commit, ni tag et ne pousse rien.
+les tests VM, construit les artefacts, puis actualise le fichier `.plg` suivi
+par Git. Cette commande ne crée ni commit, ni tag et ne pousse rien.
+
+Le remote `github` est le dépôt public distribuant le `.plg` depuis `main` ;
+`origin` est le dépôt Gitea de développement. Ne pas pousser `main` vers GitHub
+avant que les assets de la release soient disponibles : le nouveau `.plg`
+pointerait sinon vers un paquet absent.
 
 Le `.plg` peut être actualisé séparément après la construction :
 
@@ -387,10 +392,22 @@ Le `.plg` peut être actualisé séparément après la construction :
 make update-plg VERSION=X.Y.Z
 ```
 
-Publier dans la release GitHub :
+Créer et publier la GitHub Release `vX.Y.Z` depuis le tag déjà poussé, puis y
+téléverser :
 
 - `dist/unraid-vsock-sensors-X.Y.Z-x86_64-1.txz` ;
 - `dist/unraid-vsock-sensors-hwmon_X.Y.Z-1_amd64.deb`.
+
+Vérifier que les deux URLs publiques répondent, notamment celle inscrite dans
+le nouveau `.plg` pour le `.txz`, puis pousser `main` sur GitHub et synchroniser
+Gitea :
+
+```sh
+curl -fIL https://github.com/milouz1985/unraid-vsock-sensors/releases/download/vX.Y.Z/unraid-vsock-sensors-X.Y.Z-x86_64-1.txz
+curl -fIL https://github.com/milouz1985/unraid-vsock-sensors/releases/download/vX.Y.Z/unraid-vsock-sensors-hwmon_X.Y.Z-1_amd64.deb
+git push github main
+git push origin main vX.Y.Z
+```
 
 Une correction limitée au paquet Debian peut utiliser une nouvelle révision :
 
