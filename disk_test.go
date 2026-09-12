@@ -572,6 +572,101 @@ func TestDiskInventoryDeduplicatesAssignedAndUnassignedByStableID(t *testing.T) 
 	}
 }
 
+func TestDiskInventoryRejectsDuplicateIDsWithinSource(t *testing.T) {
+	for _, test := range []struct {
+		name, source string
+		assigned     bool
+		policy       diskPolicy
+		usb          bool
+	}{
+		{name: "assigned", source: "disks.ini", assigned: true},
+		{name: "unassigned", source: "devs.ini"},
+		{name: "assigned excluded by policy", source: "disks.ini", assigned: true, policy: diskPolicyExclude},
+		{name: "unassigned excluded by policy", source: "devs.ini", policy: diskPolicyExclude},
+		{name: "assigned USB excluded in Auto", source: "disks.ini", assigned: true, usb: true},
+		{name: "unassigned USB excluded in Auto", source: "devs.ini", usb: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			environment := newDiskTestEnvironment(t, "30")
+			inventory := "[disk1]\nid=serial\ndevice=sda\n[disk2]\nid=serial\ndevice=sdb\n"
+			path := environment.paths.devsINI
+			if test.assigned {
+				path = environment.paths.disksINI
+			}
+			environment.write(t, path, inventory)
+			if test.usb {
+				addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", true)
+				addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdb", true)
+			}
+			selector := &diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}
+			if test.policy != "" {
+				selector.policies = map[string]diskPolicy{"serial": test.policy}
+			}
+			disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI, selector)
+			want := "duplicate disk ID \"serial\" in " + test.source
+			if disks != nil || err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("inventory = %#v, %v; want %q", disks, err, want)
+			}
+		})
+	}
+}
+
+func TestDiskInventoryKeepsDistinctIDsWithinEachSource(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	environment.write(t, environment.paths.disksINI,
+		"[disk1]\nid=assigned1\ndevice=sda\n[disk2]\nid=assigned2\ndevice=sdb\n")
+	environment.write(t, environment.paths.devsINI,
+		"[dev1]\nid=unassigned1\ndevice=sdc\n[dev2]\nid=unassigned2\ndevice=sdd\n")
+	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI,
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
+	if err != nil || len(disks) != 4 {
+		t.Fatalf("inventory = %#v, %v; want four disks", disks, err)
+	}
+	byID := make(map[string]unraidDisk, len(disks))
+	for _, disk := range disks {
+		byID[disk.id] = disk
+	}
+	for id, wantName := range map[string]string{
+		"assigned1": "disk1", "assigned2": "disk2", "unassigned1": "dev1", "unassigned2": "dev2",
+	} {
+		if byID[id].name != wantName {
+			t.Errorf("disk %q = %#v; want name %q", id, byID[id], wantName)
+		}
+	}
+}
+
+func TestDuplicateDiskIDDoesNotPublishPartialSnapshot(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	validInventory := "[disk1]\nid=serial1\ndevice=sda\ntemp=35\n" +
+		"[disk2]\nid=serial2\ndevice=sdb\ntemp=36\n"
+	environment.write(t, environment.paths.disksINI, validInventory)
+	environment.report(t, "disk1", environment.now)
+	environment.report(t, "disk2", environment.now)
+	collector := environment.collector()
+	collector.refresh()
+	if readings, err := collector.snapshot(); err != nil || len(readings) != 2 {
+		t.Fatalf("initial snapshot = %#v, %v", readings, err)
+	}
+
+	environment.write(t, environment.paths.disksINI,
+		"[disk1]\nid=serial1\ndevice=sda\ntemp=35\n"+
+			"[disk2]\nid=serial1\ndevice=sdb\ntemp=36\n")
+	collector.refresh()
+	response := collectorSnapshot(collector, newTestHBACollector(time.Minute, hbaModeDisabled))
+	if response.Disks != nil || !strings.Contains(response.Error, "duplicate disk ID \"serial1\" in disks.ini") {
+		t.Fatalf("published snapshot = %#v; want error and no partial disks", response)
+	}
+	if len(collector.state) != 2 || !collector.state["serial1"].hasValid || !collector.state["serial2"].hasValid {
+		t.Fatalf("previous disk state was lost: %#v", collector.state)
+	}
+
+	environment.write(t, environment.paths.disksINI, validInventory)
+	collector.refresh()
+	if readings, err := collector.snapshot(); err != nil || len(readings) != 2 {
+		t.Fatalf("recovered snapshot = %#v, %v", readings, err)
+	}
+}
+
 func TestDiskInventoryExcludesUSBFromBothSourcesBeforeSMART(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", false)

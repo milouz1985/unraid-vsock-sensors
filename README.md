@@ -161,7 +161,10 @@ doit afficher des périphériques tels que `unraid_disk1`,
 `devs.ini` rejoignent le même snapshot ; ce fichier est fourni nativement par
 Unraid et ne nécessite pas le plugin Unassigned Devices. Une unité présente
 dans les deux fichiers est dédupliquée par son ID stable, avec priorité à son
-entrée assignée. Le nom changeant `/dev/sdX` ne sert jamais d'identité.
+entrée assignée. Deux entrées actives avec le même ID dans un même fichier
+invalident l'inventaire disque : aucun inventaire partiel n'est publié. Le nom
+changeant `/dev/sdX` ne sert jamais d'identité. L'emhttpd analysé tronque les
+IDs à 79 octets ; cette limite observée n'est pas une API garantie d'Unraid.
 
 Une sonde est créée pour chaque disque inclus. Lorsqu'au moins deux disques
 appartiennent à une même catégorie, un maximum `HDD`, `SATA SSD` ou `NVMe SSD`

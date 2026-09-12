@@ -305,13 +305,13 @@ func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSe
 	}
 
 	merged := make([]diskInventoryEntry, 0, len(assigned)+len(unassigned))
-	seen := make(map[string]struct{}, len(assigned)+len(unassigned))
+	seenMergedIDs := make(map[string]struct{}, len(assigned)+len(unassigned))
 	for _, inventory := range [][]diskInventoryEntry{assigned, unassigned} {
 		for _, entry := range inventory {
-			if _, duplicate := seen[entry.disk.id]; duplicate && entry.disk.id != "" {
+			if _, duplicate := seenMergedIDs[entry.disk.id]; duplicate && entry.disk.id != "" {
 				continue
 			}
-			seen[entry.disk.id] = struct{}{}
+			seenMergedIDs[entry.disk.id] = struct{}{}
 			merged = append(merged, entry)
 		}
 	}
@@ -351,6 +351,7 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, requireVal
 	}
 
 	var entries []diskInventoryEntry
+	seenIDs := make(map[string]struct{})
 	sections := 0
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
@@ -366,6 +367,12 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, requireVal
 		// every other state so degraded, disabled and emulated disks remain.
 		if strings.Contains(status, "_NP") {
 			continue
+		}
+		if id != "" {
+			if _, duplicate := seenIDs[id]; duplicate {
+				return nil, fmt.Errorf("duplicate disk ID %q in disks.ini", id)
+			}
+			seenIDs[id] = struct{}{}
 		}
 		bus, policy, included := selector.evaluate(id, name, device)
 		entry := diskInventoryEntry{
@@ -410,6 +417,7 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs,
 	}
 
 	var entries []diskInventoryEntry
+	seenIDs := make(map[string]struct{})
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
@@ -417,10 +425,16 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs,
 		name := strings.Trim(section.Name(), "\"")
 		transport := diskTransport(section)
 		id := strings.TrimSpace(section.Key("id").String())
+		device := normalizeDiskDevice(section.Key("device").String())
+		if id != "" && device != "" {
+			if _, duplicate := seenIDs[id]; duplicate {
+				return nil, fmt.Errorf("duplicate disk ID %q in devs.ini", id)
+			}
+			seenIDs[id] = struct{}{}
+		}
 		if _, flash := flashIDs[id]; flash {
 			continue
 		}
-		device := normalizeDiskDevice(section.Key("device").String())
 		if _, flash := flashDevices[device]; flash {
 			continue
 		}
