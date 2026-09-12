@@ -64,7 +64,6 @@ type diskCollector struct {
 	err       error
 	updatedAt time.Time
 	state     diskStateTracker
-	busCache  map[string]diskBus
 	policyLog stickyErrorLog
 
 	pollLogInitialized bool
@@ -113,7 +112,6 @@ func newDiskCollector(paths diskDataPaths) *diskCollector {
 		paths: paths, watchdog: diskWatchdogInterval, now: time.Now,
 		err:       errors.New("disk temperatures have not been collected yet"),
 		state:     make(diskStateTracker),
-		busCache:  make(map[string]diskBus),
 		policyLog: stickyErrorLog{context: "disk policies"},
 	}
 }
@@ -160,7 +158,7 @@ func (c *diskCollector) refresh() {
 	}
 	policies, policyErr := readDiskPolicies(policyFile)
 	c.policyLog.update(policyErr)
-	selector := &diskSelector{sysBlockRoot: c.paths.sysBlockRoot, policies: policies, busCache: c.busCache}
+	selector := &diskSelector{sysBlockRoot: c.paths.sysBlockRoot, policies: policies}
 	disks, err := readDiskInventory(c.paths.disksINI, c.paths.devsINI, selector)
 	var readings []sensors.Disk
 	if err != nil {

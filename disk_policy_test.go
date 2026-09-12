@@ -144,21 +144,43 @@ func TestDiskCollectorAppliesPolicyChangesBeforeSMART(t *testing.T) {
 	}
 }
 
-func TestDiskBusCacheTracksStableIDAndCurrentDevice(t *testing.T) {
-	environment := newDiskTestEnvironment(t, "30")
-	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", true)
-	selector := &diskSelector{sysBlockRoot: environment.paths.sysBlockRoot, busCache: make(map[string]diskBus)}
-	if bus := selector.detectBus("serial", "sda"); bus != diskBusUSB {
-		t.Fatalf("first bus = %s, want USB", bus)
-	}
-	if err := os.Remove(filepath.Join(environment.paths.sysBlockRoot, "sda", "device")); err != nil {
-		t.Fatal(err)
-	}
-	if bus := selector.detectBus("serial", "sda"); bus != diskBusUSB {
-		t.Fatalf("cached bus = %s, want USB", bus)
-	}
-	if bus := selector.detectBus("serial", "sdb"); bus != diskBusUnknown {
-		t.Fatalf("new device bus = %s, want unknown", bus)
+func TestDiskBusFollowsSysfsTopologyWithSameIDAndDevice(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		initialUSB bool
+	}{
+		{name: "USB to SATA", initialUSB: true},
+		{name: "SATA to USB", initialUSB: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			environment := newDiskTestEnvironment(t, "30")
+			addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", test.initialUSB)
+			environment.write(t, environment.paths.disksINI,
+				"[disk1]\nid=stable_serial\ndevice=sda\ntransport=ata\ntemp=35\n")
+			environment.report(t, "disk1", environment.now)
+			collector := environment.collector()
+			check := func(wantIncluded bool) {
+				t.Helper()
+				collector.refresh()
+				readings, err := collector.snapshot()
+				wantCount := 0
+				if wantIncluded {
+					wantCount = 1
+				}
+				if err != nil || len(readings) != wantCount || len(collector.state) != wantCount {
+					t.Fatalf("snapshot = %#v, %v; state = %#v; want %d disks", readings, err, collector.state, wantCount)
+				}
+				if wantIncluded && (readings[0].ID != "stable_serial" || readings[0].Temp != 35 || readings[0].Unavailable) {
+					t.Fatalf("included disk = %#v", readings[0])
+				}
+			}
+			check(!test.initialUSB)
+			if err := os.Remove(filepath.Join(environment.paths.sysBlockRoot, "sda", "device")); err != nil {
+				t.Fatal(err)
+			}
+			addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", !test.initialUSB)
+			check(test.initialUSB)
+		})
 	}
 }
 

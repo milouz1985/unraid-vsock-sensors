@@ -35,7 +35,6 @@ const (
 type diskSelector struct {
 	sysBlockRoot string
 	policies     map[string]diskPolicy
-	busCache     map[string]diskBus
 }
 
 func (s *diskSelector) evaluate(id, name, device string) (diskBus, diskPolicy, bool) {
@@ -43,7 +42,7 @@ func (s *diskSelector) evaluate(id, name, device string) (diskBus, diskPolicy, b
 	if policy == "" {
 		policy = diskPolicyAuto
 	}
-	bus := s.detectBus(id, device)
+	bus := s.detectBus(device)
 	if strings.EqualFold(name, "flash") {
 		return bus, policy, false
 	}
@@ -57,11 +56,7 @@ func (s *diskSelector) evaluate(id, name, device string) (diskBus, diskPolicy, b
 	}
 }
 
-func (s *diskSelector) detectBus(id, device string) diskBus {
-	key := id + "\x00" + device
-	if bus, ok := s.busCache[key]; ok {
-		return bus
-	}
+func (s *diskSelector) detectBus(device string) diskBus {
 	root := s.sysBlockRoot
 	if root == "" {
 		root = defaultSysBlockRoot
@@ -73,9 +68,6 @@ func (s *diskSelector) detectBus(id, device string) diskBus {
 	bus := diskBusNonUSB
 	if usb {
 		bus = diskBusUSB
-	}
-	if s.busCache != nil {
-		s.busCache[key] = bus
 	}
 	return bus
 }
