@@ -5,6 +5,7 @@ Icon="icon.png"
 <?php
 $plugin = 'unraid-vsock-sensors';
 $cfg = parse_plugin_cfg($plugin);
+
 $port = htmlspecialchars($cfg['PORT'] ?? '990', ENT_QUOTES);
 $hbaMode = $cfg['HBA_MODE'] ?? 'enabled';
 $hbaBackend = $cfg['HBA_BACKEND'] ?? 'mpt3ctl';
@@ -14,15 +15,20 @@ $statusOutput = [];
 exec('/etc/rc.d/rc.unraid-vsock-sensors status 2>/dev/null', $statusOutput, $statusCode);
 $running = $statusCode === 0;
 $status = $running ? implode(' ', $statusOutput) : 'stopped';
+
 $version = trim((string)shell_exec('/usr/local/sbin/unraid-vsock-sensors version 2>/dev/null'));
 if ($version === '') {
     $version = 'unavailable';
 }
+
 $unraidState = @parse_ini_file('/var/local/emhttp/var.ini');
 $pollRaw = is_array($unraidState) ? ($unraidState['poll_attributes'] ?? null) : null;
 $pollValid = is_string($pollRaw) && preg_match('/^\d+$/', $pollRaw) === 1;
-$pollAttributes = $pollValid ? filter_var($pollRaw, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]) : false;
+$pollAttributes = $pollValid
+    ? filter_var($pollRaw, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]])
+    : false;
 $pollValid = $pollValid && $pollAttributes !== false;
+
 if (!$pollValid) {
     $pollDisplay = 'Unavailable (daemon freshness fallback: 30 seconds)';
 } elseif ($pollAttributes === 0) {
@@ -30,12 +36,21 @@ if (!$pollValid) {
 } else {
     $pollDisplay = $pollAttributes . ($pollAttributes === 1 ? ' second' : ' seconds');
 }
+
 $diskOutput = [];
 exec('/usr/local/sbin/unraid-vsock-sensors disks list 2>/dev/null', $diskOutput, $diskStatus);
-$diskRows = $diskStatus === 0 ? json_decode(implode("\n", $diskOutput), true) : null;
+$diskRows = $diskStatus === 0
+    ? json_decode(implode("\n", $diskOutput), true)
+    : null;
+
 $diskPoliciesInvalid = false;
 if ($diskStatus !== 0 && is_executable('/usr/local/sbin/unraid-vsock-sensors')) {
-    exec('/usr/local/sbin/unraid-vsock-sensors disks validate 2>/dev/null', $policyOutput, $policyStatus);
+    $policyOutput = [];
+    exec(
+        '/usr/local/sbin/unraid-vsock-sensors disks validate 2>/dev/null',
+        $policyOutput,
+        $policyStatus
+    );
     $diskPoliciesInvalid = $policyStatus !== 0;
 }
 ?>
@@ -46,6 +61,7 @@ if ($diskStatus !== 0 && is_executable('/usr/local/sbin/unraid-vsock-sensors')) 
     gap: 8px;
     width: auto !important;
 }
+
 .uvss-action {
     display: inline-block !important;
     width: 90px !important;
@@ -80,19 +96,29 @@ _(Actions)_:
 _(VSOCK port)_:
 : <input type="number" name="PORT" value="<?=$port?>" min="1" max="4294967294" required>
 
-> The Proxmox receiver and the Unraid publisher must use the same port.
+<blockquote class="inline_help">
+The Proxmox receiver and the Unraid publisher must use the same VSOCK port.
+</blockquote>
 
 _(Unraid SMART polling interval)_:
 : <?=htmlspecialchars($pollDisplay, ENT_QUOTES)?>
 
+<blockquote class="inline_help">
+This read-only value comes from Unraid Disk Settings. Unraid remains the sole owner of hardware SMART polling. The daemon uses it only to determine how long cached SMART temperatures remain fresh.
+</blockquote>
+
 <?php if (!$pollValid): ?>
-> The Unraid `poll_attributes` value is missing or invalid. The daemon uses a 30-second fallback only to assess cache freshness and does not modify Unraid settings.
+<p class="red">
+The Unraid <code>poll_attributes</code> value is missing or invalid. The daemon uses a 30-second fallback only to assess cache freshness and does not modify Unraid settings.
+</p>
 <?php elseif ($pollAttributes === 0): ?>
-> Automatic SMART polling is disabled in Unraid. Disk temperatures cannot remain fresh automatically.
+<p class="red">
+Automatic SMART polling is disabled in Unraid. Disk temperatures cannot remain fresh automatically.
+</p>
 <?php elseif ($pollAttributes > 60): ?>
-> Unraid polls SMART data every <?=$pollAttributes?> seconds. Fan control may therefore react with several minutes of delay. Reduce the SMART polling interval in Unraid Disk Settings if faster reaction is required.
-<?php else: ?>
-> This read-only value comes from Unraid Disk Settings. Unraid remains the sole owner of hardware SMART polling.
+<p class="red">
+Unraid polls SMART data every <?=$pollAttributes?> seconds. Fan control may therefore react with several minutes of delay. Reduce the SMART polling interval in Unraid Disk Settings if faster reaction is required.
+</p>
 <?php endif; ?>
 
 _(HBA monitoring)_:
@@ -101,7 +127,9 @@ _(HBA monitoring)_:
 <option value="disabled" <?=$hbaMode === 'disabled' ? 'selected' : ''?>>Disabled</option>
 </select>
 
-> Enabled uses the backend selected below. Disabled explicitly clears the HBA inventory when the host agent restarts.
+<blockquote class="inline_help">
+Enabled collects HBA temperatures using the backend selected below. Disabled explicitly clears the HBA inventory when the host agent restarts.
+</blockquote>
 
 _(HBA backend)_:
 : <select id="hba-backend" name="HBA_BACKEND">
@@ -109,16 +137,19 @@ _(HBA backend)_:
 <option value="storcli" <?=$hbaBackend === 'storcli' ? 'selected' : ''?>>StorCLI</option>
 </select>
 
-> The native backend requires an mpt3sas controller and /dev/mpt3ctl. The StorCLI backend requires the StorCLI package or the [storcli64 Unraid plugin](https://forums.unraid.net/topic/192112-plugin-storcli64/) to be installed.
-
-> The mpt3ctl backend is experimental. It follows the upstream Linux mpt3sas implementation and is used in production by the project author, but has not yet been validated across a broad range of controllers and firmware versions.
+<blockquote class="inline_help">
+The native backend requires a controller handled by <code>mpt3sas</code> and access to <code>/dev/mpt3ctl</code>. It does not require an external utility but is experimental and has not yet been validated across a broad range of controllers and firmware versions.<br><br>
+The StorCLI backend requires StorCLI to be installed, for example through the <a href="https://forums.unraid.net/topic/192112-plugin-storcli64/" target="_blank" rel="noopener noreferrer">storcli64 Unraid plugin</a>.
+</blockquote>
 
 _(HBA refresh interval)_:
 : <select id="hba-interval" name="HBA_INTERVAL" data-current="<?=htmlspecialchars($hbaInterval, ENT_QUOTES)?>">
 </select>
 <p id="hba-interval-warning" class="red" hidden></p>
 
-> Default uses 15 seconds with native mpt3ctl and 30 seconds with StorCLI because the StorCLI collection is more expensive. Each new HBA state is pushed to Proxmox.
+<blockquote class="inline_help">
+Default uses 15 seconds with native <code>mpt3ctl</code> and 30 seconds with StorCLI. StorCLI uses a longer default because its command-based collection is more expensive than the native MPT3 ioctl path. Each new HBA state is pushed to Proxmox.
+</blockquote>
 
 &nbsp;
 
@@ -127,41 +158,89 @@ _(HBA refresh interval)_:
 
 ### Disk policies
 
-<p>Auto excludes disks physically connected through USB. Include and Exclude override this choice. If the physical bus cannot be determined, Auto includes the disk for thermal safety. The Unraid boot flash device is always excluded.</p>
+<p>
+Auto excludes disks physically connected through USB. Include and Exclude override this choice. If the physical bus cannot be determined, Auto includes the disk for thermal safety. The Unraid boot flash device is always excluded.
+</p>
 
 <?php if ($diskPoliciesInvalid): ?>
-<p class="red">Disk policies are invalid. The daemon ignores all overrides and continues in Auto mode for every disk.</p>
+
+<p class="red">
+Disk policies are invalid. The daemon ignores all overrides and continues in Auto mode for every disk.
+</p>
+
 <form id="uvss-reset-disk-policies" method="POST" action="/update.php" target="progressFrame">
 <input type="hidden" name="#command" value="/plugins/unraid-vsock-sensors/service.sh">
 <input type="hidden" name="#arg[1]" value="reset-disk-policies">
 <button type="submit">Reset disk policies</button>
 </form>
+
 <?php elseif (!is_array($diskRows)): ?>
-<p>Disk inventory unavailable. Check the daemon configuration and Unraid inventory files.</p>
+
+<p class="red">
+Disk inventory unavailable. Check the daemon configuration and Unraid inventory files.
+</p>
+
 <?php elseif (count($diskRows) === 0): ?>
+
 <p>No disks are currently known.</p>
+
 <?php else: ?>
+
 <table>
-<thead><tr><th>Name</th><th>Unraid ID</th><th>Device</th><th>emhttpd transport</th><th>Physical bus</th><th>Policy</th><th>Effective</th></tr></thead>
+<thead>
+<tr>
+<th>Name</th>
+<th>Unraid ID</th>
+<th>Device</th>
+<th>emhttpd transport</th>
+<th>Physical bus</th>
+<th>Policy</th>
+<th>Effective</th>
+</tr>
+</thead>
 <tbody>
+
 <?php foreach ($diskRows as $diskRow):
     $diskID = (string)($diskRow['id'] ?? '');
     $diskName = (string)($diskRow['name'] ?? '');
     $diskPolicy = (string)($diskRow['policy'] ?? 'auto');
     $isFlash = strcasecmp($diskName, 'flash') === 0;
 ?>
+
 <tr>
 <td><?=htmlspecialchars($diskName, ENT_QUOTES, 'UTF-8')?></td>
 <td><?=htmlspecialchars($diskID, ENT_QUOTES, 'UTF-8')?></td>
-<td><?=htmlspecialchars(($diskRow['device'] ?? '') === '' ? '—' : '/dev/' . $diskRow['device'], ENT_QUOTES, 'UTF-8')?></td>
-<td><?=htmlspecialchars(($diskRow['transport'] ?? '') === '' ? '—' : $diskRow['transport'], ENT_QUOTES, 'UTF-8')?></td>
-<td><?=htmlspecialchars((string)($diskRow['bus'] ?? 'unknown'), ENT_QUOTES, 'UTF-8')?></td>
+<td><?=htmlspecialchars(
+    ($diskRow['device'] ?? '') === ''
+        ? '—'
+        : '/dev/' . $diskRow['device'],
+    ENT_QUOTES,
+    'UTF-8'
+)?></td>
+<td><?=htmlspecialchars(
+    ($diskRow['transport'] ?? '') === ''
+        ? '—'
+        : $diskRow['transport'],
+    ENT_QUOTES,
+    'UTF-8'
+)?></td>
+<td><?=htmlspecialchars(
+    (string)($diskRow['bus'] ?? 'unknown'),
+    ENT_QUOTES,
+    'UTF-8'
+)?></td>
 <td>
+
 <?php if ($diskID !== '' && !$isFlash): ?>
+
 <form class="uvss-disk-policy-form" method="POST" action="/update.php" target="progressFrame">
 <input type="hidden" name="#command" value="/plugins/unraid-vsock-sensors/service.sh">
 <input type="hidden" name="#arg[1]" value="set-disk-policy">
-<input type="hidden" name="#arg[2]" value="<?=htmlspecialchars(base64_encode($diskID), ENT_QUOTES, 'UTF-8')?>">
+<input
+    type="hidden"
+    name="#arg[2]"
+    value="<?=htmlspecialchars(base64_encode($diskID), ENT_QUOTES, 'UTF-8')?>"
+>
 <select name="#arg[3]">
 <option value="auto" <?=$diskPolicy === 'auto' ? 'selected' : ''?>>Auto</option>
 <option value="include" <?=$diskPolicy === 'include' ? 'selected' : ''?>>Include</option>
@@ -169,13 +248,22 @@ _(HBA refresh interval)_:
 </select>
 <button type="submit">_(Apply)_</button>
 </form>
-<?php else: ?><?=htmlspecialchars(ucfirst($diskPolicy), ENT_QUOTES, 'UTF-8')?><?php endif; ?>
+
+<?php else: ?>
+
+<?=htmlspecialchars(ucfirst($diskPolicy), ENT_QUOTES, 'UTF-8')?>
+
+<?php endif; ?>
+
 </td>
 <td><?=$diskRow['included'] ? 'Included' : 'Excluded'?></td>
 </tr>
+
 <?php endforeach; ?>
+
 </tbody>
 </table>
+
 <?php endif; ?>
 
 <script>
@@ -212,7 +300,12 @@ _(HBA refresh interval)_:
         const values = choices[backend.value];
 
         interval.replaceChildren();
-        interval.add(new Option('Default (' + defaults[backend.value] + ')', ''));
+        interval.add(
+            new Option(
+                'Default (' + defaults[backend.value] + ')',
+                ''
+            )
+        );
 
         for (const [value, label] of values) {
             interval.add(new Option(label, value));
@@ -228,8 +321,11 @@ _(HBA refresh interval)_:
 
         if (!supported && warnUnsupported) {
             intervalWarning.textContent =
-                previous + ' is not available with ' + backend.value +
-                '. Default (' + defaults[backend.value] +
+                previous +
+                ' is not available with ' +
+                backend.value +
+                '. Default (' +
+                defaults[backend.value] +
                 ') is selected; apply to save this change.';
         }
 
@@ -264,14 +360,23 @@ _(HBA refresh interval)_:
     refreshIntervals(interval.dataset.current, true);
 
     const progressFrame = document.getElementById('progressFrame');
+
     if (progressFrame) {
-        document.querySelectorAll('#uvss-reset-disk-policies, .uvss-disk-policy-form').forEach(function (form) {
-            form.addEventListener('submit', function () {
-                progressFrame.addEventListener('load', function () {
-                    window.location.reload();
-                }, {once: true});
+        document
+            .querySelectorAll(
+                '#uvss-reset-disk-policies, .uvss-disk-policy-form'
+            )
+            .forEach(function (form) {
+                form.addEventListener('submit', function () {
+                    progressFrame.addEventListener(
+                        'load',
+                        function () {
+                            window.location.reload();
+                        },
+                        {once: true}
+                    );
+                });
             });
-        });
     }
 }());
 </script>
