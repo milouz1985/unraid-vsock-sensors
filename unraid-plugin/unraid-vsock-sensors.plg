@@ -6,8 +6,8 @@
 <!ENTITY pluginURL "https://raw.githubusercontent.com/milouz1985/unraid-vsock-sensors/main/unraid-plugin/unraid-vsock-sensors.plg">
 <!ENTITY package "unraid-vsock-sensors-2.0.0-x86_64-1.txz">
 <!ENTITY packageURL "https://github.com/milouz1985/unraid-vsock-sensors/releases/download/v2.0.0/unraid-vsock-sensors-2.0.0-x86_64-1.txz">
-<!ENTITY packageMD5 "ccbe77e90f3253a6ba886d6e0b1c8e6e">
-<!ENTITY packageSHA256 "0fed11355bb8640254ffd0e6ce3ccfd6b1dda7c35af42fe2b2de97dbc748e004">
+<!ENTITY packageMD5 "298fcb63198b8e2531207b45890be1c5">
+<!ENTITY packageSHA256 "26d762563d80b56ca5154ce2119e00890786f75e57bd20a452094ec8e601654c">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
 ]>
 
@@ -21,19 +21,8 @@ AF_VSOCK to the Proxmox host, where they are exposed as native hwmon sensors.
 <CHANGES>
 ### &version;
 
-- Reworked the VSOCK transport around a persistent guest-to-host snapshot stream with regular heartbeats and automatic reconnection.
-- Replaced aggregated storage and HBA hwmon devices with one stable hwmon device per disk or controller, preserving sensor identity across topology changes.
-- Reworked disk collection to consume Unraid's native runtime state and SMART cache without invoking smartctl or waking sleeping disks.
-- Added native support for unassigned disks from emhttpd devs.ini, with assigned disks taking precedence when the same stable ID appears in both sources.
-- Added SMART cache freshness tracking based on Unraid poll_attributes events, watchdog refreshes, spindown handling and per-disk recovery.
-- Added physical USB detection through sysfs and per-disk Auto, Include and Exclude policies using stable Unraid IDs.
-- Added validation for duplicate or invalid disk identities and support for the 79-byte IDs observed in emhttpd.
-- Improved HBA collection robustness, including backend-specific refresh defaults, blocked ioctl handling and stricter MPT3 parsing.
-- Removed arbitrary physical temperature limits so valid signed HBA and hwmon values are forwarded unchanged.
-- Improved hwmon topology persistence, reconfiguration, ESTALE recovery and thermal fail-safe behaviour.
-- Added comprehensive Proxmox VM integration tests covering the real virt-temp module, hwmon, SMART cache scenarios, DKMS, systemd and Debian package lifecycle.
-- Hardened the Unraid service, packaging, versioning, release workflow and configuration validation.
-- Expanded disk policy, recovery, fuzzing and regression test coverage throughout the project.
+- Package the VSOCK sensor publisher as an Unraid plugin.
+- Add service status, version, start, stop, restart, port and HBA settings.
 </CHANGES>
 
 <FILE Name="&cfgdir;/&package;" Run="/sbin/upgradepkg --install-new --reinstall">
