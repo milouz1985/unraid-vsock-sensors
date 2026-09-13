@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "unraid-vsock-sensors">
 <!ENTITY author "François HOYEZ">
-<!ENTITY version "1.6.0-dev.93.g014daa42ac93">
+<!ENTITY version "2.0.0">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/milouz1985/unraid-vsock-sensors/main/unraid-plugin/unraid-vsock-sensors.plg">
-<!ENTITY package "unraid-vsock-sensors-1.6.0_dev.93.g014daa42ac93-x86_64-1.txz">
-<!ENTITY packageURL "https://github.com/milouz1985/unraid-vsock-sensors/releases/download/v1.6.0-dev.93.g014daa42ac93/unraid-vsock-sensors-1.6.0_dev.93.g014daa42ac93-x86_64-1.txz">
-<!ENTITY packageMD5 "10db4344e626bbd2cc0c364a0466d427">
-<!ENTITY packageSHA256 "5df3155b6a64bdeb9e5b5c04950ccf1bf8d40dcaaea7cdb7dbbd79fac500f2ea">
+<!ENTITY package "unraid-vsock-sensors-2.0.0-x86_64-1.txz">
+<!ENTITY packageURL "https://github.com/milouz1985/unraid-vsock-sensors/releases/download/v2.0.0/unraid-vsock-sensors-2.0.0-x86_64-1.txz">
+<!ENTITY packageMD5 "ccbe77e90f3253a6ba886d6e0b1c8e6e">
+<!ENTITY packageSHA256 "0fed11355bb8640254ffd0e6ce3ccfd6b1dda7c35af42fe2b2de97dbc748e004">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
 ]>
 
@@ -15,14 +15,25 @@
         pluginURL="&pluginURL;" launch="Settings/UnraidVsockSensors"
         min="6.12.0" icon="icon.png">
 <DESCRIPTION>
-Pushes Unraid disk and HBA temperatures over AF_VSOCK to the Proxmox host and
-the CoolerControl plugin without querying sleeping disks.
+Pushes disk temperatures from Unraid's SMART cache and HBA temperatures over
+AF_VSOCK to the Proxmox host, where they are exposed as native hwmon sensors.
 </DESCRIPTION>
 <CHANGES>
 ### &version;
 
-- Package the VSOCK sensor publisher as an Unraid plugin.
-- Add service status, version, start, stop, restart, port and HBA cache settings.
+- Reworked the VSOCK transport around a persistent guest-to-host snapshot stream with regular heartbeats and automatic reconnection.
+- Replaced aggregated storage and HBA hwmon devices with one stable hwmon device per disk or controller, preserving sensor identity across topology changes.
+- Reworked disk collection to consume Unraid's native runtime state and SMART cache without invoking smartctl or waking sleeping disks.
+- Added native support for unassigned disks from emhttpd devs.ini, with assigned disks taking precedence when the same stable ID appears in both sources.
+- Added SMART cache freshness tracking based on Unraid poll_attributes events, watchdog refreshes, spindown handling and per-disk recovery.
+- Added physical USB detection through sysfs and per-disk Auto, Include and Exclude policies using stable Unraid IDs.
+- Added validation for duplicate or invalid disk identities and support for the 79-byte IDs observed in emhttpd.
+- Improved HBA collection robustness, including backend-specific refresh defaults, blocked ioctl handling and stricter MPT3 parsing.
+- Removed arbitrary physical temperature limits so valid signed HBA and hwmon values are forwarded unchanged.
+- Improved hwmon topology persistence, reconfiguration, ESTALE recovery and thermal fail-safe behaviour.
+- Added comprehensive Proxmox VM integration tests covering the real virt-temp module, hwmon, SMART cache scenarios, DKMS, systemd and Debian package lifecycle.
+- Hardened the Unraid service, packaging, versioning, release workflow and configuration validation.
+- Expanded disk policy, recovery, fuzzing and regression test coverage throughout the project.
 </CHANGES>
 
 <FILE Name="&cfgdir;/&package;" Run="/sbin/upgradepkg --install-new --reinstall">
@@ -37,7 +48,7 @@ set -e
 name="unraid-vsock-sensors"
 cfgdir="/boot/config/plugins/$name"
 mkdir -p "$cfgdir"
-find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-1.6.0_dev.93.g014daa42ac93-x86_64-1.txz" -delete 2>/dev/null || true
+find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-2.0.0-x86_64-1.txz" -delete 2>/dev/null || true
 if [[ ! -f "$cfgdir/$name.cfg" ]]; then
     install -m 0644 "/usr/local/emhttp/plugins/$name/default.cfg" "$cfgdir/$name.cfg"
 fi
