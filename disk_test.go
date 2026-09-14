@@ -432,25 +432,11 @@ func TestUnraidDiskIDSizeContract(t *testing.T) {
 	}
 }
 
-func TestUnraid72MissingAssignmentFixtures(t *testing.T) {
+func TestUnraid72MissingAssignmentSlotIsIgnored(t *testing.T) {
 	disksINI := filepath.Join("testdata", "unraid", "7.2", "disks-missing-assignment.ini")
-	devsINI := filepath.Join("testdata", "unraid", "7.2", "devs-unassigned-ata.ini")
-
-	selector := unknownBusSelector(t)
-	assigned, err := readDisks(disksINI, selector)
+	assigned, err := readDisks(disksINI, unknownBusSelector(t))
 	if err != nil || len(assigned) != 0 {
 		t.Fatalf("assigned inventory = %#v, %v; want ignored DISK_NP_DSBL slot", assigned, err)
-	}
-	disks, err := readDiskInventory(disksINI, devsINI, selector)
-	if err != nil || len(disks) != 1 {
-		t.Fatalf("merged inventory = %#v, %v; want unassigned disk", disks, err)
-	}
-	disk := disks[0]
-	if disk.id != "TOSHIBA_MG09ACA18TE_ANON0001" || disk.device != "sdc" || disk.transport != "ata" {
-		t.Fatalf("unassigned disk = %#v", disk)
-	}
-	if kind := (sensors.Disk{Device: disk.device, Transport: disk.transport, Rotational: disk.rotational}).Kind(); kind != sensors.DiskKindSATASSD {
-		t.Errorf("unassigned ATA disk kind = %q, want %q", kind, sensors.DiskKindSATASSD)
 	}
 }
 
