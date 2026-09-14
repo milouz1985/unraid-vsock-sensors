@@ -30,7 +30,7 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	env.report(t, "disk1", env.now)
 	callLog := filepath.Join(t.TempDir(), "calls")
 	env.paths.sdspin = fallbackTestCommand(t, "printf 'sdspin %s %s\\n' \"$1\" \"$2\" >> '"+callLog+"'\nexit 0")
-	env.paths.smartctlType = fallbackTestCommand(t, "printf 'smart %s %s\\n' \"$1\" \"$2\" >> '"+callLog+"'\nprintf '{\"temperature\":{\"current\":42}}\\n'")
+	env.paths.smartctlType = fallbackTestCommand(t, "printf 'smart %s %s\\n' \"$1\" \"$2\" >> '"+callLog+"'\nif [ \"$(grep -c '^smart ' '"+callLog+"')\" -gt 1 ]; then exit 1; fi\nprintf '{\"temperature\":{\"current\":42}}\\n'")
 	collector := env.collector()
 	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.temp != 35 || disk.unavailable {
@@ -62,12 +62,34 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	if string(calls) != "sdspin /dev/sda status\nsmart disk1 -n standby -A -j\n" {
 		t.Fatalf("fallback calls = %q", calls)
 	}
+	firstCalls := string(calls)
+	firstFallbackAt := env.now
+	for _, elapsed := range []time.Duration{5 * time.Second, 29 * time.Second} {
+		env.now = firstFallbackAt.Add(elapsed)
+		collector.refresh()
+		if disk := requireSingleDisk(t, collector); disk.temp != 42 || disk.unavailable {
+			t.Fatalf("retained fallback reading at +%s = %#v", elapsed, disk)
+		}
+		unchanged, _ := os.ReadFile(callLog)
+		if string(unchanged) != firstCalls {
+			t.Fatalf("SMART was polled again at +%s: %q", elapsed, unchanged)
+		}
+	}
+	env.now = env.now.Add(time.Second)
+	collector.refresh()
+	calls, err = os.ReadFile(callLog)
+	if err != nil || string(calls) != firstCalls+firstCalls {
+		t.Fatalf("second fallback poll at +30s = %q, %v", calls, err)
+	}
+	if disk := requireSingleDisk(t, collector); !disk.unavailable || disk.temp != 0 {
+		t.Fatalf("failed second fallback poll reused the first temperature: %#v", disk)
+	}
 	env.now = env.now.Add(time.Second)
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\ntemp=39\n")
 	env.report(t, "disk1", env.now)
 	collector.noteEmhttpPoll()
 	collector.refresh()
-	if last := collector.lastEmhttpPoll.Load(); collector.fallbackActive || last == nil || !last.Equal(env.now) {
+	if last := collector.lastEmhttpPoll.Load(); collector.fallbackActive || !collector.lastFallbackAttempt.IsZero() || last == nil || !last.Equal(env.now) {
 		t.Fatal("fresh emhttpd event did not restore the native source")
 	}
 	if disk := requireSingleDisk(t, collector); disk.temp != 39 || disk.unavailable {
@@ -76,6 +98,12 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	callsAfter, _ := os.ReadFile(callLog)
 	if string(callsAfter) != string(calls) {
 		t.Fatal("fallback command ran after recovery")
+	}
+	env.now = env.now.Add(30 * time.Second)
+	collector.refresh()
+	callsAfter, _ = os.ReadFile(callLog)
+	if string(callsAfter) != string(calls) {
+		t.Fatal("fallback schedule survived emhttpd recovery")
 	}
 }
 
@@ -152,6 +180,95 @@ func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.unavailable || disk.temp != 40 {
 		t.Fatalf("fresh native temperature did not recover: %#v", disk)
+	}
+}
+
+func TestFailedFallbackWaitsForNextPollInterval(t *testing.T) {
+	env := newDiskTestEnvironment(t, "30")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\ntemp=35\n")
+	env.report(t, "disk1", env.now)
+	callLog := filepath.Join(t.TempDir(), "calls")
+	env.paths.smartctlType = fallbackTestCommand(t, "printf 'smart\\n' >> '"+callLog+"'\nexit 1")
+	collector := env.collector()
+	collector.refresh()
+	env.now = env.now.Add(46 * time.Second)
+	collector.refresh()
+	firstFallbackAt := env.now
+	for _, elapsed := range []time.Duration{5 * time.Second, 29 * time.Second} {
+		env.now = firstFallbackAt.Add(elapsed)
+		collector.refresh()
+		if disk := requireSingleDisk(t, collector); !disk.unavailable || disk.temp != 0 {
+			t.Fatalf("failed reading at +%s = %#v", elapsed, disk)
+		}
+		calls, err := os.ReadFile(callLog)
+		if err != nil || string(calls) != "smart\n" {
+			t.Fatalf("fallback retried too soon at +%s: %q, %v", elapsed, calls, err)
+		}
+	}
+	env.now = firstFallbackAt.Add(30 * time.Second)
+	collector.refresh()
+	calls, err := os.ReadFile(callLog)
+	if err != nil || string(calls) != "smart\nsmart\n" {
+		t.Fatalf("fallback did not retry at +30s: %q, %v", calls, err)
+	}
+}
+
+func TestFallbackUsesConfiguredPollInterval(t *testing.T) {
+	env := newDiskTestEnvironment(t, "60")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\n")
+	callLog := filepath.Join(t.TempDir(), "calls")
+	env.paths.smartctlType = fallbackTestCommand(t, "printf 'smart\\n' >> '"+callLog+"'\nprintf '{\"temperature\":{\"current\":42}}\\n'")
+	collector := env.collector()
+	collector.refresh()
+	env.now = env.now.Add(76 * time.Second)
+	collector.refresh()
+	firstFallbackAt := env.now
+	env.now = firstFallbackAt.Add(30 * time.Second)
+	collector.refresh()
+	calls, err := os.ReadFile(callLog)
+	if err != nil || string(calls) != "smart\n" {
+		t.Fatalf("60-second policy polled too soon: %q, %v", calls, err)
+	}
+	env.now = firstFallbackAt.Add(60 * time.Second)
+	collector.refresh()
+	calls, err = os.ReadFile(callLog)
+	if err != nil || string(calls) != "smart\nsmart\n" {
+		t.Fatalf("60-second policy did not poll on time: %q, %v", calls, err)
+	}
+}
+
+func TestFallbackRetainedReadingsFollowInventoryWithoutReusingChangedDevice(t *testing.T) {
+	env := newDiskTestEnvironment(t, "30")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme0n1\ntransport=nvme\n")
+	callLog := filepath.Join(t.TempDir(), "calls")
+	env.paths.smartctlType = fallbackTestCommand(t, "printf '%s\\n' \"$1\" >> '"+callLog+"'\nprintf '{\"temperature\":{\"current\":42}}\\n'")
+	collector := env.collector()
+	collector.refresh()
+	env.now = env.now.Add(46 * time.Second)
+	collector.refresh()
+	firstFallbackAt := env.now
+	env.now = firstFallbackAt.Add(5 * time.Second)
+	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme0n1\ntransport=nvme\n[disk2]\nid=second\ndevice=nvme1n1\ntransport=nvme\n")
+	collector.refresh()
+	readings, err := collector.snapshot()
+	if err != nil || len(readings) != 2 || readings[0].Temp != 42 || readings[0].Unavailable || !readings[1].Unavailable {
+		t.Fatalf("inventory addition between SMART polls = %#v, %v", readings, err)
+	}
+	env.now = firstFallbackAt.Add(10 * time.Second)
+	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme2n1\ntransport=nvme\n")
+	collector.refresh()
+	readings, err = collector.snapshot()
+	if err != nil || len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 || readings[0].Device != "nvme2n1" {
+		t.Fatalf("changed device reused an old measurement: %#v, %v", readings, err)
+	}
+	calls, err := os.ReadFile(callLog)
+	if err != nil || string(calls) != "disk1\n" {
+		t.Fatalf("inventory watchdog triggered extra SMART: %q, %v", calls, err)
+	}
+	env.now = firstFallbackAt.Add(30 * time.Second)
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); disk.unavailable || disk.temp != 42 || disk.device != "nvme2n1" {
+		t.Fatalf("next direct poll did not recover changed device: %#v", disk)
 	}
 }
 

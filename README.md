@@ -226,8 +226,12 @@ la veille d'un disque. Si aucun événement n'arrive pendant
 temporairement les disques via `smartctl_type` avec `-n standby`. Pour les HDD
 ATA, il vérifie d'abord l'état avec `sdspin` et n'interroge que les disques
 actifs ; les HDD d'un autre bus ou de type inconnu restent indisponibles par
-prudence. Les commandes ont un timeout et une concurrence bornée. Le premier
-nouvel événement `poll_attributes` rétablit aussitôt la source native.
+prudence. La première collecte directe démarre dès la détection du blocage ;
+les suivantes suivent l'intervalle `poll_attributes`, même si le watchdog
+continue de vérifier l'état toutes les cinq secondes. Entre deux collectes,
+UVSS conserve la dernière mesure sans relancer SMART. Les commandes ont un
+timeout et une concurrence bornée. Le premier nouvel événement
+`poll_attributes` rétablit aussitôt la source native.
 
 Si une lecture directe échoue, UVSS marque la température indisponible au lieu
 de republier une ancienne mesure. Le failsafe hwmon de 10 secondes peut alors

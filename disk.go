@@ -63,16 +63,17 @@ type diskCollector struct {
 	watchdog time.Duration
 	now      func() time.Time
 
-	refreshMu      sync.Mutex
-	mu             sync.RWMutex
-	readings       []sensors.Disk
-	err            error
-	updatedAt      time.Time
-	state          diskStateTracker
-	policyLog      stickyErrorLog
-	lastEmhttpPoll atomic.Pointer[time.Time]
-	fallbackActive bool
-	fallbackLog    stickyErrorLog
+	refreshMu           sync.Mutex
+	mu                  sync.RWMutex
+	readings            []sensors.Disk
+	err                 error
+	updatedAt           time.Time
+	state               diskStateTracker
+	policyLog           stickyErrorLog
+	lastEmhttpPoll      atomic.Pointer[time.Time]
+	fallbackActive      bool
+	lastFallbackAttempt time.Time
+	fallbackLog         stickyErrorLog
 
 	pollLogInitialized bool
 	lastPollInterval   time.Duration
@@ -181,6 +182,7 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 		}
 		c.fallbackActive = fallback
 		if !fallback {
+			c.lastFallbackAttempt = time.Time{}
 			c.fallbackLog.update(nil)
 		}
 	}
@@ -197,13 +199,18 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 	if err != nil {
 		c.state.markFailure(now)
 	} else {
-		var observations []diskObservation
 		if fallback {
-			observations = c.collectFallback(ctx, disks)
+			if c.lastFallbackAttempt.IsZero() || now.Sub(c.lastFallbackAttempt) >= pollInterval {
+				c.lastFallbackAttempt = now
+				observations := c.collectFallback(ctx, disks)
+				readings = c.state.apply(observations, now, pollInterval+diskFailureMargin)
+			} else {
+				readings = c.reuseFallbackReadings(disks)
+			}
 		} else {
-			observations = makeDiskObservations(disks, c.paths.smartDir, now, freshness)
+			observations := makeDiskObservations(disks, c.paths.smartDir, now, freshness)
+			readings = c.state.apply(observations, now, pollInterval+diskFailureMargin)
 		}
-		readings = c.state.apply(observations, now, pollInterval+diskFailureMargin)
 	}
 
 	c.mu.Lock()
@@ -216,6 +223,40 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 	}
 	c.readings = readings
 	c.updatedAt = now
+}
+
+// reuseFallbackReadings preserves measurements between direct SMART polls
+// without treating them as newly collected. Inventory and policy changes are
+// still reflected on each watchdog tick; new disks remain unavailable until
+// the next direct poll.
+func (c *diskCollector) reuseFallbackReadings(disks []unraidDisk) []sensors.Disk {
+	c.mu.RLock()
+	previous := make(map[string]sensors.Disk, len(c.readings))
+	for _, reading := range c.readings {
+		previous[reading.ID] = reading
+	}
+	c.mu.RUnlock()
+
+	readings := make([]sensors.Disk, 0, len(disks))
+	present := make(map[string]struct{}, len(disks))
+	for _, disk := range disks {
+		present[disk.id] = struct{}{}
+		reading, ok := previous[disk.id]
+		if !ok || reading.Device != disk.device || reading.Transport != disk.transport || reading.Rotational != disk.rotational {
+			reading.Temp = 0
+			reading.Unavailable = true
+			delete(c.state, disk.id)
+		}
+		reading.ID, reading.Name, reading.Device = disk.id, disk.name, disk.device
+		reading.Transport, reading.Rotational = disk.transport, disk.rotational
+		readings = append(readings, reading)
+	}
+	for id := range c.state {
+		if _, ok := present[id]; !ok {
+			delete(c.state, id)
+		}
+	}
+	return readings
 }
 
 func (c *diskCollector) snapshot() ([]sensors.Disk, error) {
