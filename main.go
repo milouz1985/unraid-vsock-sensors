@@ -173,10 +173,13 @@ func serve(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), unix.SIGINT, unix.SIGTERM)
 	defer stop()
 	refreshSignals := make(chan os.Signal, 1)
+	pollSignals := make(chan os.Signal, 1)
 	signal.Notify(refreshSignals, unix.SIGUSR1)
+	signal.Notify(pollSignals, unix.SIGUSR2)
 	defer signal.Stop(refreshSignals)
+	defer signal.Stop(pollSignals)
 	refreshRequests := make(chan struct{}, 1)
-	go forwardDiskRefreshSignals(ctx, refreshSignals, refreshRequests)
+	go forwardDiskRefreshSignals(ctx, refreshSignals, pollSignals, refreshRequests, disks)
 	hbas := newConfiguredHBACollector(hbaInterval, hbaMode, hbaBackend)
 	// Collection remains independent from publication so a disk or controller
 	// command can never block the VSOCK heartbeat.
@@ -204,12 +207,15 @@ func resolveHBAInterval(backend hbaBackendMode, interval time.Duration, explicit
 	return interval, nil
 }
 
-func forwardDiskRefreshSignals(ctx context.Context, signals <-chan os.Signal, refresh chan<- struct{}) {
+func forwardDiskRefreshSignals(ctx context.Context, manual, poll <-chan os.Signal, refresh chan<- struct{}, disks *diskCollector) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-signals:
+		case <-manual:
+			requestDiskRefresh(refresh)
+		case <-poll:
+			disks.noteEmhttpPoll()
 			requestDiskRefresh(refresh)
 		}
 	}

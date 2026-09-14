@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
@@ -31,6 +32,7 @@ const (
 	diskWatchdogInterval      = 5 * time.Second
 	diskSnapshotTimeout       = 3 * diskWatchdogInterval
 	diskFailureMargin         = 5 * time.Second
+	emhttpPollMargin          = 15 * time.Second
 	minimumSMARTFreshness     = 10 * time.Second
 	maximumRecommendedPolling = 60 * time.Second
 	// Tests on Unraid suggest disk IDs in disks.ini and devs.ini are truncated
@@ -45,12 +47,15 @@ type diskDataPaths struct {
 	varINI       string
 	sysBlockRoot string
 	policyFile   string
+	sdspin       string
+	smartctlType string
 }
 
 var defaultDiskDataPaths = diskDataPaths{
 	disksINI: defaultDisksINIPath, devsINI: defaultDevsINIPath,
 	smartDir: defaultSMARTCacheDir, varINI: defaultUnraidVarINIPath,
 	sysBlockRoot: defaultSysBlockRoot, policyFile: defaultDiskPolicyFile,
+	sdspin: defaultSDSpinPath, smartctlType: defaultSmartctlTypePath,
 }
 
 type diskCollector struct {
@@ -58,13 +63,16 @@ type diskCollector struct {
 	watchdog time.Duration
 	now      func() time.Time
 
-	refreshMu sync.Mutex
-	mu        sync.RWMutex
-	readings  []sensors.Disk
-	err       error
-	updatedAt time.Time
-	state     diskStateTracker
-	policyLog stickyErrorLog
+	refreshMu      sync.Mutex
+	mu             sync.RWMutex
+	readings       []sensors.Disk
+	err            error
+	updatedAt      time.Time
+	state          diskStateTracker
+	policyLog      stickyErrorLog
+	lastEmhttpPoll atomic.Pointer[time.Time]
+	fallbackActive bool
+	fallbackLog    stickyErrorLog
 
 	pollLogInitialized bool
 	lastPollInterval   time.Duration
@@ -75,6 +83,7 @@ type diskState struct {
 	lastValid   float64
 	hasValid    bool
 	failedSince time.Time
+	hardFailed  bool
 }
 
 type diskStateTracker map[string]diskState
@@ -92,6 +101,9 @@ type diskObservation struct {
 	temperature float64
 	standby     bool
 	err         error
+	// noGrace prevents an old emhttpd temperature from hiding a failed
+	// direct read after the emhttpd polling heartbeat has expired.
+	noGrace bool
 }
 
 type diskInventoryEntry struct {
@@ -104,14 +116,20 @@ type diskInventoryEntry struct {
 func newDiskCollector(paths diskDataPaths) *diskCollector {
 	return &diskCollector{
 		paths: paths, watchdog: diskWatchdogInterval, now: time.Now,
-		err:       errors.New("disk temperatures have not been collected yet"),
-		state:     make(diskStateTracker),
-		policyLog: stickyErrorLog{context: "disk policies"},
+		err:         errors.New("disk temperatures have not been collected yet"),
+		state:       make(diskStateTracker),
+		policyLog:   stickyErrorLog{context: "disk policies"},
+		fallbackLog: stickyErrorLog{context: "direct SMART fallback"},
 	}
 }
 
 func (c *diskCollector) run(ctx context.Context, refresh <-chan struct{}) {
-	runDiskRefreshLoop(ctx, refresh, c.watchdog, c.refresh)
+	runDiskRefreshLoop(ctx, refresh, c.watchdog, func() { c.refreshWithContext(ctx) })
+}
+
+func (c *diskCollector) noteEmhttpPoll() {
+	now := c.now()
+	c.lastEmhttpPoll.Store(&now)
 }
 
 func runDiskRefreshLoop(ctx context.Context, refresh <-chan struct{}, watchdog time.Duration, collect func()) {
@@ -138,6 +156,10 @@ func requestDiskRefresh(refresh chan<- struct{}) {
 }
 
 func (c *diskCollector) refresh() {
+	c.refreshWithContext(context.Background())
+}
+
+func (c *diskCollector) refreshWithContext(ctx context.Context) {
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
 
@@ -145,6 +167,23 @@ func (c *diskCollector) refresh() {
 	pollInterval, configErr := readPollAttributes(c.paths.varINI)
 	c.logPollAttributesChange(pollInterval, configErr)
 	freshness := smartFreshnessWindow(pollInterval)
+	lastPoll := c.lastEmhttpPoll.Load()
+	if lastPoll == nil {
+		c.lastEmhttpPoll.CompareAndSwap(nil, &now)
+		lastPoll = c.lastEmhttpPoll.Load()
+	}
+	fallback := pollInterval > 0 && now.Sub(*lastPoll) > pollInterval+emhttpPollMargin
+	if fallback != c.fallbackActive {
+		if fallback {
+			log.Printf("emhttpd SMART polling stale, enabling direct SMART fallback")
+		} else {
+			log.Printf("emhttpd SMART polling recovered, disabling direct SMART fallback")
+		}
+		c.fallbackActive = fallback
+		if !fallback {
+			c.fallbackLog.update(nil)
+		}
+	}
 
 	policyFile := c.paths.policyFile
 	if policyFile == "" {
@@ -158,7 +197,12 @@ func (c *diskCollector) refresh() {
 	if err != nil {
 		c.state.markFailure(now)
 	} else {
-		observations := makeDiskObservations(disks, c.paths.smartDir, now, freshness)
+		var observations []diskObservation
+		if fallback {
+			observations = c.collectFallback(ctx, disks)
+		} else {
+			observations = makeDiskObservations(disks, c.paths.smartDir, now, freshness)
+		}
 		readings = c.state.apply(observations, now, pollInterval+diskFailureMargin)
 	}
 
@@ -246,7 +290,7 @@ func (c *diskCollector) logPollAttributesChange(interval time.Duration, configEr
 
 func logPollAttributes(interval time.Duration, configErr error) {
 	if configErr != nil {
-		log.Printf("warning: %v; using the documented %s fallback for SMART cache freshness", configErr, defaultPollAttributes)
+		log.Printf("warning: %v; using %s for SMART cache freshness and stalled-poll detection", configErr, defaultPollAttributes)
 		return
 	}
 	if interval == 0 {
@@ -529,15 +573,18 @@ func (s diskStateTracker) apply(observations []diskObservation, now time.Time, g
 		case observation.standby:
 			temperature = 0
 			state.failedSince = time.Time{}
+			state.hardFailed = false
 		case observation.err == nil:
 			state.lastValid = observation.temperature
 			state.hasValid = true
 			state.failedSince = time.Time{}
+			state.hardFailed = false
 		default:
 			if state.failedSince.IsZero() {
 				state.failedSince = now
 			}
-			if state.hasValid && now.Sub(state.failedSince) < grace {
+			state.hardFailed = state.hardFailed || observation.noGrace
+			if !state.hardFailed && state.hasValid && now.Sub(state.failedSince) < grace {
 				temperature = state.lastValid
 			} else {
 				temperature = 0

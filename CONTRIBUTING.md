@@ -123,7 +123,9 @@ Le projet cherche à conserver une séparation claire entre les responsabilités
 L'agent :
 
 - consomme l'état déjà maintenu par `emhttpd` ;
-- ne lance jamais `smartctl` pour collecter les températures disque ;
+- utilise normalement les températures collectées par emhttpd ; en cas de
+  heartbeat `poll_attributes` absent, lance temporairement `smartctl_type`
+  avec protection standby et des délais bornés ;
 - ne doit pas réveiller les disques ;
 - publie les snapshots via AF_VSOCK.
 

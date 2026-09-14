@@ -5,7 +5,9 @@ HBA d'une VM Unraid vers son hôte Proxmox via `AF_VSOCK`, sans réseau IP entre
 les deux systèmes.
 
 Côté Unraid, l'agent réutilise les températures déjà collectées par `emhttpd`.
-Il n'exécute jamais `smartctl` et ne réveille donc pas lui-même les disques.
+En fonctionnement normal, il lit les températures déjà collectées par Unraid.
+Si le polling SMART d'Unraid s'interrompt, un fallback direct et borné prend
+temporairement le relais sans interroger les HDD en veille.
 
 Côté Proxmox, les températures sont exposées comme sondes Linux `hwmon`
 utilisables notamment par CoolerControl, fan2go, fancontrol ou lm-sensors.
@@ -217,6 +219,21 @@ L'événement Unraid `poll_attributes` demande une actualisation immédiate au
 daemon. Un watchdog de cinq secondes couvre les événements perdus et les
 changements d'état.
 
+UVSS suit séparément l'heure du dernier événement `poll_attributes` : le mtime
+d'un rapport SMART ne sert pas de heartbeat, car il peut rester ancien pendant
+la veille d'un disque. Si aucun événement n'arrive pendant
+`poll_attributes + 15 secondes` (45 s avec le réglage 30 s), UVSS interroge
+temporairement les disques via `smartctl_type` avec `-n standby`. Pour les HDD
+ATA, il vérifie d'abord l'état avec `sdspin` et n'interroge que les disques
+actifs ; les HDD d'un autre bus ou de type inconnu restent indisponibles par
+prudence. Les commandes ont un timeout et une concurrence bornée. Le premier
+nouvel événement `poll_attributes` rétablit aussitôt la source native.
+
+Si une lecture directe échoue, UVSS marque la température indisponible au lieu
+de republier une ancienne mesure. Le failsafe hwmon de 10 secondes peut alors
+prendre le relais. `poll_attributes=0` désactive ce fallback, puisqu'aucun
+événement périodique n'est attendu.
+
 Un disque en veille reste inventorié à `0 °C`. Après son réveil, la dernière
 mesure valide bénéficie d'une période de grâce de :
 
@@ -225,8 +242,8 @@ poll_attributes + 5 secondes
 ```
 
 `poll_attributes` est lu dans `/var/local/emhttp/var.ini`. Une valeur invalide
-utilise un fallback interne de `30s` pour le calcul de fraîcheur sans modifier
-la configuration Unraid.
+utilise un défaut interne de `30s` pour les calculs de fraîcheur et de
+détection du polling bloqué, sans modifier la configuration Unraid.
 
 ## Contrôleurs HBA
 

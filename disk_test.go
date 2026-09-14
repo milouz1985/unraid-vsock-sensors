@@ -553,7 +553,7 @@ func TestPollAttributesWarnings(t *testing.T) {
 	}
 	output.Reset()
 	logPollAttributes(defaultPollAttributes, errors.New("invalid config"))
-	if message := output.String(); !strings.Contains(message, "invalid config") || !strings.Contains(message, "30s fallback") {
+	if message := output.String(); !strings.Contains(message, "invalid config") || !strings.Contains(message, "30s for SMART cache freshness and stalled-poll detection") {
 		t.Fatalf("fallback warning = %q", message)
 	}
 }

@@ -1,2 +1,2 @@
 #!/bin/bash
-exec /etc/rc.d/rc.unraid-vsock-sensors refresh
+exec /etc/rc.d/rc.unraid-vsock-sensors poll

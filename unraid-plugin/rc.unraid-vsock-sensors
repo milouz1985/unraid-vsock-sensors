@@ -186,6 +186,19 @@ refresh() {
     echo "$name refresh requested"
 }
 
+poll() {
+    local pid
+    if ! pid="$(running_pid)"; then
+        echo "$name is not running"
+        return 0
+    fi
+    if ! kill -USR2 "$pid" 2>/dev/null; then
+        echo "Unable to notify $name of SMART polling (PID $pid)" >&2
+        return 1
+    fi
+    echo "$name SMART poll reported"
+}
+
 run_mutating_action() {
     local action="$1" lock_fd
 
@@ -209,5 +222,6 @@ case "${1:-}" in
     start|stop|restart) run_mutating_action "$1" ;;
     status) status ;;
     refresh) refresh ;;
-    *) echo "Usage: $0 {start|stop|restart|status|refresh}" >&2; exit 2 ;;
+    poll) poll ;;
+    *) echo "Usage: $0 {start|stop|restart|status|refresh|poll}" >&2; exit 2 ;;
 esac

@@ -17,6 +17,7 @@ if [[ "${1:-}" == "serve" ]]; then
             trap "exit 0" TERM
         fi
         trap '\''printf "refresh\n" > "$UVSS_RC_TEST_REFRESH_FILE"'\'' USR1
+        trap '\''printf "poll\n" > "$UVSS_RC_TEST_POLL_FILE"'\'' USR2
         while :; do
             sleep 0.1 &
             wait "$!" || true
@@ -31,6 +32,7 @@ pid_file="$test_dir/service.pid"
 lock_file="$test_dir/service.lock"
 args_file="$test_dir/service.args"
 refresh_file="$test_dir/service.refresh"
+poll_file="$test_dir/service.poll"
 started_file="$test_dir/service.started"
 pipe_reader_pid=""
 foreign_pid=""
@@ -69,6 +71,7 @@ run_rc() {
         UVSS_RC_LOCK_FILE="$lock_file" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
         UVSS_RC_TEST_REFRESH_FILE="$refresh_file" \
+        UVSS_RC_TEST_POLL_FILE="$poll_file" \
         UVSS_RC_TEST_STARTED_FILE="$started_file" \
         UVSS_RC_TEST_IGNORE_TERM="$ignore_term" \
         "$rc_script" "$action"
@@ -109,6 +112,20 @@ fi
 read -r daemon_pid < "$pid_file"
 if ! kill -0 "$daemon_pid" 2>/dev/null; then
     echo "daemon $daemon_pid is not running after restart" >&2
+    exit 1
+fi
+
+poll_output="$(run_rc poll)"
+if [[ "$poll_output" != *"SMART poll reported"* ]]; then
+    echo "poll did not report success: $poll_output" >&2
+    exit 1
+fi
+for _ in {1..100}; do
+    [[ -e "$poll_file" ]] && break
+    sleep 0.01
+done
+if [[ ! -e "$poll_file" ]]; then
+    echo "active daemon did not receive SIGUSR2" >&2
     exit 1
 fi
 if ! grep -Fxq -- "--syslog" "$args_file"; then

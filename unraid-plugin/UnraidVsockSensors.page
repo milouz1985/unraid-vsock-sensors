@@ -104,12 +104,12 @@ _(Unraid SMART polling interval)_:
 : <?=htmlspecialchars($pollDisplay, ENT_QUOTES)?>
 
 <blockquote class="inline_help">
-This read-only value comes from Unraid Disk Settings. Unraid remains the sole owner of hardware SMART polling. The daemon uses it only to determine how long cached SMART temperatures remain fresh.
+This read-only value comes from Unraid Disk Settings. The daemon uses it to assess cache freshness and detect stalled Unraid SMART polling. If polling stalls, UVSS temporarily reads SMART with standby protection.
 </blockquote>
 
 <?php if (!$pollValid): ?>
 <p class="red">
-The Unraid <code>poll_attributes</code> value is missing or invalid. The daemon uses a 30-second fallback only to assess cache freshness and does not modify Unraid settings.
+The Unraid <code>poll_attributes</code> value is missing or invalid. The daemon assumes 30 seconds for cache freshness and stalled-poll detection. It does not modify Unraid settings.
 </p>
 <?php elseif ($pollAttributes === 0): ?>
 <p class="red">
