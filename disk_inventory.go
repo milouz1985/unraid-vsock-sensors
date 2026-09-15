@@ -141,7 +141,7 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, requireVal
 				return nil, fmt.Errorf("active disk %q has no device", name)
 			}
 		}
-		disk, err := diskFromSection(section, id, name, device, name, transport)
+		disk, err := diskFromSection(section, id, name, device, name, transport, included && requireValid)
 		if err != nil {
 			return nil, fmt.Errorf("disk %q: %w", name, err)
 		}
@@ -211,7 +211,7 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs,
 				return nil, fmt.Errorf("unassigned disk %q has a %d-byte stable ID; observed emhttpd limit is %d", name, len(id), maxUnraidDiskIDSize)
 			}
 		}
-		disk, err := diskFromSection(section, id, name, device, device, transport)
+		disk, err := diskFromSection(section, id, name, device, device, transport, included && requireValid)
 		if err != nil {
 			return nil, fmt.Errorf("unassigned disk %q: %w", name, err)
 		}
@@ -232,12 +232,12 @@ func diskTransport(section *ini.Section) string {
 	return strings.ToLower(strings.TrimSpace(section.Key("transport").String()))
 }
 
-func diskFromSection(section *ini.Section, id, name, device, smartName, transport string) (unraidDisk, error) {
-	rotational, err := parseBinaryDiskField(section, "rotational")
+func diskFromSection(section *ini.Section, id, name, device, smartName, transport string, requireThermalFields bool) (unraidDisk, error) {
+	rotational, err := parseBinaryDiskField(section, "rotational", requireThermalFields)
 	if err != nil {
 		return unraidDisk{}, err
 	}
-	spundown, err := parseBinaryDiskField(section, "spundown")
+	spundown, err := parseBinaryDiskField(section, "spundown", requireThermalFields)
 	if err != nil {
 		return unraidDisk{}, err
 	}
@@ -250,7 +250,7 @@ func diskFromSection(section *ini.Section, id, name, device, smartName, transpor
 	}, nil
 }
 
-func parseBinaryDiskField(section *ini.Section, name string) (bool, error) {
+func parseBinaryDiskField(section *ini.Section, name string, required bool) (bool, error) {
 	value := strings.TrimSpace(section.Key(name).String())
 	switch value {
 	case "0":
@@ -258,6 +258,9 @@ func parseBinaryDiskField(section *ini.Section, name string) (bool, error) {
 	case "1":
 		return true, nil
 	default:
+		if !required {
+			return false, nil
+		}
 		return false, fmt.Errorf("%s must be 0 or 1, got %q", name, value)
 	}
 }

@@ -250,10 +250,10 @@ func TestDiskPolicyPersistenceAndCommand(t *testing.T) {
 	}
 }
 
-func TestDiskListCanExposeInvalidDeviceForExclusion(t *testing.T) {
+func TestDiskListCanExposeIncompleteEntryForExclusion(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=stable_id\ndevice=../invalid\ntransport=ata\nrotational=1\nspundown=0\n")
+		"[disk1]\nid=stable_id\ndevice=../invalid\ntransport=ata\nrotational=invalid\n")
 	var output bytes.Buffer
 	if err := diskPolicyCommand([]string{"list", "--disks-ini", environment.paths.disksINI,
 		"--devs-ini", environment.paths.devsINI, "--sys-block-root", environment.paths.sysBlockRoot,

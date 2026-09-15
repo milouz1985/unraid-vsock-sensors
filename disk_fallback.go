@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -172,14 +171,6 @@ func parseDirectSMART(output []byte) (directSMARTResult, error) {
 		NVMe struct {
 			Temperature *float64 `json:"temperature"`
 		} `json:"nvme_smart_health_information_log"`
-		ATA struct {
-			Table []struct {
-				ID  int `json:"id"`
-				Raw struct {
-					String string `json:"string"`
-				} `json:"raw"`
-			} `json:"table"`
-		} `json:"ata_smart_attributes"`
 	}
 	if err := json.Unmarshal(output, &report); err != nil {
 		return directSMARTResult{}, fmt.Errorf("parse direct SMART JSON: %w", err)
@@ -190,21 +181,6 @@ func parseDirectSMART(output []byte) (directSMARTResult, error) {
 	for _, value := range []*float64{report.Temperature.Current, report.SCSITemperature.Current, report.NVMe.Temperature} {
 		if value != nil && validDirectTemperature(*value) {
 			return directSMARTResult{temperature: *value}, nil
-		}
-	}
-	for _, id := range []int{194, 190} {
-		for _, attribute := range report.ATA.Table {
-			if attribute.ID != id {
-				continue
-			}
-			if fields := strings.Fields(attribute.Raw.String); len(fields) != 0 {
-				// Unlike the structured fields above, raw strings remain
-				// vendor-specific and keep their plausibility check.
-				if value, err := strconv.ParseFloat(fields[0], 64); err == nil &&
-					validDirectTemperature(value) && value > 0 && value < 150 {
-					return directSMARTResult{temperature: value}, nil
-				}
-			}
 		}
 	}
 	return directSMARTResult{}, errors.New("direct SMART report has no usable temperature")

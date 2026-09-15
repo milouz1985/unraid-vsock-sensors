@@ -1010,21 +1010,21 @@ func TestDiskInventoryExcludesUSBFromBothSourcesBeforeSMART(t *testing.T) {
 	}
 }
 
-func TestUSBEntriesSkipIdentityValidation(t *testing.T) {
+func TestAutoExcludedUSBEntriesSkipStrictValidation(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdi", true)
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdj", true)
-	environment.write(t, environment.paths.disksINI, "[disk1]\ntransport=usb\ndevice=sdi\nrotational=1\nspundown=0\n")
-	environment.write(t, environment.paths.devsINI, "[external]\ntransport=\" USB \"\ndevice=sdj\nrotational=1\nspundown=0\n")
+	environment.write(t, environment.paths.disksINI, "[disk1]\ntransport=usb\ndevice=sdi\n")
+	environment.write(t, environment.paths.devsINI, "[external]\ntransport=\" USB \"\ndevice=sdj\nrotational=invalid\nspundown=invalid\n")
 	entries, err := readAssignedEntries(environment.paths.disksINI,
 		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, true)
 	if err != nil || len(entries) != 1 || entries[0].included {
-		t.Fatalf("assigned USB entry = %#v, %v; want excluded disk without identity error", entries, err)
+		t.Fatalf("assigned USB entry = %#v, %v; want incomplete excluded disk", entries, err)
 	}
 	entries, err = readUnassignedEntries(environment.paths.devsINI,
 		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, nil, nil, true)
 	if err != nil || len(entries) != 1 || entries[0].included {
-		t.Fatalf("unassigned USB entry = %#v, %v; want excluded disk without identity error", entries, err)
+		t.Fatalf("unassigned USB entry = %#v, %v; want invalid excluded disk", entries, err)
 	}
 }
 
