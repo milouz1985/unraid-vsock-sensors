@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
-
-	"unraid-vsock-sensors/internal/sensors"
 )
 
 // This test owns the module for its entire lifetime. It must never run on the
@@ -43,6 +41,25 @@ func TestVMHWMon(t *testing.T) {
 	if got := readVMHWMonAttribute(t, "hba", "hba:vm-a", "name"); got != "unraid_vm_hba_a" {
 		t.Fatalf("HBA hwmon name = %q, want unraid_vm_hba_a", got)
 	}
+
+	t.Log("a maximum-length Unraid disk ID crosses the real kernel boundary")
+	maximumDiskID := "disk:" + strings.Repeat("a", maxUnraidDiskIDSize)
+	maximumSamples := []hwmonSample{
+		diskSamples[0],
+		hwmonTestSample(maximumDiskID, "Maximum ID", 39),
+	}
+	publish("disk", &disks, maximumSamples, true)
+	requireVMHWMonTemp(t, "disk", maximumDiskID, "39000")
+	if got := readVMHWMonAttribute(t, "disk", maximumDiskID, "temp1_label"); got != "Maximum ID" {
+		t.Fatalf("maximum-length ID label = %q, want Maximum ID", got)
+	}
+	publish("disk", &disks, diskSamples, true)
+
+	t.Log("a signed atypical temperature crosses the real kernel boundary")
+	hbaSamples[0].temperature = -40
+	publish("hba", &hbas, hbaSamples, false)
+	requireVMHWMonTemp(t, "hba", "hba:vm-a", "-40000")
+	hbaSamples[0].temperature = 48
 
 	t.Log("a label change reconfigures the family")
 	diskSamples[0].temperature = 35.125
