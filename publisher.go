@@ -11,7 +11,9 @@ import (
 
 	"unraid-vsock-sensors/internal/sensors"
 
+	"github.com/mdlayher/socket"
 	"github.com/mdlayher/vsock"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -25,6 +27,20 @@ type snapshotConnection interface {
 }
 
 type snapshotDialer func(context.Context) (snapshotConnection, error)
+
+// dialVSOCK connects the publisher to the host without leaving connection
+// establishment outside its context deadline.
+func dialVSOCK(ctx context.Context, cid, port uint32) (*socket.Conn, error) {
+	conn, err := socket.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0, "vsock", nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Connect(ctx, &unix.SockaddrVM{CID: cid, Port: port}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
 
 type publisherRuntimeStatus struct {
 	status          string
@@ -117,7 +133,7 @@ func publishSnapshots(
 	state *serviceState,
 ) error {
 	dial := func(ctx context.Context) (snapshotConnection, error) {
-		return sensors.DialVSOCK(ctx, vsock.Host, port)
+		return dialVSOCK(ctx, vsock.Host, port)
 	}
 	return publishSnapshotsWithDialer(ctx, disks, collector, dial, state)
 }
