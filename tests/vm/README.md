@@ -198,7 +198,7 @@ Il vérifie notamment :
 
 - création des périphériques hwmon ;
 - valeurs et labels ;
-- températures négatives et supérieures à 150 °C ;
+- températures signées atypiques jusqu'au vrai hwmon ;
 - ajout et retrait de sondes ;
 - failsafe et récupération ;
 - erreur d'écriture réelle via `/dev/full` ;
