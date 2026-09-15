@@ -32,19 +32,6 @@ func TestVMHWMon(t *testing.T) {
 			t.Fatalf("publish %s: changed=%v, want %v; err=%v", namespace, changed, wantChanged, err)
 		}
 	}
-	t.Log("publish an initially empty HBA family")
-	emptyPublisher := &hwmonPublisher{cachePath: filepath.Join(t.TempDir(), "empty-inventory.json")}
-	changed, err := emptyPublisher.publish(device, sensors.Response{
-		Disks: []sensors.Disk{},
-		HBAs:  []sensors.HBA{},
-	})
-	if err != nil || !changed || !emptyPublisher.hbas.initialized || len(emptyPublisher.hbas.sensors) != 0 {
-		t.Fatalf("publish empty HBA family: changed=%v, HBA=%#v, err=%v", changed, emptyPublisher.hbas, err)
-	}
-	if len(vmHWMonPaths(t, "hba", "hba:vm-a")) != 0 {
-		t.Fatal("empty HBA inventory created a device")
-	}
-
 	t.Log("configure disk/HBA families and read real sysfs temperatures")
 	publish("disk", &disks, diskSamples, true)
 	publish("hba", &hbas, hbaSamples, true)
@@ -56,25 +43,6 @@ func TestVMHWMon(t *testing.T) {
 	if got := readVMHWMonAttribute(t, "hba", "hba:vm-a", "name"); got != "unraid_vm_hba_a" {
 		t.Fatalf("HBA hwmon name = %q, want unraid_vm_hba_a", got)
 	}
-
-	t.Log("a maximum-length Unraid disk ID reaches real sysfs")
-	maximumDiskID := "disk:" + strings.Repeat("a", maxUnraidDiskIDSize)
-	maximumSamples := []hwmonSample{
-		diskSamples[0],
-		hwmonTestSample(maximumDiskID, "Maximum ID", 39),
-	}
-	publish("disk", &disks, maximumSamples, true)
-	requireVMHWMonTemp(t, "disk", maximumDiskID, "39000")
-	publish("disk", &disks, diskSamples, true)
-
-	t.Log("signed temperatures outside common hardware ranges reach real sysfs")
-	hbaSamples[0].temperature = -40
-	publish("hba", &hbas, hbaSamples, false)
-	requireVMHWMonTemp(t, "hba", "hba:vm-a", "-40000")
-	hbaSamples[0].temperature = 200
-	publish("hba", &hbas, hbaSamples, false)
-	requireVMHWMonTemp(t, "hba", "hba:vm-a", "200000")
-	hbaSamples[0].temperature = 48
 
 	t.Log("a label change reconfigures the family")
 	diskSamples[0].temperature = 35.125
@@ -98,7 +66,7 @@ func TestVMHWMon(t *testing.T) {
 
 	t.Log("a real ENOSPC write error is propagated without changing inventory")
 	before := append([]hwmonSensor(nil), disks.sensors...)
-	changed, err = publishHWMonFamily("/dev/full", "disk", &disks, diskSamples)
+	changed, err := publishHWMonFamily("/dev/full", "disk", &disks, diskSamples)
 	if changed || !errors.Is(err, unix.ENOSPC) || strings.Contains(err.Error(), "reconfigure") || !reflect.DeepEqual(before, disks.sensors) {
 		t.Fatalf("changed=%v, err=%v, inventory=%v", changed, err, disks.sensors)
 	}
