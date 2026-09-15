@@ -34,9 +34,6 @@ func TestSmartSourceStateLifecycleAndAttemptCadence(t *testing.T) {
 		t.Fatalf("fallback entry = %+v", decision)
 	}
 	state.beginDirectAttempt(enteredAt)
-	if got := state.lastDirectAttempt; !got.Equal(enteredAt) {
-		t.Fatalf("first attempt = %v, want %v", got, enteredAt)
-	}
 	if decision = state.evaluate(enteredAt.Add(29*time.Second), 30*time.Second, nil); decision.directDue {
 		t.Fatalf("attempt became due early: %+v", decision)
 	}
@@ -49,9 +46,14 @@ func TestSmartSourceStateLifecycleAndAttemptCadence(t *testing.T) {
 	state.noteEmhttpPoll(enteredAt.Add(31 * time.Second))
 	decision = state.evaluate(enteredAt.Add(31*time.Second), 30*time.Second, nil)
 	status = state.status()
-	if decision.source != diskSourceEmhttpd || !decision.justRecovered || !state.lastDirectAttempt.IsZero() ||
+	if decision.source != diskSourceEmhttpd || !decision.justRecovered ||
 		!status.lastObservedAttempt.Equal(enteredAt.Add(30*time.Second)) || status.lastFallbackError != "" {
 		t.Fatalf("fallback recovery = %+v, status=%+v", decision, status)
+	}
+	reenteredAt := enteredAt.Add(77 * time.Second)
+	decision = state.evaluate(reenteredAt, 30*time.Second, nil)
+	if decision.source != diskSourceDirect || !decision.justEntered || !decision.directDue {
+		t.Fatalf("new fallback entry did not schedule an immediate attempt: %+v", decision)
 	}
 }
 
