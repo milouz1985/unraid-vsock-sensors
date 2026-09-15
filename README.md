@@ -247,12 +247,15 @@ de republier une ancienne mesure. Le failsafe hwmon de 10 secondes peut alors
 prendre le relais. `poll_attributes=0` désactive ce fallback, puisqu'aucun
 événement périodique n'est attendu.
 
-Un disque en veille reste inventorié avec `Temp=0`, une sentinelle synthétique
-de contrôle qui ne représente jamais une température physique. Les diagnostics
-l'affichent comme `standby`, sans température courante. Après son réveil, UVSS
-conserve temporairement cette sentinelle, avec l'état `waking`, pendant qu'il
-attend la première température SMART fraîche. L'ancienne température mesurée
-avant la veille n'est jamais réutilisée. Cette attente est limitée à :
+Lorsqu'un disque est en état `standby`, UVSS le conserve dans l'inventaire avec
+`Temp=0` comme sentinelle synthétique de contrôle. Cette valeur ne représente
+alors pas une température physique ; une vraie mesure SMART à `0 °C` reste
+valide. Les diagnostics utilisent l'état thermique interne pour afficher la
+sentinelle comme `standby`, sans température courante. Après un réveil observé
+sans interruption de visibilité sur l'inventaire, UVSS conserve temporairement
+cette sentinelle, avec l'état `waking`, pendant qu'il attend la première
+température SMART fraîche. L'ancienne température mesurée avant la veille n'est
+jamais réutilisée. Cette attente est limitée à :
 
 ```text
 poll_attributes + 5 secondes
@@ -262,7 +265,10 @@ La première mesure fraîche remplace immédiatement la sentinelle. Si elle
 n'arrive pas avant l'expiration de cette fenêtre, le disque devient
 `Unavailable` et le failsafe hwmon peut prendre le relais. Une observation
 invalide d'un disque actif sans transition préalable depuis `standby` devient
-indisponible immédiatement.
+indisponible immédiatement. Une erreur d'inventaire casse la continuité : au
+retour, aucune wake grace n'est accordée à un disque actif sans mesure fraîche.
+Une nouvelle mesure valide ou un nouveau standby explicitement observé rétablit
+normalement un état disponible.
 
 `poll_attributes` est lu dans `/var/local/emhttp/var.ini`. Une valeur invalide
 utilise un défaut interne de `30s` pour les calculs de fraîcheur et de
