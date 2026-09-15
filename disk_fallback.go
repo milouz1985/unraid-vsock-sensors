@@ -103,9 +103,14 @@ func (c *diskCollector) fallbackObservation(ctx context.Context, disk unraidDisk
 		result.err = fmt.Errorf("smartctl_type: %w", err)
 		return result
 	}
-	direct, err := parseDirectSMART(output)
-	if err != nil {
-		result.err = err
+	direct, parseErr := parseDirectSMART(output)
+	if parseErr != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			result.err = fmt.Errorf("smartctl_type exit %d: %w", exit.ExitCode(), parseErr)
+		} else {
+			result.err = parseErr
+		}
 		return result
 	}
 	result.standby = direct.standby

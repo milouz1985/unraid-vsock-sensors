@@ -156,7 +156,7 @@ func TestFallbackSmartctlExitCodesAndResults(t *testing.T) {
 		output      string
 		wantTemp    float64
 		wantStandby bool
-		wantError   bool
+		wantError   string
 	}{
 		{name: "exit 0", output: `{"temperature":{"current":42}}`, wantTemp: 42},
 		{name: "exit 1", exitCode: 1, output: `{"temperature":{"current":42}}`, wantTemp: 42},
@@ -165,9 +165,10 @@ func TestFallbackSmartctlExitCodesAndResults(t *testing.T) {
 		{name: "exit 4", exitCode: 4, output: `{"temperature":{"current":42}}`, wantTemp: 42},
 		{name: "health bit exit 8", exitCode: 8, output: `{"temperature":{"current":42}}`, wantTemp: 42},
 		{name: "combined exit 12", exitCode: 12, output: `{"temperature":{"current":42}}`, wantTemp: 42},
-		{name: "nonzero without temperature", exitCode: 1, output: `{}`, wantError: true},
+		{name: "nonzero without temperature", exitCode: 4, output: `{}`, wantError: "smartctl_type exit 4: direct SMART report has no usable temperature"},
 		{name: "power mode standby", output: `{"power_mode":{"name":"standby"}}`, wantStandby: true},
-		{name: "invalid JSON", output: `{`, wantError: true},
+		{name: "invalid JSON", output: `{`, wantError: "parse direct SMART JSON"},
+		{name: "nonzero invalid JSON", exitCode: 8, output: `{`, wantError: "smartctl_type exit 8: parse direct SMART JSON"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			env := newDiskTestEnvironment(t, "30")
@@ -178,9 +179,14 @@ func TestFallbackSmartctlExitCodesAndResults(t *testing.T) {
 			observation := collector.fallbackObservation(context.Background(), unraidDisk{
 				id: "serial", name: "disk1", device: "sda", transport: "ata", rotational: true,
 			})
-			if observation.temperature != scenario.wantTemp || observation.standby != scenario.wantStandby ||
-				(observation.err != nil) != scenario.wantError {
+			if observation.temperature != scenario.wantTemp || observation.standby != scenario.wantStandby {
 				t.Fatalf("observation = %+v", observation)
+			}
+			if scenario.wantError == "" && observation.err != nil {
+				t.Fatalf("unexpected error: %v", observation.err)
+			}
+			if scenario.wantError != "" && (observation.err == nil || !strings.Contains(observation.err.Error(), scenario.wantError)) {
+				t.Fatalf("error = %v, want it to contain %q", observation.err, scenario.wantError)
 			}
 		})
 	}
