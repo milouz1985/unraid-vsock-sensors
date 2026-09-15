@@ -92,18 +92,25 @@ func (c *diskCollector) fallbackObservation(ctx context.Context, disk unraidDisk
 	// Its second argument is a single option string, as used by Unraid.
 	// The helper takes the section name (disk1 or dev1); unassigned SMART
 	// cache filenames instead use the device name (sda, nvme0n1).
-	output, err := runFallbackCommand(ctx, path, disk.name, "-n standby -A -j")
+	output, err := runFallbackCommand(ctx, path, disk.name, "-n standby,3 -A -j")
 	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode()&2 != 0 {
-		// smartctl uses bit 1 when the device cannot be opened or when -n
-		// declined a standby device. Neither case yields a safe sample.
+	if errors.As(err, &exit) && exit.ExitCode() == 3 {
+		result.standby = true
+		result.err = nil
 		return result
 	}
 	if err != nil && len(output) == 0 {
 		result.err = fmt.Errorf("smartctl_type: %w", err)
 		return result
 	}
-	result.temperature, result.err = parseDirectSMARTTemperature(output)
+	direct, err := parseDirectSMART(output)
+	if err != nil {
+		result.err = err
+		return result
+	}
+	result.standby = direct.standby
+	result.temperature = direct.temperature
+	result.err = nil
 	return result
 }
 
@@ -141,11 +148,13 @@ func runFallbackCommand(ctx context.Context, path string, args ...string) ([]byt
 	return output, err
 }
 
-func parseDirectSMARTTemperature(output []byte) (float64, error) {
+type directSMARTResult struct {
+	temperature float64
+	standby     bool
+}
+
+func parseDirectSMART(output []byte) (directSMARTResult, error) {
 	var report struct {
-		Smartctl struct {
-			ExitStatus int `json:"exit_status"`
-		} `json:"smartctl"`
 		PowerMode struct {
 			Name string `json:"name"`
 		} `json:"power_mode"`
@@ -169,14 +178,14 @@ func parseDirectSMARTTemperature(output []byte) (float64, error) {
 		} `json:"ata_smart_attributes"`
 	}
 	if err := json.Unmarshal(output, &report); err != nil {
-		return 0, fmt.Errorf("parse direct SMART JSON: %w", err)
+		return directSMARTResult{}, fmt.Errorf("parse direct SMART JSON: %w", err)
 	}
-	if report.Smartctl.ExitStatus&2 != 0 || strings.EqualFold(report.PowerMode.Name, "standby") {
-		return 0, errors.New("SMART probe declined a standby or inaccessible device")
+	if strings.EqualFold(report.PowerMode.Name, "standby") {
+		return directSMARTResult{standby: true}, nil
 	}
 	for _, value := range []*float64{report.Temperature.Current, report.SCSITemperature.Current, report.NVMe.Temperature} {
 		if value != nil && validDirectTemperature(*value) {
-			return *value, nil
+			return directSMARTResult{temperature: *value}, nil
 		}
 	}
 	for _, id := range []int{194, 190} {
@@ -186,7 +195,7 @@ func parseDirectSMARTTemperature(output []byte) (float64, error) {
 			}
 			if fields := strings.Fields(attribute.Raw.String); len(fields) != 0 {
 				if value, err := strconv.ParseFloat(fields[0], 64); err == nil && validDirectTemperature(value) {
-					return value, nil
+					return directSMARTResult{temperature: value}, nil
 				}
 			}
 			var value float64
@@ -204,11 +213,11 @@ func parseDirectSMARTTemperature(output []byte) (float64, error) {
 				continue
 			}
 			if err == nil && validDirectTemperature(value) {
-				return value, nil
+				return directSMARTResult{temperature: value}, nil
 			}
 		}
 	}
-	return 0, errors.New("direct SMART report has no usable temperature")
+	return directSMARTResult{}, errors.New("direct SMART report has no usable temperature")
 }
 
 func validDirectTemperature(value float64) bool {

@@ -60,7 +60,7 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(calls) != "sdspin /dev/sda status\nsmart disk1 -n standby -A -j\n" {
+	if string(calls) != "sdspin /dev/sda status\nsmart disk1 -n standby,3 -A -j\n" {
 		t.Fatalf("fallback calls = %q", calls)
 	}
 	firstCalls := string(calls)
@@ -144,6 +144,43 @@ func TestFallbackStandbyUnknownAndUnsafeBuses(t *testing.T) {
 				}
 			} else if !os.IsNotExist(err) {
 				t.Fatalf("unsafe bus invoked external command: %q, %v", calls, err)
+			}
+		})
+	}
+}
+
+func TestFallbackSmartctlExitCodesAndResults(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		exitCode    int
+		output      string
+		wantTemp    float64
+		wantStandby bool
+		wantError   bool
+	}{
+		{name: "exit 0", output: `{"temperature":{"current":42}}`, wantTemp: 42},
+		{name: "exit 1", exitCode: 1, output: `{"temperature":{"current":42}}`, wantTemp: 42},
+		{name: "exit 2", exitCode: 2, output: `{"temperature":{"current":42}}`, wantTemp: 42},
+		{name: "standby exit 3", exitCode: 3, output: `{"temperature":{"current":42}}`, wantStandby: true},
+		{name: "exit 4", exitCode: 4, output: `{"temperature":{"current":42}}`, wantTemp: 42},
+		{name: "health bit exit 8", exitCode: 8, output: `{"temperature":{"current":42}}`, wantTemp: 42},
+		{name: "combined exit 12", exitCode: 12, output: `{"temperature":{"current":42}}`, wantTemp: 42},
+		{name: "nonzero without temperature", exitCode: 1, output: `{}`, wantError: true},
+		{name: "power mode standby", output: `{"power_mode":{"name":"standby"}}`, wantStandby: true},
+		{name: "invalid JSON", output: `{`, wantError: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			env := newDiskTestEnvironment(t, "30")
+			env.paths.sdspin = fallbackTestCommand(t, "exit 0")
+			env.paths.smartctlType = fallbackTestCommand(t,
+				"printf '%s\\n' '"+scenario.output+"'\nexit "+strconv.Itoa(scenario.exitCode))
+			collector := env.collector()
+			observation := collector.fallbackObservation(context.Background(), unraidDisk{
+				id: "serial", name: "disk1", device: "sda", transport: "ata", rotational: true,
+			})
+			if observation.temperature != scenario.wantTemp || observation.standby != scenario.wantStandby ||
+				(observation.err != nil) != scenario.wantError {
+				t.Fatalf("observation = %+v", observation)
 			}
 		})
 	}
@@ -316,28 +353,30 @@ func TestFallbackReuseDoesNotReviveSnapshotAfterCollectionFailure(t *testing.T) 
 	}
 }
 
-func TestDirectSMARTJSONTemperatures(t *testing.T) {
+func TestDirectSMARTJSONResults(t *testing.T) {
 	for _, scenario := range []struct {
-		report string
-		want   float64
+		name        string
+		report      string
+		want        float64
+		wantStandby bool
+		wantError   bool
 	}{
-		{`{"temperature":{"current":33}}`, 33},
-		{`{"nvme_smart_health_information_log":{"temperature":41}}`, 41},
-		{`{"scsi_temperature":{"current":37}}`, 37},
-		{`{"ata_smart_attributes":{"table":[{"id":194,"raw":{"value":"38 (Min/Max 21/40)"}}]}}`, 38},
-		{`{"ata_smart_attributes":{"table":[{"id":190,"raw":{"value":588775452,"string":"29 (Min/Max 24/35)"}},{"id":194,"raw":{"value":68719476764,"string":"28 (0 16 0 0 0)"}}]}}`, 28},
-		{`{"smartctl":{"exit_status":2},"power_mode":{"name":"STANDBY"}}`, 0},
-		{`{"smartctl":{"exit_status":2},"temperature":{"current":42}}`, 0},
-		{`{"temperature":{"current":0}}`, 0},
+		{name: "generic", report: `{"temperature":{"current":33}}`, want: 33},
+		{name: "NVMe", report: `{"nvme_smart_health_information_log":{"temperature":41}}`, want: 41},
+		{name: "SCSI", report: `{"scsi_temperature":{"current":37}}`, want: 37},
+		{name: "ATA raw value", report: `{"ata_smart_attributes":{"table":[{"id":194,"raw":{"value":"38 (Min/Max 21/40)"}}]}}`, want: 38},
+		{name: "ATA raw string", report: `{"ata_smart_attributes":{"table":[{"id":190,"raw":{"value":588775452,"string":"29 (Min/Max 24/35)"}},{"id":194,"raw":{"value":68719476764,"string":"28 (0 16 0 0 0)"}}]}}`, want: 28},
+		{name: "standby power mode", report: `{"smartctl":{"exit_status":2},"power_mode":{"name":"STANDBY"}}`, wantStandby: true},
+		{name: "embedded smartctl bitmask ignored", report: `{"smartctl":{"exit_status":2},"temperature":{"current":42}}`, want: 42},
+		{name: "invalid temperature", report: `{"temperature":{"current":0}}`, wantError: true},
+		{name: "invalid JSON", report: `{`, wantError: true},
 	} {
-		got, err := parseDirectSMARTTemperature([]byte(scenario.report))
-		if scenario.want == 0 {
-			if err == nil {
-				t.Fatalf("accepted unusable report %s", scenario.report)
+		t.Run(scenario.name, func(t *testing.T) {
+			got, err := parseDirectSMART([]byte(scenario.report))
+			if (err != nil) != scenario.wantError || got.temperature != scenario.want || got.standby != scenario.wantStandby {
+				t.Fatalf("parse %s = %+v, %v", scenario.report, got, err)
 			}
-		} else if err != nil || got != scenario.want {
-			t.Fatalf("parse %s = %v, %v", scenario.report, got, err)
-		}
+		})
 	}
 }
 
@@ -391,7 +430,7 @@ func TestFallbackCallAlwaysContainsStandbyProtection(t *testing.T) {
 	env.now = env.now.Add(46 * time.Second)
 	collector.refresh()
 	args, err := os.ReadFile(argsFile)
-	if err != nil || strings.TrimSpace(string(args)) != "device1 -n standby -A -j" {
+	if err != nil || strings.TrimSpace(string(args)) != "device1 -n standby,3 -A -j" {
 		t.Fatalf("smartctl_type args = %q, %v", args, err)
 	}
 }
