@@ -71,8 +71,9 @@ $config = $diagnostics['config'] ?? [];
 
 <h3>Disks</h3>
 <p>SMART cache age is diagnostic only; an old cache can be normal for a standby disk. Disk IDs may contain serial numbers; redact them before sharing this page or the CLI JSON.</p>
+<?php if (!empty($disks['policy_error'])): ?><p class="red">Disk policies: <?=uvssDiagEsc($disks['policy_error'])?></p><?php endif; ?>
 <?php if (empty($disks['items'])): ?><p>No disk readings available.</p><?php else: ?>
-<table><thead><tr><th>Name</th><th>Unraid ID</th><th>Device</th><th>Transport</th><th>Rotational</th><th>Temperature</th><th>Status</th><th>Source</th><th>Last valid sample</th><th>SMART cache</th></tr></thead><tbody>
+<table><thead><tr><th>Name</th><th>Unraid ID</th><th>Device</th><th>Transport</th><th>Rotational</th><th>Temperature</th><th>Status</th><th>Last valid source</th><th>Last valid sample</th><th>SMART cache</th></tr></thead><tbody>
 <?php foreach ($disks['items'] as $disk): ?>
 <tr><td><?=uvssDiagEsc($disk['name'] ?? null)?></td><td><?=uvssDiagEsc($disk['id'] ?? null)?></td><td><?=uvssDiagEsc($disk['device'] ?? null)?></td><td><?=uvssDiagEsc($disk['transport'] ?? null)?></td><td><?=!empty($disk['rotational']) ? 'Yes' : 'No'?></td><td><?=isset($disk['temperature_c']) ? uvssDiagEsc($disk['temperature_c']) . ' °C' : '—'?></td><td><?=uvssDiagState($disk['status'] ?? 'error')?><?php if (!empty($disk['error'])): ?>: <?=uvssDiagEsc($disk['error'])?><?php endif; ?></td><td><?=uvssDiagEsc($disk['source'] ?? null)?></td><td><?=uvssDiagEsc(uvssDiagAge($disk['last_valid_age_seconds'] ?? null))?></td><td><?=uvssDiagEsc($disk['smart_cache_name'] ?? null)?> · <?=uvssDiagEsc($disk['smart_cache_at'] ?? null)?></td></tr>
 <?php endforeach; ?>

@@ -264,7 +264,7 @@ func parseStorCLI(data []byte) (map[int]float64, error) {
 				continue
 			}
 			temp, err := strconv.ParseFloat(property.Value, 64)
-			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) || temp < 0 || temp > 150 {
+			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) {
 				return nil, fmt.Errorf("storcli controller %d invalid temperature %q", id, property.Value)
 			}
 			temperatures[id], found = temp, true

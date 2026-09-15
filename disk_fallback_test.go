@@ -27,7 +27,7 @@ func fallbackTestCommand(t *testing.T, body string) string {
 
 func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
-	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\ntemp=35\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 	env.report(t, "disk1", env.now)
 	callLog := filepath.Join(t.TempDir(), "calls")
 	env.paths.sdspin = fallbackTestCommand(t, "printf 'sdspin %s %s\\n' \"$1\" \"$2\" >> '"+callLog+"'\nexit 0")
@@ -86,7 +86,7 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 		t.Fatalf("failed second fallback poll reused the first temperature: %#v", disk)
 	}
 	env.now = env.now.Add(time.Second)
-	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\ntemp=39\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=39\n")
 	env.report(t, "disk1", env.now)
 	collector.noteEmhttpPoll()
 	collector.refresh()
@@ -121,7 +121,7 @@ func TestFallbackStandbyUnknownAndUnsafeBuses(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			env := newDiskTestEnvironment(t, "30")
-			env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\ntransport="+scenario.transport+"\ntemp=35\n")
+			env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntransport="+scenario.transport+"\ntemp=35\n")
 			callLog := filepath.Join(t.TempDir(), "calls")
 			env.paths.sdspin = fallbackTestCommand(t, "printf 'sdspin\\n' >> '"+callLog+"'\nexit "+scenario.sdspinExit)
 			env.paths.smartctlType = fallbackTestCommand(t, "printf 'smart\\n' >> '"+callLog+"'\nprintf '{\"temperature\":{\"current\":42}}\\n'")
@@ -194,7 +194,7 @@ func TestFallbackSmartctlExitCodesAndResults(t *testing.T) {
 
 func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
-	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\ntemp=35\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")
 	env.report(t, "disk1", env.now)
 	env.paths.smartctlType = fallbackTestCommand(t, "exit 1")
 	env.paths.sdspin = fallbackTestCommand(t, "exit 1")
@@ -222,7 +222,7 @@ func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 		t.Fatalf("old native cache resurrected stale temperature: %#v", disk)
 	}
 	env.now = env.now.Add(time.Second)
-	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\ntemp=40\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=40\n")
 	env.report(t, "disk1", env.now)
 	collector.noteEmhttpPoll()
 	collector.refresh()
@@ -233,7 +233,7 @@ func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 
 func TestFailedFallbackWaitsForNextPollInterval(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
-	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\ntemp=35\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")
 	env.report(t, "disk1", env.now)
 	callLog := filepath.Join(t.TempDir(), "calls")
 	env.paths.smartctlType = fallbackTestCommand(t, "printf 'smart\\n' >> '"+callLog+"'\nexit 1")
@@ -263,7 +263,7 @@ func TestFailedFallbackWaitsForNextPollInterval(t *testing.T) {
 
 func TestFallbackUsesConfiguredPollInterval(t *testing.T) {
 	env := newDiskTestEnvironment(t, "60")
-	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\n")
 	callLog := filepath.Join(t.TempDir(), "calls")
 	env.paths.smartctlType = fallbackTestCommand(t, "printf 'smart\\n' >> '"+callLog+"'\nprintf '{\"temperature\":{\"current\":42}}\\n'")
 	collector := env.collector()
@@ -287,7 +287,7 @@ func TestFallbackUsesConfiguredPollInterval(t *testing.T) {
 
 func TestFallbackRetainedReadingsFollowInventoryWithoutReusingChangedDevice(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
-	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme0n1\ntransport=nvme\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\n")
 	callLog := filepath.Join(t.TempDir(), "calls")
 	env.paths.smartctlType = fallbackTestCommand(t, "printf '%s\\n' \"$1\" >> '"+callLog+"'\nprintf '{\"temperature\":{\"current\":42}}\\n'")
 	collector := env.collector()
@@ -296,14 +296,14 @@ func TestFallbackRetainedReadingsFollowInventoryWithoutReusingChangedDevice(t *t
 	collector.refresh()
 	firstFallbackAt := env.now
 	env.now = firstFallbackAt.Add(5 * time.Second)
-	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme0n1\ntransport=nvme\n[disk2]\nid=second\ndevice=nvme1n1\ntransport=nvme\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\n[disk2]\nid=second\ndevice=nvme1n1\ntransport=nvme\nrotational=0\nspundown=0\n")
 	collector.refresh()
 	readings, err := collector.snapshot()
 	if err != nil || len(readings) != 2 || readings[0].Temp != 42 || readings[0].Unavailable || !readings[1].Unavailable {
 		t.Fatalf("inventory addition between SMART polls = %#v, %v", readings, err)
 	}
 	env.now = firstFallbackAt.Add(10 * time.Second)
-	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme2n1\ntransport=nvme\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme2n1\ntransport=nvme\nrotational=0\nspundown=0\n")
 	collector.refresh()
 	readings, err = collector.snapshot()
 	if err != nil || len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 || readings[0].Device != "nvme2n1" {
@@ -324,8 +324,8 @@ func TestFallbackReuseUsesStableIdentityAndRejectsChangedTransport(t *testing.T)
 	collector := newDiskCollector(diskDataPaths{})
 	collector.err = nil
 	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{
-		{reading: sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41}, hasReading: true},
-		{reading: sensors.Disk{ID: "second", Device: "nvme1n1", Transport: "nvme", Temp: 52}, hasReading: true},
+		{disk: unraidDisk{id: "first", device: "nvme0n1", transport: "nvme"}, reading: sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41}, hasReading: true},
+		{disk: unraidDisk{id: "second", device: "nvme1n1", transport: "nvme"}, reading: sensors.Disk{ID: "second", Device: "nvme1n1", Transport: "nvme", Temp: 52}, hasReading: true},
 	}
 	collector.state = diskStateTracker{"first": {}, "second": {}}
 
@@ -343,22 +343,35 @@ func TestFallbackReuseUsesStableIdentityAndRejectsChangedTransport(t *testing.T)
 	if len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
 		t.Fatalf("changed transport reused an old measurement: %#v", readings)
 	}
+	if _, exists := collector.state["first"]; exists {
+		t.Fatal("changed disk identity retained its thermal history")
+	}
 }
 
 func TestFallbackReuseDoesNotReviveSnapshotAfterCollectionFailure(t *testing.T) {
 	collector := newDiskCollector(diskDataPaths{})
 	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{{
+		disk:       unraidDisk{id: "first", device: "nvme0n1", transport: "nvme"},
 		reading:    sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41},
 		hasReading: true,
 	}}
 	collector.err = errors.New("inventory failed")
-	collector.state = diskStateTracker{"first": {}}
+	wantState := diskState{
+		thermalState: diskThermalUnavailable,
+		lastValidAt:  time.Unix(1_800_000_000, 0),
+		lastSource:   diskSourceDirect,
+		cacheAt:      time.Unix(1_799_999_990, 0),
+	}
+	collector.state = diskStateTracker{"first": wantState}
 
 	readings := collector.reuseFallbackReadings([]unraidDisk{{
 		id: "first", device: "nvme0n1", transport: "nvme",
 	}})
 	if len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
 		t.Fatalf("failed collection revived the previous snapshot: %#v", readings)
+	}
+	if got := collector.state["first"]; got != wantState {
+		t.Fatalf("failed collection erased thermal history: %#v; want %#v", got, wantState)
 	}
 }
 
@@ -371,13 +384,16 @@ func TestDirectSMARTJSONResults(t *testing.T) {
 		wantError   bool
 	}{
 		{name: "generic", report: `{"temperature":{"current":33}}`, want: 33},
+		{name: "structured zero", report: `{"temperature":{"current":0}}`, want: 0},
+		{name: "structured negative", report: `{"temperature":{"current":-40}}`, want: -40},
+		{name: "structured above 150", report: `{"temperature":{"current":200}}`, want: 200},
 		{name: "NVMe", report: `{"nvme_smart_health_information_log":{"temperature":41}}`, want: 41},
 		{name: "SCSI", report: `{"scsi_temperature":{"current":37}}`, want: 37},
-		{name: "ATA raw value", report: `{"ata_smart_attributes":{"table":[{"id":194,"raw":{"value":"38 (Min/Max 21/40)"}}]}}`, want: 38},
+		{name: "ATA raw value ignored", report: `{"ata_smart_attributes":{"table":[{"id":194,"raw":{"value":29}}]}}`, wantError: true},
 		{name: "ATA raw string", report: `{"ata_smart_attributes":{"table":[{"id":190,"raw":{"value":588775452,"string":"29 (Min/Max 24/35)"}},{"id":194,"raw":{"value":68719476764,"string":"28 (0 16 0 0 0)"}}]}}`, want: 28},
+		{name: "ATA vendor raw outside plausible range", report: `{"ata_smart_attributes":{"table":[{"id":194,"raw":{"string":"200 (0 0 0 0 0)"}}]}}`, wantError: true},
 		{name: "standby power mode", report: `{"smartctl":{"exit_status":2},"power_mode":{"name":"STANDBY"}}`, wantStandby: true},
 		{name: "embedded smartctl bitmask ignored", report: `{"smartctl":{"exit_status":2},"temperature":{"current":42}}`, want: 42},
-		{name: "invalid temperature", report: `{"temperature":{"current":0}}`, wantError: true},
 		{name: "invalid JSON", report: `{`, wantError: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -391,7 +407,7 @@ func TestDirectSMARTJSONResults(t *testing.T) {
 
 func TestFallbackCommandTimeoutDoesNotBlockOtherDisks(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
-	env.write(t, env.paths.disksINI, "[disk1]\nid=slow\ndevice=nvme0n1\ntransport=nvme\n[pool1]\nid=fast\ndevice=nvme1n1\ntransport=nvme\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=slow\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\n[pool1]\nid=fast\ndevice=nvme1n1\ntransport=nvme\nrotational=0\nspundown=0\n")
 	env.paths.smartctlType = fallbackTestCommand(t, "if [ \"$1\" = disk1 ]; then sleep 10; fi\nprintf '{\"temperature\":{\"current\":42}}\\n'")
 	collector := env.collector()
 	collector.refresh()
@@ -417,7 +433,7 @@ func TestFallbackCommandTimeoutDoesNotBlockOtherDisks(t *testing.T) {
 
 func TestPollAttributesZeroDoesNotEnableFallback(t *testing.T) {
 	env := newDiskTestEnvironment(t, "0")
-	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\ntemp=35\n")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 	env.paths.sdspin = fallbackTestCommand(t, "exit 0")
 	env.paths.smartctlType = fallbackTestCommand(t, "exit 0")
 	collector := env.collector()
@@ -431,7 +447,7 @@ func TestPollAttributesZeroDoesNotEnableFallback(t *testing.T) {
 
 func TestFallbackCallAlwaysContainsStandbyProtection(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
-	env.write(t, env.paths.devsINI, "[device1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\n")
+	env.write(t, env.paths.devsINI, "[device1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\n")
 	argsFile := filepath.Join(t.TempDir(), "args")
 	env.paths.smartctlType = fallbackTestCommand(t, "printf '%s\\n' \"$*\" > '"+argsFile+"'\nprintf '{\"temperature\":{\"current\":44}}\\n'")
 	collector := env.collector()
@@ -458,7 +474,7 @@ func TestFallbackConcurrencyIsBounded(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
 	var inventory strings.Builder
 	for i := range 6 {
-		inventory.WriteString("[disk" + strconv.Itoa(i+1) + "]\nid=serial" + strconv.Itoa(i+1) + "\ndevice=nvme" + strconv.Itoa(i) + "n1\ntransport=nvme\n")
+		inventory.WriteString("[disk" + strconv.Itoa(i+1) + "]\nid=serial" + strconv.Itoa(i+1) + "\ndevice=nvme" + strconv.Itoa(i) + "n1\ntransport=nvme\nrotational=0\nspundown=0\n")
 	}
 	env.write(t, env.paths.disksINI, inventory.String())
 	callLog := filepath.Join(t.TempDir(), "starts")

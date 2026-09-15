@@ -93,7 +93,7 @@ func TestPhysicalDiskBusAndPolicy(t *testing.T) {
 				device = "../invalid"
 			}
 			environment.write(t, environment.paths.disksINI,
-				"["+name+"]\nid=stable_id\ndevice="+device+"\ntransport="+test.transport+"\nrotational=1\ntemp=35\n")
+				"["+name+"]\nid=stable_id\ndevice="+device+"\ntransport="+test.transport+"\nrotational=1\nspundown=0\ntemp=35\n")
 			policies := map[string]diskPolicy{}
 			if test.policy != "" {
 				policies["stable_id"] = test.policy
@@ -114,7 +114,7 @@ func TestDiskCollectorAppliesPolicyChangesBeforeSMART(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdi", true)
 	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=bridge_serial\ndevice=sdi\ntransport=ata\nrotational=1\ntemp=35\n")
+		"[disk1]\nid=bridge_serial\ndevice=sdi\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 	collector := environment.collector()
 	collector.refresh()
 	readings, err := collector.snapshot()
@@ -156,7 +156,7 @@ func TestDiskBusFollowsSysfsTopologyWithSameIDAndDevice(t *testing.T) {
 			environment := newDiskTestEnvironment(t, "30")
 			addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", test.initialUSB)
 			environment.write(t, environment.paths.disksINI,
-				"[disk1]\nid=stable_serial\ndevice=sda\ntransport=ata\ntemp=35\n")
+				"[disk1]\nid=stable_serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 			environment.report(t, "disk1", environment.now)
 			collector := environment.collector()
 			check := func(wantIncluded bool) {
@@ -188,8 +188,8 @@ func TestFlashCannotReenterThroughUnassignedInventory(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", true)
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdb", true)
-	environment.write(t, environment.paths.disksINI, "[flash]\nid=boot_serial\ndevice=sda\ntransport=usb\n")
-	environment.write(t, environment.paths.devsINI, "[external]\nid=boot_serial\ndevice=sdb\ntransport=usb\n")
+	environment.write(t, environment.paths.disksINI, "[flash]\nid=boot_serial\ndevice=sda\ntransport=usb\nrotational=0\nspundown=0\n")
+	environment.write(t, environment.paths.devsINI, "[external]\nid=boot_serial\ndevice=sdb\ntransport=usb\nrotational=0\nspundown=0\n")
 	selector := &diskSelector{
 		sysBlockRoot: environment.paths.sysBlockRoot,
 		policies:     map[string]diskPolicy{"boot_serial": diskPolicyInclude},
@@ -198,8 +198,8 @@ func TestFlashCannotReenterThroughUnassignedInventory(t *testing.T) {
 	if err != nil || len(disks) != 0 {
 		t.Fatalf("flash inventory = %#v, %v; want no disks", disks, err)
 	}
-	environment.write(t, environment.paths.disksINI, "[flash]\ndevice=sda\ntransport=usb\n")
-	environment.write(t, environment.paths.devsINI, "[external]\nid=other_serial\ndevice=sda\ntransport=usb\n")
+	environment.write(t, environment.paths.disksINI, "[flash]\ndevice=sda\ntransport=usb\nrotational=0\nspundown=0\n")
+	environment.write(t, environment.paths.devsINI, "[external]\nid=other_serial\ndevice=sda\ntransport=usb\nrotational=0\nspundown=0\n")
 	selector.policies["other_serial"] = diskPolicyInclude
 	disks, err = readDiskInventory(environment.paths.disksINI, environment.paths.devsINI, selector)
 	if err != nil || len(disks) != 0 {
@@ -213,7 +213,7 @@ func TestDiskPolicyPersistenceAndCommand(t *testing.T) {
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdb", false)
 	id := "WDC_ID=with,comma and spaces"
 	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=\""+id+"\"\ndevice=sda\ntransport=ata\ntemp=35\n")
+		"[disk1]\nid=\""+id+"\"\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 	encodedID := base64.StdEncoding.EncodeToString([]byte(id))
 	var output bytes.Buffer
 	if err := diskPolicyCommand([]string{"set", "--id-base64", encodedID, "--policy", "include",
@@ -226,7 +226,7 @@ func TestDiskPolicyPersistenceAndCommand(t *testing.T) {
 	}
 	// A device name change leaves the stable-ID policy intact.
 	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=\""+id+"\"\ndevice=sdb\ntransport=ata\ntemp=35\n")
+		"[disk1]\nid=\""+id+"\"\ndevice=sdb\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 	output.Reset()
 	if err := diskPolicyCommand([]string{"list", "--disks-ini", environment.paths.disksINI,
 		"--devs-ini", environment.paths.devsINI, "--sys-block-root", environment.paths.sysBlockRoot,
@@ -253,7 +253,7 @@ func TestDiskPolicyPersistenceAndCommand(t *testing.T) {
 func TestDiskListCanExposeInvalidDeviceForExclusion(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=stable_id\ndevice=../invalid\ntransport=ata\n")
+		"[disk1]\nid=stable_id\ndevice=../invalid\ntransport=ata\nrotational=1\nspundown=0\n")
 	var output bytes.Buffer
 	if err := diskPolicyCommand([]string{"list", "--disks-ini", environment.paths.disksINI,
 		"--devs-ini", environment.paths.devsINI, "--sys-block-root", environment.paths.sysBlockRoot,
@@ -286,7 +286,7 @@ func TestInvalidDiskPolicyFileDoesNotBlockCollector(t *testing.T) {
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", false)
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdi", true)
 	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=internal\ndevice=sda\ntemp=35\n[disk2]\nid=external\ndevice=sdi\ntransport=ata\ntemp=36\n")
+		"[disk1]\nid=internal\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n[disk2]\nid=external\ndevice=sdi\ntransport=ata\nrotational=1\nspundown=0\ntemp=36\n")
 	environment.write(t, environment.paths.policyFile, `{ "internal": "invalid" }`)
 	environment.report(t, "disk1", environment.now)
 	collector := environment.collector()
@@ -296,6 +296,9 @@ func TestInvalidDiskPolicyFileDoesNotBlockCollector(t *testing.T) {
 	}
 	if len(collector.state) != 1 {
 		t.Fatalf("collector state with invalid policies = %#v; want internal disk only", collector.state)
+	}
+	if status := collector.status(); !strings.Contains(status.policyError, "invalid disk policy") {
+		t.Fatalf("collector policy error = %q", status.policyError)
 	}
 	listArgs := []string{"list", "--disks-ini", environment.paths.disksINI,
 		"--devs-ini", environment.paths.devsINI, "--sys-block-root", environment.paths.sysBlockRoot,

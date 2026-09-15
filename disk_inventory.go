@@ -130,22 +130,28 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, requireVal
 			seenIDs[id] = struct{}{}
 		}
 		bus, policy, included := selector.evaluate(id, name, device)
+		if included && requireValid {
+			if id == "" {
+				return nil, fmt.Errorf("active disk %q has no stable ID", name)
+			}
+			if len(id) > maxUnraidDiskIDSize {
+				return nil, fmt.Errorf("active disk %q has a %d-byte stable ID; observed emhttpd limit is %d", name, len(id), maxUnraidDiskIDSize)
+			}
+			if device == "" {
+				return nil, fmt.Errorf("active disk %q has no device", name)
+			}
+		}
+		disk, err := diskFromSection(section, id, name, device, name, transport)
+		if err != nil {
+			return nil, fmt.Errorf("disk %q: %w", name, err)
+		}
 		entry := diskInventoryEntry{
-			disk: diskFromSection(section, id, name, device, name, transport),
+			disk: disk,
 			bus:  bus, policy: policy, included: included,
 		}
 		if !included || !requireValid {
 			entries = append(entries, entry)
 			continue
-		}
-		if id == "" {
-			return nil, fmt.Errorf("active disk %q has no stable ID", name)
-		}
-		if len(id) > maxUnraidDiskIDSize {
-			return nil, fmt.Errorf("active disk %q has a %d-byte stable ID; observed emhttpd limit is %d", name, len(id), maxUnraidDiskIDSize)
-		}
-		if device == "" {
-			return nil, fmt.Errorf("active disk %q has no device", name)
 		}
 		entries = append(entries, entry)
 	}
@@ -194,22 +200,28 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs,
 			continue
 		}
 		bus, policy, included := selector.evaluate(id, name, device)
+		if included && requireValid {
+			if device == "" {
+				continue
+			}
+			if id == "" {
+				return nil, fmt.Errorf("unassigned disk %q has no stable ID", name)
+			}
+			if len(id) > maxUnraidDiskIDSize {
+				return nil, fmt.Errorf("unassigned disk %q has a %d-byte stable ID; observed emhttpd limit is %d", name, len(id), maxUnraidDiskIDSize)
+			}
+		}
+		disk, err := diskFromSection(section, id, name, device, device, transport)
+		if err != nil {
+			return nil, fmt.Errorf("unassigned disk %q: %w", name, err)
+		}
 		entry := diskInventoryEntry{
-			disk: diskFromSection(section, id, name, device, device, transport),
+			disk: disk,
 			bus:  bus, policy: policy, included: included,
 		}
 		if !included || !requireValid {
 			entries = append(entries, entry)
 			continue
-		}
-		if device == "" {
-			continue
-		}
-		if id == "" {
-			return nil, fmt.Errorf("unassigned disk %q has no stable ID", name)
-		}
-		if len(id) > maxUnraidDiskIDSize {
-			return nil, fmt.Errorf("unassigned disk %q has a %d-byte stable ID; observed emhttpd limit is %d", name, len(id), maxUnraidDiskIDSize)
 		}
 		entries = append(entries, entry)
 	}
@@ -220,13 +232,33 @@ func diskTransport(section *ini.Section) string {
 	return strings.ToLower(strings.TrimSpace(section.Key("transport").String()))
 }
 
-func diskFromSection(section *ini.Section, id, name, device, smartName, transport string) unraidDisk {
+func diskFromSection(section *ini.Section, id, name, device, smartName, transport string) (unraidDisk, error) {
+	rotational, err := parseBinaryDiskField(section, "rotational")
+	if err != nil {
+		return unraidDisk{}, err
+	}
+	spundown, err := parseBinaryDiskField(section, "spundown")
+	if err != nil {
+		return unraidDisk{}, err
+	}
 	return unraidDisk{
 		id: id, name: name, device: device, smartName: smartName,
 		transport:   transport,
 		temperature: strings.TrimSpace(section.Key("temp").String()),
-		rotational:  strings.TrimSpace(section.Key("rotational").String()) == "1",
-		spundown:    strings.TrimSpace(section.Key("spundown").String()) == "1",
+		rotational:  rotational,
+		spundown:    spundown,
+	}, nil
+}
+
+func parseBinaryDiskField(section *ini.Section, name string) (bool, error) {
+	value := strings.TrimSpace(section.Key(name).String())
+	switch value {
+	case "0":
+		return false, nil
+	case "1":
+		return true, nil
+	default:
+		return false, fmt.Errorf("%s must be 0 or 1, got %q", name, value)
 	}
 }
 

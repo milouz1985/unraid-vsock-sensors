@@ -100,11 +100,12 @@ type diagnosticDisk struct {
 }
 
 type diagnosticDisks struct {
-	Status    string           `json:"status"`
-	UpdatedAt *time.Time       `json:"updated_at,omitempty"`
-	Error     string           `json:"error,omitempty"`
-	ErrorAt   *time.Time       `json:"error_at,omitempty"`
-	Items     []diagnosticDisk `json:"items"`
+	Status      string           `json:"status"`
+	UpdatedAt   *time.Time       `json:"updated_at,omitempty"`
+	Error       string           `json:"error,omitempty"`
+	ErrorAt     *time.Time       `json:"error_at,omitempty"`
+	PolicyError string           `json:"policy_error,omitempty"`
+	Items       []diagnosticDisk `json:"items"`
 }
 
 type diagnosticHBA struct {
@@ -121,19 +122,32 @@ type diagnosticHBA struct {
 }
 
 func buildDiagnosticsSnapshot(service serviceStatus, disks diskCollectorStatus, hbas hbaCollectorStatus, now time.Time) diagnosticsSnapshot {
-	result := diagnosticsSnapshot{
+	vsock := buildDiagnosticVSOCK(service.publisher, now)
+	diagnosticDisks, emhttpd := buildDiagnosticDiskServices(disks, now)
+	hba := buildDiagnosticHBA(hbas, service.backend, now)
+	return diagnosticsSnapshot{
 		SchemaVersion: 1, Version: version, PID: service.pid, StartedAt: service.startedAt, GeneratedAt: now,
 		Service: "running", UptimeSeconds: int64(max(0, now.Sub(service.startedAt).Seconds())),
-		Config: diagnosticConfig{VSOCKPort: service.port, HBAMode: hbas.mode, HBABackend: service.backend, HBAInterval: hbas.interval.String()},
-		VSOCK: diagnosticVSOCK{
-			Status: service.publisher.status, HostCID: service.publisher.hostCID, Port: service.publisher.port,
-			LastConnectedAt: timePointer(service.publisher.lastConnectedAt),
-			LastPublishedAt: timePointer(service.publisher.lastPublishedAt),
-			LastError:       service.publisher.lastError, LastErrorAt: timePointer(service.publisher.lastErrorAt),
+		Config: diagnosticConfig{
+			VSOCKPort: service.port, HBAMode: hbas.mode, HBABackend: service.backend, HBAInterval: hbas.interval.String(),
+			PollAttributes: emhttpd.PollAttributes, EmhttpdStaleAfter: emhttpd.StaleAfter,
 		},
+		VSOCK: vsock, Emhttpd: emhttpd, Disks: diagnosticDisks, HBA: hba,
 	}
-	result.VSOCK.LastPublishedAgeSeconds = ageSeconds(result.VSOCK.LastPublishedAt, now)
+}
 
+func buildDiagnosticVSOCK(publisher publisherRuntimeStatus, now time.Time) diagnosticVSOCK {
+	result := diagnosticVSOCK{
+		Status: publisher.status, HostCID: publisher.hostCID, Port: publisher.port,
+		LastConnectedAt: timePointer(publisher.lastConnectedAt),
+		LastPublishedAt: timePointer(publisher.lastPublishedAt),
+		LastError:       publisher.lastError, LastErrorAt: timePointer(publisher.lastErrorAt),
+	}
+	result.LastPublishedAgeSeconds = ageSeconds(result.LastPublishedAt, now)
+	return result
+}
+
+func buildDiagnosticDiskServices(disks diskCollectorStatus, now time.Time) (diagnosticDisks, diagnosticEmhttpd) {
 	pollInterval := disks.source.pollInterval
 	if pollInterval == 0 && !disks.source.ready {
 		pollInterval = defaultPollAttributes
@@ -143,23 +157,27 @@ func buildDiagnosticsSnapshot(service serviceStatus, disks diskCollectorStatus, 
 		staleAfter = (pollInterval + emhttpPollMargin).String()
 	}
 	fallback := disks.source.source == diskSourceDirect
-	result.Disks = diagnosticDisks{
+	diskResult := diagnosticDisks{
 		Status: diagnosticStatusHealthy, UpdatedAt: timePointer(disks.updatedAt), Error: errorText(disks.err),
-		ErrorAt: timePointer(disks.errorAt), Items: buildDiagnosticDisks(disks.disks),
+		ErrorAt: timePointer(disks.errorAt), PolicyError: disks.policyError, Items: buildDiagnosticDisks(disks.disks),
 	}
 	if disks.err != nil {
-		result.Disks.Status = diagnosticStatusError
+		diskResult.Status = diagnosticStatusError
 	} else if disks.updatedAt.IsZero() || !now.Before(disks.updatedAt.Add(diskSnapshotTimeout)) {
-		result.Disks.Status = diagnosticStatusStale
+		diskResult.Status = diagnosticStatusStale
 	}
-	if result.Disks.Status != diagnosticStatusHealthy {
-		for i := range result.Disks.Items {
-			if result.Disks.Items[i].Status == diagnosticDiskValid {
-				result.Disks.Items[i].Status = diagnosticDiskRetained
+	if diskResult.Status != diagnosticStatusHealthy {
+		for i := range diskResult.Items {
+			if diskResult.Items[i].Status == diagnosticDiskValid {
+				diskResult.Items[i].Status = diagnosticDiskRetained
 			}
 		}
 	}
-	result.Emhttpd = diagnosticEmhttpd{
+	for i := range diskResult.Items {
+		diskResult.Items[i].LastValidAgeSeconds = ageSeconds(diskResult.Items[i].LastValidAt, now)
+	}
+
+	emhttpd := diagnosticEmhttpd{
 		Status: diagnosticStatusHealthy, PollAttributes: pollInterval.String(), StaleAfter: staleAfter,
 		TemperatureSource: string(disks.source.source), FallbackActive: fallback,
 		FallbackSince:                 timePointer(disks.source.fallbackSince),
@@ -168,42 +186,39 @@ func buildDiagnosticsSnapshot(service serviceStatus, disks diskCollectorStatus, 
 		Error:                         disks.source.configError, FallbackError: disks.source.lastFallbackError,
 		FallbackErrorAt: timePointer(disks.source.fallbackErrorAt),
 	}
-	result.Config.PollAttributes = result.Emhttpd.PollAttributes
-	result.Config.EmhttpdStaleAfter = result.Emhttpd.StaleAfter
 	if disks.source.heartbeatSeen {
-		result.Emhttpd.LastPollAt = timePointer(disks.source.lastHeartbeat)
-		result.Emhttpd.LastPollAgeSeconds = ageSeconds(result.Emhttpd.LastPollAt, now)
+		emhttpd.LastPollAt = timePointer(disks.source.lastHeartbeat)
+		emhttpd.LastPollAgeSeconds = ageSeconds(emhttpd.LastPollAt, now)
 	}
 	switch {
 	case disks.source.configError != "":
-		result.Emhttpd.Status = "unknown/config error"
+		emhttpd.Status = "unknown/config error"
 	case pollInterval == 0:
-		result.Emhttpd.Status = "polling disabled"
+		emhttpd.Status = "polling disabled"
 	case fallback:
-		result.Emhttpd.Status = diagnosticStatusStale
-	case result.Emhttpd.LastPollAt == nil:
-		result.Emhttpd.Status = "unknown"
+		emhttpd.Status = diagnosticStatusStale
+	case emhttpd.LastPollAt == nil:
+		emhttpd.Status = "unknown"
 	}
-	for i := range result.Disks.Items {
-		item := &result.Disks.Items[i]
-		item.LastValidAgeSeconds = ageSeconds(item.LastValidAt, now)
-	}
+	return diskResult, emhttpd
+}
 
-	result.HBA = diagnosticHBA{Mode: hbas.mode, Backend: service.backend, Interval: hbas.interval.String(),
+func buildDiagnosticHBA(hbas hbaCollectorStatus, backend hbaBackendMode, now time.Time) diagnosticHBA {
+	result := diagnosticHBA{Mode: hbas.mode, Backend: backend, Interval: hbas.interval.String(),
 		LastSuccessfulAt: timePointer(hbas.lastSuccessfulAt), LastError: errorText(hbas.err),
 		LastErrorAt: timePointer(hbas.lastErrorAt), Items: hbas.lastSuccessfulSnapshot}
 	if hbas.mode == hbaModeDisabled {
-		result.HBA.Status = diagnosticStatusDisabled
-		result.HBA.LastError = ""
+		result.Status = diagnosticStatusDisabled
+		result.LastError = ""
 	} else if hbas.err != nil {
-		result.HBA.Status = diagnosticStatusError
+		result.Status = diagnosticStatusError
 	} else if hbas.updatedAt.IsZero() || !now.Before(hbas.updatedAt.Add(hbas.interval+hbaCollectionTimeout)) {
-		result.HBA.Status = diagnosticStatusStale
+		result.Status = diagnosticStatusStale
 	} else {
-		result.HBA.Status = diagnosticStatusHealthy
+		result.Status = diagnosticStatusHealthy
 	}
-	result.HBA.SnapshotAgeSeconds = ageSeconds(result.HBA.LastSuccessfulAt, now)
-	result.HBA.Count = len(result.HBA.Items)
+	result.SnapshotAgeSeconds = ageSeconds(result.LastSuccessfulAt, now)
+	result.Count = len(result.Items)
 	return result
 }
 

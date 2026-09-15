@@ -19,7 +19,8 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	service := newServiceState(990, hbaBackendMPT3CTL).status()
 	disks := diskCollectorStatus{
-		updatedAt: now,
+		updatedAt:   now,
+		policyError: "invalid disk policy for ID \"serial\"",
 		source: smartSourceStatus{
 			ready: true, pollInterval: 30 * time.Second, heartbeatSeen: true,
 			lastHeartbeat: now.Add(-2 * time.Second), source: diskSourceEmhttpd,
@@ -44,6 +45,9 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 	}
 	if snapshot.Disks.Items[0].LastValidAgeSeconds == nil || *snapshot.Disks.Items[0].LastValidAgeSeconds != 12 {
 		t.Fatalf("unexpected sample age: %+v", snapshot.Disks.Items[0])
+	}
+	if snapshot.Disks.PolicyError != disks.policyError {
+		t.Fatalf("missing disk policy error: %+v", snapshot.Disks)
 	}
 	if snapshot.HBA.Status != "disabled" || snapshot.HBA.LastError != "" {
 		t.Fatalf("disabled HBA treated as error: %+v", snapshot.HBA)

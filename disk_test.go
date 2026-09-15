@@ -42,7 +42,7 @@ func newDiskTestEnvironment(t *testing.T, pollAttributes string) *diskTestEnviro
 	if err := os.Mkdir(environment.paths.smartDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	environment.write(t, environment.paths.disksINI, "[flash]\ndevice=sdz\n")
+	environment.write(t, environment.paths.disksINI, "[flash]\ndevice=sdz\nrotational=0\nspundown=0\n")
 	environment.write(t, environment.paths.devsINI, "")
 	environment.write(t, environment.paths.varINI, "poll_attributes=\""+pollAttributes+"\"\n")
 	return environment
@@ -263,7 +263,7 @@ func TestCachedTemperatureAllowsValuesOutsideTypicalSensorRange(t *testing.T) {
 
 func TestZeroCachedTemperatureIsValidReading(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
-	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nspundown=0\ntemp=0\n")
+	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntemp=0\n")
 	environment.report(t, "disk1", environment.now)
 	collector := environment.collector()
 	collector.refresh()
@@ -615,6 +615,47 @@ func TestHistoricalUnraidDisksFixture(t *testing.T) {
 	}
 }
 
+func TestDiskInventoryRequiresExplicitBinaryThermalFields(t *testing.T) {
+	tests := []struct {
+		name, rotational, spundown   string
+		wantRotational, wantSpundown bool
+		wantError                    string
+	}{
+		{name: "SSD active", rotational: "0", spundown: "0"},
+		{name: "HDD standby", rotational: "1", spundown: "1", wantRotational: true, wantSpundown: true},
+		{name: "missing rotational", spundown: "0", wantError: "rotational must be 0 or 1"},
+		{name: "invalid rotational", rotational: "ssd", spundown: "0", wantError: "rotational must be 0 or 1"},
+		{name: "missing spundown", rotational: "1", wantError: "spundown must be 0 or 1"},
+		{name: "invalid spundown", rotational: "1", spundown: "yes", wantError: "spundown must be 0 or 1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "disks.ini")
+			data := "[disk1]\nid=serial\ndevice=sda\nstatus=DISK_OK\n"
+			if test.rotational != "" {
+				data += "rotational=" + test.rotational + "\n"
+			}
+			if test.spundown != "" {
+				data += "spundown=" + test.spundown + "\n"
+			}
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			disks, err := readDisks(path, unknownBusSelector(t))
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("readDisks() error = %v; want %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil || len(disks) != 1 || disks[0].rotational != test.wantRotational || disks[0].spundown != test.wantSpundown {
+				t.Fatalf("readDisks() = %#v, %v", disks, err)
+			}
+		})
+	}
+}
+
 func TestUnraidDiskIDSizeContract(t *testing.T) {
 	if got := len(maxLengthUnraidDiskID); got != maxUnraidDiskIDSize {
 		t.Fatalf("maximum-length test ID is %d bytes, want %d", got, maxUnraidDiskIDSize)
@@ -631,7 +672,7 @@ func TestUnraidDiskIDSizeContract(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "disks.ini")
-			data := fmt.Sprintf("[disk1]\nid=%q\ndevice=sdz\nstatus=DISK_OK\n", test.id)
+			data := fmt.Sprintf("[disk1]\nid=%q\ndevice=sdz\nstatus=DISK_OK\nrotational=1\nspundown=0\n", test.id)
 			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -763,8 +804,8 @@ func TestPollAttributesWarnings(t *testing.T) {
 
 func TestDiskInventoryDeduplicatesAssignedAndUnassignedByStableID(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
-	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntemp=35\n")
-	environment.write(t, environment.paths.devsINI, "[dev1]\nid=serial\ndevice=sdb\ntemp=35\n")
+	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n")
+	environment.write(t, environment.paths.devsINI, "[dev1]\nid=serial\ndevice=sdb\nrotational=1\nspundown=0\ntemp=35\n")
 	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI,
 		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil || len(disks) != 1 || disks[0].name != "disk1" || disks[0].smartName != "disk1" {
@@ -788,7 +829,7 @@ func TestDiskInventoryRejectsDuplicateIDsWithinSource(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			environment := newDiskTestEnvironment(t, "30")
-			inventory := "[disk1]\nid=serial\ndevice=sda\n[disk2]\nid=serial\ndevice=sdb\n"
+			inventory := "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\n[disk2]\nid=serial\ndevice=sdb\nrotational=1\nspundown=0\n"
 			path := environment.paths.devsINI
 			if test.assigned {
 				path = environment.paths.disksINI
@@ -814,9 +855,9 @@ func TestDiskInventoryRejectsDuplicateIDsWithinSource(t *testing.T) {
 func TestDiskInventoryKeepsDistinctIDsWithinEachSource(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=assigned1\ndevice=sda\n[disk2]\nid=assigned2\ndevice=sdb\n")
+		"[disk1]\nid=assigned1\ndevice=sda\nrotational=1\nspundown=0\n[disk2]\nid=assigned2\ndevice=sdb\nrotational=1\nspundown=0\n")
 	environment.write(t, environment.paths.devsINI,
-		"[dev1]\nid=unassigned1\ndevice=sdc\n[dev2]\nid=unassigned2\ndevice=sdd\n")
+		"[dev1]\nid=unassigned1\ndevice=sdc\nrotational=1\nspundown=0\n[dev2]\nid=unassigned2\ndevice=sdd\nrotational=1\nspundown=0\n")
 	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI,
 		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil || len(disks) != 4 {
@@ -837,8 +878,8 @@ func TestDiskInventoryKeepsDistinctIDsWithinEachSource(t *testing.T) {
 
 func TestDuplicateDiskIDDoesNotPublishPartialSnapshot(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
-	validInventory := "[disk1]\nid=serial1\ndevice=sda\ntemp=35\n" +
-		"[disk2]\nid=serial2\ndevice=sdb\ntemp=36\n"
+	validInventory := "[disk1]\nid=serial1\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n" +
+		"[disk2]\nid=serial2\ndevice=sdb\nrotational=1\nspundown=0\ntemp=36\n"
 	environment.write(t, environment.paths.disksINI, validInventory)
 	environment.report(t, "disk1", environment.now)
 	environment.report(t, "disk2", environment.now)
@@ -853,8 +894,8 @@ func TestDuplicateDiskIDDoesNotPublishPartialSnapshot(t *testing.T) {
 	}
 
 	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=serial1\ndevice=sda\ntemp=35\n"+
-			"[disk2]\nid=serial1\ndevice=sdb\ntemp=36\n")
+		"[disk1]\nid=serial1\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n"+
+			"[disk2]\nid=serial1\ndevice=sdb\nrotational=1\nspundown=0\ntemp=36\n")
 	collector.refresh()
 	response := collectorSnapshot(collector, newTestHBACollector(time.Minute, hbaModeDisabled))
 	if response.Disks != nil || !strings.Contains(response.Error, "duplicate disk ID \"serial1\" in disks.ini") {
@@ -973,8 +1014,8 @@ func TestUSBEntriesSkipIdentityValidation(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdi", true)
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdj", true)
-	environment.write(t, environment.paths.disksINI, "[disk1]\ntransport=usb\ndevice=sdi\n")
-	environment.write(t, environment.paths.devsINI, "[external]\ntransport=\" USB \"\ndevice=sdj\n")
+	environment.write(t, environment.paths.disksINI, "[disk1]\ntransport=usb\ndevice=sdi\nrotational=1\nspundown=0\n")
+	environment.write(t, environment.paths.devsINI, "[external]\ntransport=\" USB \"\ndevice=sdj\nrotational=1\nspundown=0\n")
 	entries, err := readAssignedEntries(environment.paths.disksINI,
 		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, true)
 	if err != nil || len(entries) != 1 || entries[0].included {
@@ -1006,6 +1047,8 @@ func TestReadInventorySkipsNoPhysicalDiskStatesAndKeepsDegradedDisk(t *testing.T
 		id=serial5
 		device=sde
 		status=DISK_INVALID
+		rotational=1
+		spundown=0
 	`)+"\n")
 	disks, err := readDisks(environment.paths.disksINI, &diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil || len(disks) != 1 || disks[0].id != "serial5" {
@@ -1050,7 +1093,7 @@ func TestRefreshRequestsAreCoalesced(t *testing.T) {
 
 func TestWatchdogMarksExpiredCacheUnavailableWithoutEvent(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "0")
-	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nspundown=0\ntemp=35\n")
+	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n")
 	environment.report(t, "disk1", environment.now)
 
 	var nowUnixNano atomic.Int64
@@ -1095,7 +1138,7 @@ func eventuallyDisk(t *testing.T, collector *diskCollector, accept func(sensorsD
 
 func TestDiskCollectorConcurrentRefreshAndSnapshot(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
-	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntemp=35\n")
+	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n")
 	environment.report(t, "disk1", environment.now)
 	collector := environment.collector()
 	collector.refresh()

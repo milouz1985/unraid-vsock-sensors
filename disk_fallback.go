@@ -176,7 +176,6 @@ func parseDirectSMART(output []byte) (directSMARTResult, error) {
 			Table []struct {
 				ID  int `json:"id"`
 				Raw struct {
-					Value  any    `json:"value"`
 					String string `json:"string"`
 				} `json:"raw"`
 			} `json:"table"`
@@ -199,26 +198,12 @@ func parseDirectSMART(output []byte) (directSMARTResult, error) {
 				continue
 			}
 			if fields := strings.Fields(attribute.Raw.String); len(fields) != 0 {
-				if value, err := strconv.ParseFloat(fields[0], 64); err == nil && validDirectTemperature(value) {
+				// Unlike the structured fields above, raw strings remain
+				// vendor-specific and keep their plausibility check.
+				if value, err := strconv.ParseFloat(fields[0], 64); err == nil &&
+					validDirectTemperature(value) && value > 0 && value < 150 {
 					return directSMARTResult{temperature: value}, nil
 				}
-			}
-			var value float64
-			var err error
-			switch raw := attribute.Raw.Value.(type) {
-			case float64:
-				value = raw
-			case string:
-				fields := strings.Fields(raw)
-				if len(fields) == 0 {
-					continue
-				}
-				value, err = strconv.ParseFloat(fields[0], 64)
-			default:
-				continue
-			}
-			if err == nil && validDirectTemperature(value) {
-				return directSMARTResult{temperature: value}, nil
 			}
 		}
 	}
@@ -226,5 +211,5 @@ func parseDirectSMART(output []byte) (directSMARTResult, error) {
 }
 
 func validDirectTemperature(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0) && value > 0 && value < 150
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }

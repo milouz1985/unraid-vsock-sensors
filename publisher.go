@@ -110,9 +110,9 @@ func (s *serviceState) status() serviceStatus {
 	}
 }
 
-func collectorSnapshot(disks *diskCollector, collector *hbaCollector) sensors.Response {
+func collectorSnapshot(disks *diskCollector, hbas *hbaCollector) sensors.Response {
 	diskReadings, diskErr := disks.snapshot()
-	hbaReadings, hbaErr := collector.snapshot()
+	hbaReadings, hbaErr := hbas.snapshot()
 	response := sensors.Response{
 		Protocol: sensors.ProtocolVersion, Disks: diskReadings, HBAs: hbaReadings,
 	}
@@ -129,19 +129,19 @@ func publishSnapshots(
 	ctx context.Context,
 	port uint32,
 	disks *diskCollector,
-	collector *hbaCollector,
+	hbas *hbaCollector,
 	state *serviceState,
 ) error {
 	dial := func(ctx context.Context) (snapshotConnection, error) {
 		return dialVSOCK(ctx, vsock.Host, port)
 	}
-	return publishSnapshotsWithDialer(ctx, disks, collector, dial, state)
+	return publishSnapshotsWithDialer(ctx, disks, hbas, dial, state)
 }
 
 func publishSnapshotsWithDialer(
 	ctx context.Context,
 	disks *diskCollector,
-	collector *hbaCollector,
+	hbas *hbaCollector,
 	dial snapshotDialer,
 	state *serviceState,
 ) error {
@@ -165,7 +165,7 @@ func publishSnapshotsWithDialer(
 		}
 		for ctx.Err() == nil {
 			if err = conn.SetWriteDeadline(time.Now().Add(vsockIOTimeout)); err == nil {
-				err = sensors.WriteFrame(conn, collectorSnapshot(disks, collector))
+				err = sensors.WriteFrame(conn, collectorSnapshot(disks, hbas))
 			}
 			if err != nil {
 				if state != nil {

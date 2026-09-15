@@ -57,6 +57,7 @@ type diskCollector struct {
 	errorAt                time.Time
 	state                  diskStateTracker
 	policyLog              stickyErrorLog
+	policyError            string
 	smartSource            smartSourceState
 	fallbackLog            stickyErrorLog
 	lastSuccessfulSnapshot []diskRuntimeDisk
@@ -78,11 +79,12 @@ type diskRuntimeDisk struct {
 }
 
 type diskCollectorStatus struct {
-	updatedAt time.Time
-	errorAt   time.Time
-	err       error
-	disks     []diskRuntimeDisk
-	source    smartSourceStatus
+	updatedAt   time.Time
+	errorAt     time.Time
+	err         error
+	policyError string
+	disks       []diskRuntimeDisk
+	source      smartSourceStatus
 }
 
 func newDiskCollector(paths diskDataPaths) *diskCollector {
@@ -166,6 +168,9 @@ func (c *diskCollector) readInventory() ([]unraidDisk, error) {
 	}
 	policies, policyErr := readDiskPolicies(policyFile)
 	c.policyLog.update(policyErr)
+	c.mu.Lock()
+	c.policyError = errorText(policyErr)
+	c.mu.Unlock()
 	selector := &diskSelector{sysBlockRoot: c.paths.sysBlockRoot, policies: policies}
 	return readDiskInventory(c.paths.disksINI, c.paths.devsINI, selector)
 }
@@ -217,6 +222,10 @@ func (c *diskCollector) publishDiskSuccess(runtimeDisks []diskRuntimeDisk, now t
 func (c *diskCollector) reuseFallbackReadings(disks []unraidDisk) []sensors.Disk {
 	c.mu.RLock()
 	previous := make(map[string]sensors.Disk, len(c.lastSuccessfulSnapshot))
+	previousDisks := make(map[string]unraidDisk, len(c.lastSuccessfulSnapshot))
+	for _, runtime := range c.lastSuccessfulSnapshot {
+		previousDisks[runtime.disk.id] = runtime.disk
+	}
 	if c.err == nil {
 		for _, runtime := range c.lastSuccessfulSnapshot {
 			if runtime.hasReading {
@@ -231,9 +240,14 @@ func (c *diskCollector) reuseFallbackReadings(disks []unraidDisk) []sensors.Disk
 	for _, disk := range disks {
 		present[disk.id] = struct{}{}
 		reading, ok := previous[disk.id]
-		if !ok || reading.Device != disk.device || reading.Transport != disk.transport || reading.Rotational != disk.rotational {
+		previousDisk, existed := previousDisks[disk.id]
+		identityChanged := existed && (previousDisk.device != disk.device ||
+			previousDisk.transport != disk.transport || previousDisk.rotational != disk.rotational)
+		if !ok || identityChanged {
 			reading.Temp = 0
 			reading.Unavailable = true
+		}
+		if identityChanged {
 			delete(c.state, disk.id)
 		}
 		reading.ID, reading.Name, reading.Device = disk.id, disk.name, disk.device
@@ -276,11 +290,12 @@ func diskReadingsFromRuntime(runtimeDisks []diskRuntimeDisk) []sensors.Disk {
 func (c *diskCollector) status() diskCollectorStatus {
 	c.mu.RLock()
 	result := diskCollectorStatus{
-		updatedAt: c.updatedAt,
-		errorAt:   c.errorAt,
-		err:       c.err,
-		disks:     slices.Clone(c.lastSuccessfulSnapshot),
-		source:    c.publishedSource,
+		updatedAt:   c.updatedAt,
+		errorAt:     c.errorAt,
+		err:         c.err,
+		policyError: c.policyError,
+		disks:       slices.Clone(c.lastSuccessfulSnapshot),
+		source:      c.publishedSource,
 	}
 	c.mu.RUnlock()
 
