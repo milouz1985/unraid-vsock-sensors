@@ -220,7 +220,6 @@ func TestActiveDiskRejectsMissingReportAndInvalidTemperature(t *testing.T) {
 		"missing report":      {temperature: "35"},
 		"missing temperature": {temperature: "", report: true},
 		"asterisk":            {temperature: "*", report: true},
-		"synthetic zero":      {temperature: "0", report: true},
 		"not numeric":         {temperature: "warm", report: true},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -251,6 +250,7 @@ func TestCachedTemperatureAllowsValuesOutsideTypicalSensorRange(t *testing.T) {
 		raw  string
 		want float64
 	}{
+		{raw: "0", want: 0},
 		{raw: "-40.125", want: -40.125},
 		{raw: "151.5", want: 151.5},
 	} {
@@ -258,6 +258,18 @@ func TestCachedTemperatureAllowsValuesOutsideTypicalSensorRange(t *testing.T) {
 		if err != nil || got != test.want {
 			t.Errorf("parseCachedTemperature(%q) = %g, %v; want %g", test.raw, got, err, test.want)
 		}
+	}
+}
+
+func TestZeroCachedTemperatureIsValidReading(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nspundown=0\ntemp=0\n")
+	environment.report(t, "disk1", environment.now)
+	collector := environment.collector()
+	collector.refresh()
+	disk := requireSingleDisk(t, collector)
+	if disk.temp != 0 || disk.unavailable || collector.state["serial"].thermalState != diskThermalValid {
+		t.Fatalf("zero-degree reading = %#v; state=%#v", disk, collector.state["serial"])
 	}
 }
 
@@ -408,6 +420,95 @@ func TestWakeStateDoesNotTransferToReplacement(t *testing.T) {
 	if _, exists := tracker["old"]; exists || tracker["new"].thermalState != diskThermalUnavailable ||
 		len(readings) != 1 || !readings[0].Unavailable {
 		t.Fatalf("replacement reading = %#v; states=%#v", readings, tracker)
+	}
+}
+
+func TestInventoryFailureBreaksStandbyWakeContinuity(t *testing.T) {
+	for _, scenario := range []struct {
+		name            string
+		spundown        string
+		temperature     string
+		wantTemperature float64
+		wantUnavailable bool
+		wantState       diskThermalState
+		thenFresh       bool
+	}{
+		{
+			name: "active without temperature", spundown: "0", temperature: "*",
+			wantUnavailable: true, wantState: diskThermalUnavailable, thenFresh: true,
+		},
+		{
+			name: "active with fresh temperature", spundown: "0", temperature: "28",
+			wantTemperature: 28, wantState: diskThermalValid,
+		},
+		{
+			name: "still standby", spundown: "1", temperature: "*",
+			wantState: diskThermalStandby,
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			environment := newDiskTestEnvironment(t, "30")
+			writeAssigned := func(spundown, temperature string) {
+				environment.write(t, environment.paths.disksINI, strings.TrimSpace(`
+					["disk1"]
+					id="serial"
+					device="sda"
+					status="DISK_OK"
+					rotational="1"
+					transport="ata"
+					spundown="`+spundown+`"
+					temp="`+temperature+`"
+				`)+"\n")
+			}
+
+			writeAssigned("0", "35")
+			environment.report(t, "disk1", environment.now)
+			collector := environment.collector()
+			collector.refresh()
+			writeAssigned("1", "*")
+			collector.refresh()
+			beforeFailure := collector.state["serial"]
+			if beforeFailure.thermalState != diskThermalStandby {
+				t.Fatalf("precondition state = %#v", beforeFailure)
+			}
+
+			if err := os.Remove(environment.paths.disksINI); err != nil {
+				t.Fatal(err)
+			}
+			collector.refresh()
+			lost := collector.state["serial"]
+			if lost.thermalState != diskThermalUnavailable || !lost.wakeStartedAt.IsZero() ||
+				!lost.lastValidAt.Equal(beforeFailure.lastValidAt) || lost.lastSource != beforeFailure.lastSource {
+				t.Fatalf("state after inventory failure = %#v; before=%#v", lost, beforeFailure)
+			}
+			if readings, err := collector.snapshot(); err == nil || readings != nil {
+				t.Fatalf("inventory failure snapshot = %#v, %v", readings, err)
+			}
+
+			environment.now = environment.now.Add(2 * time.Hour)
+			collector.noteEmhttpPoll()
+			collector.refresh()
+			writeAssigned(scenario.spundown, scenario.temperature)
+			if scenario.temperature == "28" {
+				environment.report(t, "disk1", environment.now)
+			}
+			collector.refresh()
+			disk := requireSingleDisk(t, collector)
+			if disk.temp != scenario.wantTemperature || disk.unavailable != scenario.wantUnavailable ||
+				collector.state["serial"].thermalState != scenario.wantState {
+				t.Fatalf("reading after inventory recovery = %#v; state=%#v", disk, collector.state["serial"])
+			}
+
+			if scenario.thenFresh {
+				writeAssigned("0", "28")
+				environment.report(t, "disk1", environment.now)
+				collector.refresh()
+				disk = requireSingleDisk(t, collector)
+				if disk.temp != 28 || disk.unavailable || collector.state["serial"].thermalState != diskThermalValid {
+					t.Fatalf("fresh reading after unavailable = %#v; state=%#v", disk, collector.state["serial"])
+				}
+			}
+		})
 	}
 }
 
@@ -746,6 +847,10 @@ func TestDuplicateDiskIDDoesNotPublishPartialSnapshot(t *testing.T) {
 	if readings, err := collector.snapshot(); err != nil || len(readings) != 2 {
 		t.Fatalf("initial snapshot = %#v, %v", readings, err)
 	}
+	previousState := map[string]diskState{
+		"serial1": collector.state["serial1"],
+		"serial2": collector.state["serial2"],
+	}
 
 	environment.write(t, environment.paths.disksINI,
 		"[disk1]\nid=serial1\ndevice=sda\ntemp=35\n"+
@@ -755,9 +860,15 @@ func TestDuplicateDiskIDDoesNotPublishPartialSnapshot(t *testing.T) {
 	if response.Disks != nil || !strings.Contains(response.Error, "duplicate disk ID \"serial1\" in disks.ini") {
 		t.Fatalf("published snapshot = %#v; want error and no partial disks", response)
 	}
-	if len(collector.state) != 2 || collector.state["serial1"].thermalState != diskThermalValid ||
-		collector.state["serial2"].thermalState != diskThermalValid {
-		t.Fatalf("previous disk state was lost: %#v", collector.state)
+	if len(collector.state) != 2 {
+		t.Fatalf("previous disk history was lost: %#v", collector.state)
+	}
+	for id, before := range previousState {
+		after := collector.state[id]
+		if after.thermalState != diskThermalUnavailable || !after.lastValidAt.Equal(before.lastValidAt) ||
+			after.lastSource != before.lastSource || !after.cacheAt.Equal(before.cacheAt) {
+			t.Fatalf("disk %s state after inventory error = %#v; before=%#v", id, after, before)
+		}
 	}
 
 	environment.write(t, environment.paths.disksINI, validInventory)

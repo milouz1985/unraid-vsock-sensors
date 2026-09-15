@@ -149,6 +149,7 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 
 	disks, err := c.readInventory()
 	if err != nil {
+		c.state.invalidateContinuity()
 		c.publishDiskFailure(err, now, c.smartSource.status())
 		return
 	}

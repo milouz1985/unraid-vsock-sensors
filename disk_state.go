@@ -84,15 +84,24 @@ func parseCachedTemperature(raw string) (float64, error) {
 	if math.IsNaN(temperature) || math.IsInf(temperature, 0) {
 		return 0, fmt.Errorf("cached temperature %q is invalid", raw)
 	}
-	if temperature == 0 {
-		return 0, errors.New("cached temperature 0 is reserved for synthetic standby state")
-	}
 	return temperature, nil
 }
 
+// invalidateContinuity prevents a previously observed standby state from
+// authorizing wake grace after an interval where the inventory was unknown.
+// Historical measurement metadata remains available to diagnostics.
+func (s diskStateTracker) invalidateContinuity() {
+	for id, state := range s {
+		state.thermalState = diskThermalUnavailable
+		state.wakeStartedAt = time.Time{}
+		s[id] = state
+	}
+}
+
 // wakeGrace is the maximum time Unraid has to publish the first fresh SMART
-// temperature after a disk transitions from standby to active. During that
-// transition, 0 is a synthetic control value and never a measured temperature.
+// temperature after an uninterrupted observed transition from standby to
+// active. In standby or waking state, 0 is a synthetic control value; the
+// thermal state distinguishes it from a valid physical 0 °C measurement.
 func (s diskStateTracker) apply(observations []diskObservation, now time.Time, wakeGrace time.Duration) []sensors.Disk {
 	present := make(map[string]struct{}, len(observations))
 	readings := make([]sensors.Disk, 0, len(observations))

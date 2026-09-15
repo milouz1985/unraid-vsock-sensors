@@ -204,6 +204,12 @@ func TestBuildDiagnosticDisksHidesSyntheticTemperatures(t *testing.T) {
 			hasObservation: true,
 			state:          diskState{thermalState: diskThermalWaking},
 		},
+		{
+			disk:       unraidDisk{id: "zero", name: "disk3"},
+			reading:    sensors.Disk{ID: "zero", Temp: 0},
+			hasReading: true,
+			state:      diskState{thermalState: diskThermalValid},
+		},
 	}
 	items := buildDiagnosticDisks(disks)
 	if items[0].Status != diagnosticDiskStandby || items[0].Temperature != nil {
@@ -211,6 +217,9 @@ func TestBuildDiagnosticDisksHidesSyntheticTemperatures(t *testing.T) {
 	}
 	if items[1].Status != diagnosticDiskWaking || items[1].Temperature != nil || items[1].Error == "" {
 		t.Fatalf("waking diagnostic = %+v", items[1])
+	}
+	if items[2].Status != diagnosticDiskValid || items[2].Temperature == nil || *items[2].Temperature != 0 {
+		t.Fatalf("valid zero-degree diagnostic = %+v", items[2])
 	}
 }
 

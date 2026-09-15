@@ -9,8 +9,8 @@ import "strings"
 const ProtocolVersion = 1
 
 // Disk describes an Unraid disk and its current safe control temperature.
-// Temp=0 with Unavailable=false can be a synthetic standby/waking sentinel;
-// it does not represent a physical 0 °C SMART measurement.
+// Temp=0 with Unavailable=false may be a physical measurement or the synthetic
+// sentinel used while standby/waking; both have the same cooling effect.
 type Disk struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
