@@ -36,12 +36,12 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	if disk := requireSingleDisk(t, collector); disk.temp != 35 || disk.unavailable {
 		t.Fatalf("initial native reading = %#v", disk)
 	}
-	if last := collector.lastEmhttpPoll.Load(); last == nil || !last.Equal(env.now) {
-		t.Fatal("initial heartbeat was not set")
+	if status := collector.smartSource.status(); !status.lastHeartbeat.IsZero() || status.heartbeatSeen {
+		t.Fatal("collector startup was exposed as a real heartbeat")
 	}
 	env.now = env.now.Add(45 * time.Second)
 	collector.refresh()
-	if collector.fallbackActive {
+	if collector.smartSource.status().source == diskSourceDirect {
 		t.Fatal("fallback enabled at the 45-second boundary")
 	}
 	if _, err := os.Stat(callLog); !os.IsNotExist(err) {
@@ -49,7 +49,7 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	}
 	env.now = env.now.Add(time.Second)
 	collector.refresh()
-	if !collector.fallbackActive {
+	if collector.smartSource.status().source != diskSourceDirect {
 		t.Fatal("fallback not enabled after the stale threshold")
 	}
 	if disk := requireSingleDisk(t, collector); disk.temp != 42 || disk.unavailable {
@@ -89,7 +89,8 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	env.report(t, "disk1", env.now)
 	collector.noteEmhttpPoll()
 	collector.refresh()
-	if last := collector.lastEmhttpPoll.Load(); collector.fallbackActive || !collector.lastFallbackAttempt.IsZero() || last == nil || !last.Equal(env.now) {
+	status := collector.smartSource.status()
+	if status.source != diskSourceEmhttpd || !status.lastDirectAttempt.IsZero() || !status.lastHeartbeat.Equal(env.now) {
 		t.Fatal("fresh emhttpd event did not restore the native source")
 	}
 	if disk := requireSingleDisk(t, collector); disk.temp != 39 || disk.unavailable {
@@ -332,7 +333,7 @@ func TestPollAttributesZeroDoesNotEnableFallback(t *testing.T) {
 	collector.refresh()
 	env.now = env.now.Add(time.Hour)
 	collector.refresh()
-	if collector.fallbackActive {
+	if collector.smartSource.status().source == diskSourceDirect {
 		t.Fatal("disabled emhttpd polling enabled fallback")
 	}
 }
@@ -426,7 +427,7 @@ func TestOnlyEmhttpPollSignalAdvancesHeartbeat(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("manual refresh signal was not forwarded")
 	}
-	if collector.lastEmhttpPoll.Load() != nil {
+	if collector.smartSource.status().heartbeatSeen {
 		t.Fatal("manual refresh advanced emhttpd heartbeat")
 	}
 	poll <- unix.SIGUSR2
@@ -435,7 +436,7 @@ func TestOnlyEmhttpPollSignalAdvancesHeartbeat(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("emhttpd poll signal was not forwarded")
 	}
-	if got := collector.lastEmhttpPoll.Load(); got == nil || !got.Equal(env.now) {
+	if got := collector.smartSource.status().lastHeartbeat; !got.Equal(env.now) {
 		t.Fatalf("emhttpd heartbeat = %v, want %v", got, env.now)
 	}
 }

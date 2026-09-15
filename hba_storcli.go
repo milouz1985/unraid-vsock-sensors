@@ -7,11 +7,91 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os/exec"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
+
+	"unraid-vsock-sensors/internal/sensors"
 )
+
+type storCLIReader struct {
+	metadata         map[int]hbaMetadata
+	discoverMetadata func(context.Context) (map[int]hbaMetadata, error)
+	readTemperatures func(context.Context) (map[int]float64, error)
+}
+
+func (r *storCLIReader) collect(ctx context.Context) ([]sensors.HBA, error) {
+	freshDiscovery := false
+	if r.metadata == nil {
+		if err := r.discover(ctx); err != nil {
+			return nil, err
+		}
+		freshDiscovery = true
+	}
+	readings, err := r.read(ctx)
+	if err == nil {
+		return readings, nil
+	}
+	r.metadata = nil
+	// Rediscover at most once per collection. If discovery already happened in
+	// this call, leave the metadata invalidated so the next collection retries.
+	if freshDiscovery {
+		return nil, err
+	}
+	if discoveryErr := r.discover(ctx); discoveryErr != nil {
+		return nil, errors.Join(err, discoveryErr)
+	}
+	return r.read(ctx)
+}
+
+func (r *storCLIReader) discover(ctx context.Context) error {
+	metadata, err := r.discoverMetadata(ctx)
+	if err != nil {
+		return fmt.Errorf("storcli discovery: %w", err)
+	}
+	r.metadata = metadata
+	return nil
+}
+
+func (r *storCLIReader) read(ctx context.Context) ([]sensors.HBA, error) {
+	controllers := sortedIntKeys(r.metadata)
+	temperatures, err := r.readTemperatures(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateHBAControllerSet(controllers, temperatures); err != nil {
+		return nil, err
+	}
+	return buildHBAReadings(temperatures, r.metadata), nil
+}
+
+func validateHBAControllerSet(controllers []int, temperatures map[int]float64) error {
+	actual := sortedIntKeys(temperatures)
+	if !slices.Equal(controllers, actual) {
+		return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, actual)
+	}
+	return nil
+}
+
+func sortedIntKeys[V any](values map[int]V) []int {
+	return slices.Sorted(maps.Keys(values))
+}
+
+func buildHBAReadings(temperatures map[int]float64, metadata map[int]hbaMetadata) []sensors.HBA {
+	readings := make([]sensors.HBA, 0, len(temperatures))
+	for controller, temperature := range temperatures {
+		identity := metadata[controller]
+		readings = append(readings, sensors.HBA{
+			ID: identity.id, Model: identity.model, PCIAddress: identity.pciAddress, Temp: temperature,
+		})
+	}
+	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
+	return readings
+}
 
 func runStorCLI(ctx context.Context, operation string, args ...string) ([]byte, error) {
 	path, err := exec.LookPath("storcli")

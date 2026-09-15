@@ -25,10 +25,10 @@ const (
 	fallbackWorkers         = 3
 )
 
-func (c *diskCollector) collectFallback(ctx context.Context, disks []unraidDisk) []diskObservation {
+func (c *diskCollector) collectFallback(ctx context.Context, disks []unraidDisk) ([]diskObservation, error) {
 	observations := make([]diskObservation, len(disks))
 	for i, disk := range disks {
-		observations[i] = diskObservation{disk: disk, noGrace: true, err: errors.New("direct SMART temperature unavailable")}
+		observations[i] = newDirectSMARTObservation(disk)
 	}
 	cycle, cancel := context.WithTimeout(ctx, fallbackCycleTimeout)
 	defer cancel()
@@ -55,12 +55,11 @@ func (c *diskCollector) collectFallback(ctx context.Context, disks []unraidDisk)
 			break
 		}
 	}
-	c.fallbackLog.update(firstError)
-	return observations
+	return observations, firstError
 }
 
 func (c *diskCollector) fallbackObservation(ctx context.Context, disk unraidDisk) diskObservation {
-	result := diskObservation{disk: disk, noGrace: true, err: errors.New("direct SMART temperature unavailable")}
+	result := newDirectSMARTObservation(disk)
 	// sdspin is an ATA check. A rotational disk with another or unknown bus
 	// cannot be safely probed here; keep its sample unavailable.
 	if disk.rotational {
@@ -106,6 +105,13 @@ func (c *diskCollector) fallbackObservation(ctx context.Context, disk unraidDisk
 	}
 	result.temperature, result.err = parseDirectSMARTTemperature(output)
 	return result
+}
+
+func newDirectSMARTObservation(disk unraidDisk) diskObservation {
+	return diskObservation{
+		disk: disk, source: diskSourceDirect, failure: diskFailureDiscardPrevious,
+		err: errors.New("direct SMART temperature unavailable"),
+	}
 }
 
 func isATATransport(transport string) bool {

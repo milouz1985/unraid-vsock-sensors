@@ -6,9 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,16 +16,26 @@ import (
 )
 
 type hbaCollector struct {
-	interval           time.Duration
-	mode               hbaMode
-	mu                 sync.RWMutex
-	readings           []sensors.HBA
-	err                error
-	updatedAt          time.Time
-	lastSuccessfulAt   time.Time
-	lastErrorAt        time.Time
-	diagnosticReadings []sensors.HBA
-	reader             hbaSnapshotReader
+	interval               time.Duration
+	mode                   hbaMode
+	mu                     sync.RWMutex
+	readings               []sensors.HBA
+	err                    error
+	updatedAt              time.Time
+	lastSuccessfulAt       time.Time
+	lastErrorAt            time.Time
+	lastSuccessfulSnapshot []sensors.HBA
+	reader                 hbaSnapshotReader
+}
+
+type hbaCollectorStatus struct {
+	interval               time.Duration
+	mode                   hbaMode
+	updatedAt              time.Time
+	lastSuccessfulAt       time.Time
+	lastErrorAt            time.Time
+	err                    error
+	lastSuccessfulSnapshot []sensors.HBA
 }
 
 type hbaMetadata struct {
@@ -94,12 +102,6 @@ type hbaSnapshotReader interface {
 	collect(context.Context) ([]sensors.HBA, error)
 }
 
-type storCLIReader struct {
-	metadata         map[int]hbaMetadata
-	discoverMetadata func(context.Context) (map[int]hbaMetadata, error)
-	readTemperatures func(context.Context) (map[int]float64, error)
-}
-
 func newHBAReaderForBackend(mode hbaBackendMode) hbaSnapshotReader {
 	if mode == hbaBackendStorCLI {
 		return &storCLIReader{
@@ -108,75 +110,6 @@ func newHBAReaderForBackend(mode hbaBackendMode) hbaSnapshotReader {
 		}
 	}
 	return newMPT3Reader()
-}
-
-func (r *storCLIReader) collect(ctx context.Context) ([]sensors.HBA, error) {
-	freshDiscovery := false
-	if r.metadata == nil {
-		if err := r.discover(ctx); err != nil {
-			return nil, err
-		}
-		freshDiscovery = true
-	}
-	readings, err := r.read(ctx)
-	if err == nil {
-		return readings, nil
-	}
-	r.metadata = nil
-	// Rediscover at most once per collection. If discovery already happened in
-	// this call, leave the metadata invalidated so the next collection retries.
-	if freshDiscovery {
-		return nil, err
-	}
-	if discoveryErr := r.discover(ctx); discoveryErr != nil {
-		return nil, errors.Join(err, discoveryErr)
-	}
-	return r.read(ctx)
-}
-
-func (r *storCLIReader) discover(ctx context.Context) error {
-	metadata, err := r.discoverMetadata(ctx)
-	if err != nil {
-		return fmt.Errorf("storcli discovery: %w", err)
-	}
-	r.metadata = metadata
-	return nil
-}
-
-func (r *storCLIReader) read(ctx context.Context) ([]sensors.HBA, error) {
-	controllers := sortedIntKeys(r.metadata)
-	temperatures, err := r.readTemperatures(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateHBAControllerSet(controllers, temperatures); err != nil {
-		return nil, err
-	}
-	return buildHBAReadings(temperatures, r.metadata), nil
-}
-
-func validateHBAControllerSet(controllers []int, temperatures map[int]float64) error {
-	actual := sortedIntKeys(temperatures)
-	if !slices.Equal(controllers, actual) {
-		return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, actual)
-	}
-	return nil
-}
-
-func sortedIntKeys[V any](values map[int]V) []int {
-	return slices.Sorted(maps.Keys(values))
-}
-
-func buildHBAReadings(temperatures map[int]float64, metadata map[int]hbaMetadata) []sensors.HBA {
-	readings := make([]sensors.HBA, 0, len(temperatures))
-	for controller, temperature := range temperatures {
-		identity := metadata[controller]
-		readings = append(readings, sensors.HBA{
-			ID: identity.id, Model: identity.model, PCIAddress: identity.pciAddress, Temp: temperature,
-		})
-	}
-	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
-	return readings
 }
 
 type hbaMode string
@@ -252,7 +185,7 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	c.updatedAt = time.Now()
 	c.lastSuccessfulAt = c.updatedAt
 	c.lastErrorAt = time.Time{}
-	c.diagnosticReadings = slices.Clone(readings)
+	c.lastSuccessfulSnapshot = slices.Clone(readings)
 }
 
 func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
@@ -269,4 +202,14 @@ func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 		return nil, errors.New("HBA temperature snapshot expired")
 	}
 	return slices.Clone(c.readings), nil
+}
+
+func (c *hbaCollector) status() hbaCollectorStatus {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return hbaCollectorStatus{
+		interval: c.interval, mode: c.mode, updatedAt: c.updatedAt,
+		lastSuccessfulAt: c.lastSuccessfulAt, lastErrorAt: c.lastErrorAt, err: c.err,
+		lastSuccessfulSnapshot: slices.Clone(c.lastSuccessfulSnapshot),
+	}
 }

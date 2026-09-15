@@ -11,18 +11,24 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sync"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
 
-	"github.com/mdlayher/vsock"
 	"golang.org/x/sys/unix"
 )
 
 const (
-	defaultDiagnosticsPath = "/run/unraid-vsock-sensors/diagnostics.json"
-	diagnosticsMaxAge      = 5 * time.Second
+	defaultDiagnosticsPath    = "/run/unraid-vsock-sensors/diagnostics.json"
+	diagnosticsMaxAge         = 5 * time.Second
+	diagnosticStatusHealthy   = "healthy"
+	diagnosticStatusStale     = "stale"
+	diagnosticStatusError     = "error"
+	diagnosticStatusDisabled  = "disabled"
+	diagnosticDiskValid       = "valid"
+	diagnosticDiskRetained    = "retained"
+	diagnosticDiskUnavailable = "unavailable"
+	diagnosticDiskStandby     = "standby"
 )
 
 type diagnosticsSnapshot struct {
@@ -114,107 +120,67 @@ type diagnosticHBA struct {
 	Items              []sensors.HBA  `json:"items"`
 }
 
-type diagnosticsState struct {
-	mu        sync.RWMutex
-	startedAt time.Time
-	pid       int
-	port      uint32
-	backend   hbaBackendMode
-	vsock     diagnosticVSOCK
-}
-
-func newDiagnosticsState(port uint32, backend hbaBackendMode) *diagnosticsState {
-	return &diagnosticsState{startedAt: time.Now(), pid: os.Getpid(), port: port, backend: backend,
-		vsock: diagnosticVSOCK{Status: "reconnecting", HostCID: uint32(vsock.Host), Port: port}}
-}
-
-func (s *diagnosticsState) connectedNow() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.vsock.Status = "connected"
-	s.vsock.LastConnectedAt = timePointer(time.Now())
-	s.vsock.LastError = ""
-	s.vsock.LastErrorAt = nil
-}
-
-func (s *diagnosticsState) publishedNow() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.vsock.LastPublishedAt = timePointer(time.Now())
-}
-
-func (s *diagnosticsState) disconnected(err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.vsock.Status = "reconnecting"
-	s.vsock.LastError = errorText(err)
-	s.vsock.LastErrorAt = timePointer(time.Now())
-}
-
-func (s *diagnosticsState) snapshot(disks *diskCollector, hbas *hbaCollector, now time.Time) diagnosticsSnapshot {
-	s.mu.RLock()
+func buildDiagnosticsSnapshot(service serviceStatus, disks diskCollectorStatus, hbas hbaCollectorStatus, now time.Time) diagnosticsSnapshot {
 	result := diagnosticsSnapshot{
-		SchemaVersion: 1, Version: version, PID: s.pid, StartedAt: s.startedAt, GeneratedAt: now,
-		Service: "running", UptimeSeconds: int64(max(0, now.Sub(s.startedAt).Seconds())),
-		Config: diagnosticConfig{VSOCKPort: s.port, HBAMode: hbas.mode, HBABackend: s.backend, HBAInterval: hbas.interval.String()},
-		VSOCK:  s.vsock,
+		SchemaVersion: 1, Version: version, PID: service.pid, StartedAt: service.startedAt, GeneratedAt: now,
+		Service: "running", UptimeSeconds: int64(max(0, now.Sub(service.startedAt).Seconds())),
+		Config: diagnosticConfig{VSOCKPort: service.port, HBAMode: hbas.mode, HBABackend: service.backend, HBAInterval: hbas.interval.String()},
+		VSOCK: diagnosticVSOCK{
+			Status: service.publisher.status, HostCID: service.publisher.hostCID, Port: service.publisher.port,
+			LastConnectedAt: timePointer(service.publisher.lastConnectedAt),
+			LastPublishedAt: timePointer(service.publisher.lastPublishedAt),
+			LastError:       service.publisher.lastError, LastErrorAt: timePointer(service.publisher.lastErrorAt),
+		},
 	}
-	s.mu.RUnlock()
 	result.VSOCK.LastPublishedAgeSeconds = ageSeconds(result.VSOCK.LastPublishedAt, now)
 
-	disks.mu.RLock()
-	pollInterval := disks.diagnosticPoll
-	if pollInterval == 0 && !disks.diagnosticReady {
+	pollInterval := disks.source.pollInterval
+	if pollInterval == 0 && !disks.source.ready {
 		pollInterval = defaultPollAttributes
 	}
-	configErr := disks.diagnosticPollErr
 	staleAfter := "disabled"
 	if pollInterval > 0 {
 		staleAfter = (pollInterval + emhttpPollMargin).String()
 	}
-	fallback := disks.diagnosticFallback
-	lastAttempt := disks.diagnosticAttempt
-	fallbackSince := disks.diagnosticFallbackSince
-	result.Disks = diagnosticDisks{Status: "healthy", UpdatedAt: timePointer(disks.updatedAt), Error: errorText(disks.err),
-		ErrorAt: timePointer(disks.diagnosticErrorAt), Items: slices.Clone(disks.diagnosticDisks)}
-	if disks.err != nil {
-		result.Disks.Status = "error"
-	} else if disks.updatedAt.IsZero() || !now.Before(disks.updatedAt.Add(diskSnapshotTimeout)) {
-		result.Disks.Status = "stale"
+	fallback := disks.source.source == diskSourceDirect
+	result.Disks = diagnosticDisks{
+		Status: diagnosticStatusHealthy, UpdatedAt: timePointer(disks.updatedAt), Error: errorText(disks.err),
+		ErrorAt: timePointer(disks.errorAt), Items: buildDiagnosticDisks(disks.disks),
 	}
-	if result.Disks.Status != "healthy" {
+	if disks.err != nil {
+		result.Disks.Status = diagnosticStatusError
+	} else if disks.updatedAt.IsZero() || !now.Before(disks.updatedAt.Add(diskSnapshotTimeout)) {
+		result.Disks.Status = diagnosticStatusStale
+	}
+	if result.Disks.Status != diagnosticStatusHealthy {
 		for i := range result.Disks.Items {
-			if result.Disks.Items[i].Status == "valid" {
-				result.Disks.Items[i].Status = "retained"
+			if result.Disks.Items[i].Status == diagnosticDiskValid {
+				result.Disks.Items[i].Status = diagnosticDiskRetained
 			}
 		}
 	}
 	result.Emhttpd = diagnosticEmhttpd{
-		Status: "healthy", PollAttributes: pollInterval.String(), StaleAfter: staleAfter,
-		TemperatureSource: "emhttpd cache", FallbackActive: fallback, FallbackSince: timePointer(fallbackSince),
-		LastFallbackAttemptAt: timePointer(lastAttempt), LastFallbackAttemptAgeSeconds: ageSeconds(timePointer(lastAttempt), now),
-		Error: configErr, FallbackError: disks.diagnosticFallbackError,
-		FallbackErrorAt: timePointer(disks.diagnosticFallbackErrorAt),
+		Status: diagnosticStatusHealthy, PollAttributes: pollInterval.String(), StaleAfter: staleAfter,
+		TemperatureSource: string(disks.source.source), FallbackActive: fallback,
+		FallbackSince:                 timePointer(disks.source.fallbackSince),
+		LastFallbackAttemptAt:         timePointer(disks.source.lastObservedAttempt),
+		LastFallbackAttemptAgeSeconds: ageSeconds(timePointer(disks.source.lastObservedAttempt), now),
+		Error:                         disks.source.configError, FallbackError: disks.source.lastFallbackError,
+		FallbackErrorAt: timePointer(disks.source.fallbackErrorAt),
 	}
-	disks.mu.RUnlock()
 	result.Config.PollAttributes = result.Emhttpd.PollAttributes
 	result.Config.EmhttpdStaleAfter = result.Emhttpd.StaleAfter
-	if fallback {
-		result.Emhttpd.TemperatureSource = "direct SMART fallback"
-	}
-	if disks.emhttpPollSeen.Load() {
-		if lastPoll := disks.lastEmhttpPoll.Load(); lastPoll != nil {
-			result.Emhttpd.LastPollAt = timePointer(*lastPoll)
-			result.Emhttpd.LastPollAgeSeconds = ageSeconds(lastPoll, now)
-		}
+	if disks.source.heartbeatSeen {
+		result.Emhttpd.LastPollAt = timePointer(disks.source.lastHeartbeat)
+		result.Emhttpd.LastPollAgeSeconds = ageSeconds(result.Emhttpd.LastPollAt, now)
 	}
 	switch {
-	case configErr != "":
+	case disks.source.configError != "":
 		result.Emhttpd.Status = "unknown/config error"
 	case pollInterval == 0:
 		result.Emhttpd.Status = "polling disabled"
 	case fallback:
-		result.Emhttpd.Status = "stale"
+		result.Emhttpd.Status = diagnosticStatusStale
 	case result.Emhttpd.LastPollAt == nil:
 		result.Emhttpd.Status = "unknown"
 	}
@@ -223,59 +189,61 @@ func (s *diagnosticsState) snapshot(disks *diskCollector, hbas *hbaCollector, no
 		item.LastValidAgeSeconds = ageSeconds(item.LastValidAt, now)
 	}
 
-	hbas.mu.RLock()
-	result.HBA = diagnosticHBA{Mode: hbas.mode, Backend: s.backend, Interval: hbas.interval.String(),
+	result.HBA = diagnosticHBA{Mode: hbas.mode, Backend: service.backend, Interval: hbas.interval.String(),
 		LastSuccessfulAt: timePointer(hbas.lastSuccessfulAt), LastError: errorText(hbas.err),
-		LastErrorAt: timePointer(hbas.lastErrorAt), Items: slices.Clone(hbas.diagnosticReadings)}
+		LastErrorAt: timePointer(hbas.lastErrorAt), Items: slices.Clone(hbas.lastSuccessfulSnapshot)}
 	if hbas.mode == hbaModeDisabled {
-		result.HBA.Status = "disabled"
+		result.HBA.Status = diagnosticStatusDisabled
 		result.HBA.LastError = ""
 	} else if hbas.err != nil {
-		result.HBA.Status = "error"
+		result.HBA.Status = diagnosticStatusError
 	} else if hbas.updatedAt.IsZero() || !now.Before(hbas.updatedAt.Add(hbas.interval+hbaCollectionTimeout)) {
-		result.HBA.Status = "stale"
+		result.HBA.Status = diagnosticStatusStale
 	} else {
-		result.HBA.Status = "healthy"
+		result.HBA.Status = diagnosticStatusHealthy
 	}
 	result.HBA.SnapshotAgeSeconds = ageSeconds(result.HBA.LastSuccessfulAt, now)
 	result.HBA.Count = len(result.HBA.Items)
-	hbas.mu.RUnlock()
 	return result
 }
 
-func buildDiagnosticDisks(disks []unraidDisk, readings []sensors.Disk, observations []diskObservation, states diskStateTracker, fallback, reused bool) []diagnosticDisk {
+func buildDiagnosticDisks(disks []diskRuntimeDisk) []diagnosticDisk {
+	if disks == nil {
+		return nil
+	}
 	items := make([]diagnosticDisk, 0, len(disks))
-	for i, disk := range disks {
-		state := states[disk.id]
+	for _, runtime := range disks {
+		disk := runtime.disk
+		state := runtime.state
 		item := diagnosticDisk{Name: disk.name, ID: disk.id, Device: "/dev/" + disk.device,
 			Transport: disk.transport, Rotational: disk.rotational, Spundown: disk.spundown,
 			SMARTCacheName: disk.smartName, LastValidAt: timePointer(state.lastValidAt),
-			SMARTCacheAt: timePointer(state.cacheAt), Source: state.lastSource, Status: "valid"}
-		if i < len(readings) {
-			if readings[i].Unavailable {
-				item.Status = "unavailable"
-			} else if reused {
-				item.Status = "retained"
+			SMARTCacheAt: timePointer(state.cacheAt), Source: string(state.lastSource), Status: diagnosticDiskValid}
+		if runtime.hasReading {
+			if runtime.reading.Unavailable {
+				item.Status = diagnosticDiskUnavailable
+			} else if runtime.reused {
+				item.Status = diagnosticDiskRetained
 			}
-			if !readings[i].Unavailable && item.Status != "standby" {
-				value := readings[i].Temp
+			if !runtime.reading.Unavailable && item.Status != diagnosticDiskStandby {
+				value := runtime.reading.Temp
 				item.Temperature = &value
 			}
 		}
-		if i < len(observations) {
-			observation := observations[i]
+		if runtime.hasObservation {
+			observation := runtime.observation
 			if observation.standby {
-				item.Status = "standby"
+				item.Status = diagnosticDiskStandby
 				item.Temperature = nil
 			} else if observation.err != nil {
 				item.Error = observation.err.Error()
-				if item.Status == "valid" {
-					item.Status = "retained"
+				if item.Status == diagnosticDiskValid {
+					item.Status = diagnosticDiskRetained
 				}
 			}
 		}
-		if fallback && item.Status == "valid" {
-			item.Source = "direct SMART fallback"
+		if runtime.collectionSource == diskSourceDirect && item.Status == diagnosticDiskValid {
+			item.Source = string(diskSourceDirect)
 		}
 		items = append(items, item)
 	}
@@ -303,9 +271,12 @@ func errorText(err error) string {
 	return err.Error()
 }
 
-func runDiagnostics(ctx context.Context, path string, state *diagnosticsState, disks *diskCollector, hbas *hbaCollector) {
+func runDiagnostics(ctx context.Context, path string, state *serviceState, disks *diskCollector, hbas *hbaCollector) {
 	logState := stickyErrorLog{context: "diagnostics snapshot"}
-	write := func() { logState.update(writeDiagnosticsAtomic(path, state.snapshot(disks, hbas, time.Now()))) }
+	write := func() {
+		snapshot := buildDiagnosticsSnapshot(state.status(), disks.status(), hbas.status(), time.Now())
+		logState.update(writeDiagnosticsAtomic(path, snapshot))
+	}
 	write()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()

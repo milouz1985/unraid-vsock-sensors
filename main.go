@@ -8,7 +8,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"log/syslog"
 	"os"
@@ -17,10 +16,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"unraid-vsock-sensors/internal/sensors"
 	"unraid-vsock-sensors/internal/vsockaddr"
-
-	"github.com/mdlayher/vsock"
 )
 
 const (
@@ -28,34 +24,6 @@ const (
 	defaultPublishInterval = time.Second
 	vsockIOTimeout         = 3 * time.Second
 )
-
-type stickyErrorLog struct {
-	context string
-	last    string
-}
-
-func (state *stickyErrorLog) update(err error) {
-	message := ""
-	if err != nil {
-		message = err.Error()
-	}
-	if message == state.last {
-		return
-	}
-	state.last = message
-	if message == "" {
-		log.Printf("%s recovered", state.context)
-		return
-	}
-	log.Printf("%s warning: %s", state.context, message)
-}
-
-type snapshotConnection interface {
-	io.WriteCloser
-	SetWriteDeadline(time.Time) error
-}
-
-type snapshotDialer func(context.Context) (snapshotConnection, error)
 
 var version = "dev"
 
@@ -185,13 +153,13 @@ func serve(args []string) error {
 	refreshRequests := make(chan struct{}, 1)
 	go forwardDiskRefreshSignals(ctx, refreshSignals, pollSignals, refreshRequests, disks)
 	hbas := newConfiguredHBACollector(hbaInterval, hbaMode, hbaBackend)
-	diagnostics := newDiagnosticsState(uint32(*port), hbaBackend)
+	service := newServiceState(uint32(*port), hbaBackend)
 	// Collection remains independent from publication so a disk or controller
 	// command can never block the VSOCK heartbeat.
 	go disks.run(ctx, refreshRequests)
 	go hbas.run(ctx)
-	go runDiagnostics(ctx, defaultDiagnosticsPath, diagnostics, disks, hbas)
-	return publishSnapshots(ctx, uint32(*port), disks, hbas, diagnostics)
+	go runDiagnostics(ctx, defaultDiagnosticsPath, service, disks, hbas)
+	return publishSnapshots(ctx, uint32(*port), disks, hbas, service)
 }
 
 func resolveHBAInterval(backend hbaBackendMode, interval time.Duration, explicit bool) (time.Duration, error) {
@@ -224,100 +192,5 @@ func forwardDiskRefreshSignals(ctx context.Context, manual, poll <-chan os.Signa
 			disks.noteEmhttpPoll()
 			requestDiskRefresh(refresh)
 		}
-	}
-}
-
-func collectorSnapshot(
-	disks *diskCollector,
-	collector *hbaCollector,
-) sensors.Response {
-	diskReadings, diskErr := disks.snapshot()
-	hbaReadings, hbaErr := collector.snapshot()
-	response := sensors.Response{
-		Protocol: sensors.ProtocolVersion, Disks: diskReadings, HBAs: hbaReadings,
-	}
-	if diskErr != nil {
-		response.Error = diskErr.Error()
-	}
-	if hbaErr != nil {
-		response.HBAError = hbaErr.Error()
-	}
-	return response
-}
-
-func publishSnapshots(
-	ctx context.Context,
-	port uint32,
-	disks *diskCollector,
-	collector *hbaCollector,
-	diagnostics *diagnosticsState,
-) error {
-	dial := func(ctx context.Context) (snapshotConnection, error) {
-		return sensors.DialVSOCK(ctx, vsock.Host, port)
-	}
-	return publishSnapshotsWithDialer(ctx, disks, collector, dial, diagnostics)
-}
-
-func publishSnapshotsWithDialer(
-	ctx context.Context,
-	disks *diskCollector,
-	collector *hbaCollector,
-	dial snapshotDialer,
-	state *diagnosticsState,
-) error {
-	publishLog := stickyErrorLog{context: "VSOCK publishing"}
-	for ctx.Err() == nil {
-		connectCtx, cancel := context.WithTimeout(ctx, vsockIOTimeout)
-		conn, err := dial(connectCtx)
-		cancel()
-		if err != nil {
-			if state != nil {
-				state.disconnected(err)
-			}
-			publishLog.update(err)
-			if !waitFor(ctx, defaultPublishInterval) {
-				break
-			}
-			continue
-		}
-		if state != nil {
-			state.connectedNow()
-		}
-		for ctx.Err() == nil {
-			if err = conn.SetWriteDeadline(time.Now().Add(vsockIOTimeout)); err == nil {
-				err = sensors.WriteFrame(conn, collectorSnapshot(disks, collector))
-			}
-			if err != nil {
-				if state != nil {
-					state.disconnected(err)
-				}
-				_ = conn.Close()
-				publishLog.update(err)
-				break
-			}
-			publishLog.update(nil)
-			if state != nil {
-				state.publishedNow()
-			}
-			if !waitFor(ctx, defaultPublishInterval) {
-				_ = conn.Close()
-				return nil
-			}
-		}
-		if ctx.Err() == nil && !waitFor(ctx, defaultPublishInterval) {
-			break
-		}
-	}
-	return nil
-}
-
-func waitFor(ctx context.Context, delay time.Duration) bool {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
 	}
 }

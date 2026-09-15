@@ -15,22 +15,25 @@ import (
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-func TestDiagnosticsSnapshotStatesAndNoCollectorMutation(t *testing.T) {
+func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
-	disks := newDiskCollector(diskDataPaths{})
-	disks.mu.Lock()
-	disks.err = nil
-	disks.updatedAt = now
-	disks.diagnosticReady = true
-	disks.diagnosticPoll = 30 * time.Second
-	disks.diagnosticDisks = []diagnosticDisk{{ID: "serial", Name: "disk1", Status: "valid", Source: "emhttpd cache", LastValidAt: timePointer(now.Add(-12 * time.Second))}}
-	disks.mu.Unlock()
-	disks.now = func() time.Time { return now.Add(-2 * time.Second) }
-	disks.noteEmhttpPoll()
-	hbas := newConfiguredHBACollector(15*time.Second, hbaModeDisabled, hbaBackendMPT3CTL)
-	state := newDiagnosticsState(990, hbaBackendMPT3CTL)
-	before := slicesOfDiagnosticDisks(disks)
-	snapshot := state.snapshot(disks, hbas, now)
+	service := newServiceState(990, hbaBackendMPT3CTL).status()
+	disks := diskCollectorStatus{
+		updatedAt: now,
+		source: smartSourceStatus{
+			ready: true, pollInterval: 30 * time.Second, heartbeatSeen: true,
+			lastHeartbeat: now.Add(-2 * time.Second), source: diskSourceEmhttpd,
+		},
+		disks: []diskRuntimeDisk{{
+			disk:    unraidDisk{id: "serial", name: "disk1"},
+			reading: sensors.Disk{ID: "serial", Name: "disk1", Temp: 35}, hasReading: true,
+			state:            diskState{lastValidAt: now.Add(-12 * time.Second), lastSource: diskSourceEmhttpd},
+			collectionSource: diskSourceEmhttpd,
+		}},
+	}
+	hbas := hbaCollectorStatus{interval: 15 * time.Second, mode: hbaModeDisabled}
+	before := append([]diskRuntimeDisk(nil), disks.disks...)
+	snapshot := buildDiagnosticsSnapshot(service, disks, hbas, now)
 	if snapshot.Emhttpd.Status != "healthy" || snapshot.Emhttpd.TemperatureSource != "emhttpd cache" || snapshot.Emhttpd.LastPollAt == nil {
 		t.Fatalf("unexpected emhttpd state: %+v", snapshot.Emhttpd)
 	}
@@ -46,72 +49,78 @@ func TestDiagnosticsSnapshotStatesAndNoCollectorMutation(t *testing.T) {
 	if snapshot.HBA.Status != "disabled" || snapshot.HBA.LastError != "" {
 		t.Fatalf("disabled HBA treated as error: %+v", snapshot.HBA)
 	}
-	if !reflect.DeepEqual(before, slicesOfDiagnosticDisks(disks)) {
-		t.Fatal("diagnostic read mutated disk collector")
+	if !reflect.DeepEqual(before, disks.disks) {
+		t.Fatal("diagnostic conversion mutated disk runtime state")
 	}
 	data, err := json.Marshal(snapshot)
 	if err != nil || !json.Valid(data) {
 		t.Fatalf("invalid JSON: %v", err)
 	}
 
-	disks.mu.Lock()
-	disks.diagnosticFallback = true
-	disks.diagnosticFallbackSince = now.Add(-time.Minute)
-	disks.diagnosticAttempt = now.Add(-5 * time.Second)
-	disks.diagnosticFallbackError = "SMART failed"
+	disks.source.source = diskSourceDirect
+	disks.source.fallbackSince = now.Add(-time.Minute)
+	disks.source.lastObservedAttempt = now.Add(-5 * time.Second)
+	disks.source.lastFallbackError = "SMART failed"
 	disks.err = errors.New("inventory failed")
-	disks.diagnosticDisks[0].Status = "unavailable"
-	disks.mu.Unlock()
-	snapshot = state.snapshot(disks, hbas, now)
+	disks.disks[0].reading.Unavailable = true
+	snapshot = buildDiagnosticsSnapshot(service, disks, hbas, now)
 	if snapshot.Emhttpd.Status != "stale" || snapshot.Emhttpd.TemperatureSource != "direct SMART fallback" || snapshot.Emhttpd.LastFallbackAttemptAgeSeconds == nil || *snapshot.Emhttpd.LastFallbackAttemptAgeSeconds != 5 {
 		t.Fatalf("unexpected fallback state: %+v", snapshot.Emhttpd)
 	}
 	if snapshot.Disks.Status != "error" || snapshot.Disks.Error != "inventory failed" || snapshot.Emhttpd.FallbackError != "SMART failed" {
 		t.Fatalf("errors not separated: %+v %+v", snapshot.Disks, snapshot.Emhttpd)
 	}
-	disks.mu.Lock()
 	disks.err = nil
-	disks.diagnosticFallback = false
-	disks.diagnosticPoll = 0
-	disks.mu.Unlock()
-	snapshot = state.snapshot(disks, hbas, now)
+	disks.source.source = diskSourceEmhttpd
+	disks.source.pollInterval = 0
+	snapshot = buildDiagnosticsSnapshot(service, disks, hbas, now)
 	if snapshot.Emhttpd.Status != "polling disabled" || snapshot.Emhttpd.StaleAfter != "disabled" {
 		t.Fatalf("disabled polling has a stale threshold: %+v", snapshot.Emhttpd)
 	}
 }
 
-func slicesOfDiagnosticDisks(c *diskCollector) []diagnosticDisk {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return append([]diagnosticDisk(nil), c.diagnosticDisks...)
+func TestCollectorStatusReturnsIndependentCopies(t *testing.T) {
+	disks := newDiskCollector(diskDataPaths{})
+	disks.lastSuccessfulSnapshot = []diskRuntimeDisk{{disk: unraidDisk{id: "disk-id"}}}
+	diskStatus := disks.status()
+	diskStatus.disks[0].disk.id = "changed"
+	if got := disks.status().disks[0].disk.id; got != "disk-id" {
+		t.Fatalf("disk status mutated collector: %q", got)
+	}
+
+	hbas := newConfiguredHBACollector(time.Minute, hbaModeEnabled, hbaBackendMPT3CTL)
+	hbas.lastSuccessfulSnapshot = []sensors.HBA{{ID: "sas:1", Temp: 45}}
+	hbaStatus := hbas.status()
+	hbaStatus.lastSuccessfulSnapshot[0].Temp = 99
+	if got := hbas.status().lastSuccessfulSnapshot[0].Temp; got != 45 {
+		t.Fatalf("HBA status mutated collector: %v", got)
+	}
 }
 
 func TestDiagnosticsVSOCKAndHBAError(t *testing.T) {
-	disks := newDiskCollector(diskDataPaths{})
-	hbas := newConfiguredHBACollector(30*time.Second, hbaModeEnabled, hbaBackendStorCLI)
-	hbas.mu.Lock()
-	hbas.err = errors.New("backend unavailable")
-	hbas.lastErrorAt = time.Now()
-	hbas.lastSuccessfulAt = time.Now().Add(-time.Minute)
-	hbas.diagnosticReadings = []sensors.HBA{{ID: "sas:1", Temp: 45}}
-	hbas.mu.Unlock()
-	state := newDiagnosticsState(991, hbaBackendStorCLI)
-	state.connectedNow()
-	state.publishedNow()
-	snapshot := state.snapshot(disks, hbas, time.Now())
+	service := newServiceState(991, hbaBackendStorCLI)
+	service.connectedNow()
+	service.publishedNow()
+	hbas := hbaCollectorStatus{
+		interval: 30 * time.Second, mode: hbaModeEnabled,
+		err: errors.New("backend unavailable"), lastErrorAt: time.Now(),
+		lastSuccessfulAt:       time.Now().Add(-time.Minute),
+		lastSuccessfulSnapshot: []sensors.HBA{{ID: "sas:1", Temp: 45}},
+	}
+	snapshot := buildDiagnosticsSnapshot(service.status(), newDiskCollector(diskDataPaths{}).status(), hbas, time.Now())
 	if snapshot.VSOCK.Status != "connected" || snapshot.VSOCK.LastConnectedAt == nil || snapshot.VSOCK.LastPublishedAt == nil || snapshot.VSOCK.LastPublishedAgeSeconds == nil {
 		t.Fatalf("missing successful VSOCK events: %+v", snapshot.VSOCK)
 	}
 	if snapshot.HBA.Status != "error" || snapshot.HBA.LastError != "backend unavailable" || snapshot.HBA.LastErrorAt == nil || snapshot.HBA.Count != 1 {
 		t.Fatalf("missing HBA error: %+v", snapshot.HBA)
 	}
-	state.disconnected(errors.New("write failed"))
-	snapshot = state.snapshot(disks, hbas, time.Now())
+	service.disconnected(errors.New("write failed"))
+	snapshot = buildDiagnosticsSnapshot(service.status(), newDiskCollector(diskDataPaths{}).status(), hbas, time.Now())
 	if snapshot.VSOCK.Status != "reconnecting" || snapshot.VSOCK.LastError != "write failed" || snapshot.VSOCK.LastPublishedAt == nil {
 		t.Fatalf("missing VSOCK failure or prior publication: %+v", snapshot.VSOCK)
 	}
-	state.connectedNow()
-	if got := state.snapshot(disks, hbas, time.Now()).VSOCK.LastError; got != "" {
+	service.connectedNow()
+	if got := buildDiagnosticsSnapshot(service.status(), newDiskCollector(diskDataPaths{}).status(), hbas, time.Now()).VSOCK.LastError; got != "" {
 		t.Fatalf("error not cleared: %q", got)
 	}
 }
@@ -119,8 +128,11 @@ func TestDiagnosticsVSOCKAndHBAError(t *testing.T) {
 func TestReadDiagnosticsRuntimeFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runtime", "diagnostics.json")
 	now := time.Now()
-	state := newDiagnosticsState(990, hbaBackendMPT3CTL)
-	snapshot := state.snapshot(newDiskCollector(diskDataPaths{}), newConfiguredHBACollector(15*time.Second, hbaModeDisabled, hbaBackendMPT3CTL), now)
+	service := newServiceState(990, hbaBackendMPT3CTL)
+	snapshot := buildDiagnosticsSnapshot(
+		service.status(), newDiskCollector(diskDataPaths{}).status(),
+		newConfiguredHBACollector(15*time.Second, hbaModeDisabled, hbaBackendMPT3CTL).status(), now,
+	)
 	if err := writeDiagnosticsAtomic(path, snapshot); err != nil {
 		t.Fatal(err)
 	}
@@ -152,18 +164,36 @@ func TestReadDiagnosticsRuntimeFile(t *testing.T) {
 	}
 }
 
-func TestBuildDiagnosticDisksRetainedAndStandby(t *testing.T) {
+func TestBuildDiagnosticDisksUsesStableIDs(t *testing.T) {
 	now := time.Now()
-	state := diskStateTracker{"one": {hasValid: true, lastValidAt: now.Add(-30 * time.Second), lastSource: "direct SMART fallback"}}
-	disks := []unraidDisk{{id: "one", name: "disk1", device: "sda", smartName: "disk1"}, {id: "two", name: "disk2", device: "sdb", spundown: true}}
-	readings := []sensors.Disk{{ID: "one", Temp: 30}, {ID: "two", Temp: 0}}
-	items := buildDiagnosticDisks(disks, readings, nil, state, true, true)
-	if items[0].Status != "retained" || items[0].Source != "direct SMART fallback" || items[0].LastValidAt == nil {
-		t.Fatalf("retained sample: %+v", items[0])
+	disks := []unraidDisk{
+		{id: "one", name: "disk1", device: "sda", smartName: "disk1"},
+		{id: "two", name: "disk2", device: "sdb", spundown: true},
 	}
-	observations := []diskObservation{{disk: disks[0]}, {disk: disks[1], standby: true}}
-	items = buildDiagnosticDisks(disks, readings, observations, state, true, false)
+	readings := []sensors.Disk{
+		{ID: "two", Temp: 99}, // Deliberately reversed: must not leak to disk one.
+		{ID: "one", Temp: 30},
+	}
+	observations := []diskObservation{
+		{disk: disks[1], standby: true, source: diskSourceDirect},
+		{disk: disks[0], source: diskSourceDirect},
+	}
+	states := diskStateTracker{"one": {hasValid: true, lastValidAt: now.Add(-30 * time.Second), lastSource: diskSourceDirect}}
+	runtime := buildDiskRuntimeSnapshot(disks, readings, observations, states, diskSourceDirect, false)
+	items := buildDiagnosticDisks(runtime)
+	if items[0].Temperature == nil || *items[0].Temperature != 30 || items[0].Source != "direct SMART fallback" {
+		t.Fatalf("disk one received the wrong reading: %+v", items[0])
+	}
 	if items[1].Status != "standby" || items[1].Temperature != nil {
 		t.Fatalf("standby sample: %+v", items[1])
+	}
+}
+
+func TestBuildDiagnosticDisksPreservesUncollectedNil(t *testing.T) {
+	if items := buildDiagnosticDisks(nil); items != nil {
+		t.Fatalf("uncollected diagnostics items = %#v; want nil", items)
+	}
+	if items := buildDiagnosticDisks([]diskRuntimeDisk{}); items == nil {
+		t.Fatal("successful empty inventory was reported as uncollected")
 	}
 }
