@@ -71,13 +71,25 @@ type diskCollector struct {
 	state               diskStateTracker
 	policyLog           stickyErrorLog
 	lastEmhttpPoll      atomic.Pointer[time.Time]
+	emhttpPollSeen      atomic.Bool
 	fallbackActive      bool
 	lastFallbackAttempt time.Time
 	fallbackLog         stickyErrorLog
 
-	pollLogInitialized bool
-	lastPollInterval   time.Duration
-	lastPollError      string
+	pollLogInitialized        bool
+	lastPollInterval          time.Duration
+	lastPollError             string
+	diagnosticDisks           []diagnosticDisk
+	diagnosticFallback        bool
+	diagnosticAttempt         time.Time
+	diagnosticPoll            time.Duration
+	diagnosticPollErr         string
+	diagnosticReady           bool
+	diagnosticErrorAt         time.Time
+	diagnosticFallbackError   string
+	diagnosticFallbackErrorAt time.Time
+	diagnosticFallbackSince   time.Time
+	fallbackSince             time.Time
 }
 
 type diskState struct {
@@ -85,6 +97,9 @@ type diskState struct {
 	hasValid    bool
 	failedSince time.Time
 	hardFailed  bool
+	lastValidAt time.Time
+	lastSource  string
+	cacheAt     time.Time
 }
 
 type diskStateTracker map[string]diskState
@@ -104,7 +119,9 @@ type diskObservation struct {
 	err         error
 	// noGrace prevents an old emhttpd temperature from hiding a failed
 	// direct read after the emhttpd polling heartbeat has expired.
-	noGrace bool
+	noGrace    bool
+	measuredAt time.Time
+	cacheAt    time.Time
 }
 
 type diskInventoryEntry struct {
@@ -131,6 +148,7 @@ func (c *diskCollector) run(ctx context.Context, refresh <-chan struct{}) {
 func (c *diskCollector) noteEmhttpPoll() {
 	now := c.now()
 	c.lastEmhttpPoll.Store(&now)
+	c.emhttpPollSeen.Store(true)
 }
 
 func runDiskRefreshLoop(ctx context.Context, refresh <-chan struct{}, watchdog time.Duration, collect func()) {
@@ -181,6 +199,11 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 			log.Printf("emhttpd SMART polling recovered, disabling direct SMART fallback")
 		}
 		c.fallbackActive = fallback
+		if fallback {
+			c.fallbackSince = now
+		} else {
+			c.fallbackSince = time.Time{}
+		}
 		if !fallback {
 			c.lastFallbackAttempt = time.Time{}
 			c.fallbackLog.update(nil)
@@ -196,19 +219,22 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 	selector := &diskSelector{sysBlockRoot: c.paths.sysBlockRoot, policies: policies}
 	disks, err := readDiskInventory(c.paths.disksINI, c.paths.devsINI, selector)
 	var readings []sensors.Disk
+	var observations []diskObservation
+	reused := false
 	if err != nil {
 		c.state.markFailure(now)
 	} else {
 		if fallback {
 			if c.lastFallbackAttempt.IsZero() || now.Sub(c.lastFallbackAttempt) >= pollInterval {
 				c.lastFallbackAttempt = now
-				observations := c.collectFallback(ctx, disks)
+				observations = c.collectFallback(ctx, disks)
 				readings = c.state.apply(observations, now, pollInterval+diskFailureMargin)
 			} else {
 				readings = c.reuseFallbackReadings(disks)
+				reused = true
 			}
 		} else {
-			observations := makeDiskObservations(disks, c.paths.smartDir, now, freshness)
+			observations = makeDiskObservations(disks, c.paths.smartDir, now, freshness)
 			readings = c.state.apply(observations, now, pollInterval+diskFailureMargin)
 		}
 	}
@@ -216,11 +242,29 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.err = err
+	c.diagnosticFallback = fallback
+	if !c.lastFallbackAttempt.IsZero() {
+		c.diagnosticAttempt = c.lastFallbackAttempt
+	}
+	c.diagnosticFallbackSince = c.fallbackSince
+	c.diagnosticPoll = pollInterval
+	c.diagnosticReady = true
+	c.diagnosticPollErr = errorText(configErr)
+	if c.diagnosticFallbackError != c.fallbackLog.last {
+		c.diagnosticFallbackError = c.fallbackLog.last
+		c.diagnosticFallbackErrorAt = time.Time{}
+		if c.diagnosticFallbackError != "" {
+			c.diagnosticFallbackErrorAt = now
+		}
+	}
 	if err != nil {
+		c.diagnosticErrorAt = now
 		c.readings = nil
 		c.updatedAt = time.Time{}
 		return
 	}
+	c.diagnosticErrorAt = time.Time{}
+	c.diagnosticDisks = buildDiagnosticDisks(disks, readings, observations, c.state, fallback, reused)
 	c.readings = readings
 	c.updatedAt = now
 }
@@ -570,8 +614,13 @@ func makeDiskObservations(disks []unraidDisk, smartDir string, now time.Time, fr
 			info, err := os.Stat(filepath.Join(smartDir, disk.smartName))
 			if err != nil {
 				observation.err = fmt.Errorf("SMART cache for %s: %w", disk.name, err)
-			} else if now.Sub(info.ModTime()) > freshness {
-				observation.err = fmt.Errorf("SMART cache for %s is stale by %s", disk.name, now.Sub(info.ModTime())-freshness)
+			} else {
+				observation.cacheAt = info.ModTime()
+				if now.Sub(info.ModTime()) > freshness {
+					observation.err = fmt.Errorf("SMART cache for %s is stale by %s", disk.name, now.Sub(info.ModTime())-freshness)
+				} else {
+					observation.measuredAt = info.ModTime()
+				}
 			}
 		}
 		observations = append(observations, observation)
@@ -618,6 +667,18 @@ func (s diskStateTracker) apply(observations []diskObservation, now time.Time, g
 		case observation.err == nil:
 			state.lastValid = observation.temperature
 			state.hasValid = true
+			state.lastValidAt = observation.measuredAt
+			if state.lastValidAt.IsZero() {
+				state.lastValidAt = now
+			}
+			if observation.noGrace {
+				state.lastSource = "direct SMART fallback"
+			} else {
+				state.lastSource = "emhttpd cache"
+			}
+			if !observation.cacheAt.IsZero() {
+				state.cacheAt = observation.cacheAt
+			}
 			state.failedSince = time.Time{}
 			state.hardFailed = false
 		default:

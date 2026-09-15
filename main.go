@@ -73,6 +73,8 @@ func main() {
 		err = hwmon(os.Args[2:])
 	case "disks":
 		err = diskPolicyCommand(os.Args[2:], os.Stdout)
+	case "diagnostics":
+		err = diagnosticsCommand(os.Args[2:], os.Stdout)
 	case "version", "--version":
 		fmt.Fprintln(os.Stdout, version)
 		return
@@ -92,6 +94,7 @@ func usage() {
   %[1]s disks set --id-base64 ID --policy {auto|include|exclude}
   %[1]s disks validate [options]
   %[1]s disks reset [options]
+  %[1]s diagnostics
   %[1]s version
 
 Commands:
@@ -101,6 +104,7 @@ Commands:
   disks set                 Save a policy by stable Unraid disk ID
   disks validate            Check the disk policy file
   disks reset               Remove all disk policy overrides
+  diagnostics               Print the daemon's read-only runtime state as JSON
   version                   Print the build version
 
 Serve options:
@@ -181,11 +185,13 @@ func serve(args []string) error {
 	refreshRequests := make(chan struct{}, 1)
 	go forwardDiskRefreshSignals(ctx, refreshSignals, pollSignals, refreshRequests, disks)
 	hbas := newConfiguredHBACollector(hbaInterval, hbaMode, hbaBackend)
+	diagnostics := newDiagnosticsState(uint32(*port), hbaBackend)
 	// Collection remains independent from publication so a disk or controller
 	// command can never block the VSOCK heartbeat.
 	go disks.run(ctx, refreshRequests)
 	go hbas.run(ctx)
-	return publishSnapshots(ctx, uint32(*port), disks, hbas)
+	go runDiagnostics(ctx, defaultDiagnosticsPath, diagnostics, disks, hbas)
+	return publishSnapshots(ctx, uint32(*port), disks, hbas, diagnostics)
 }
 
 func resolveHBAInterval(backend hbaBackendMode, interval time.Duration, explicit bool) (time.Duration, error) {
@@ -244,11 +250,12 @@ func publishSnapshots(
 	port uint32,
 	disks *diskCollector,
 	collector *hbaCollector,
+	diagnostics *diagnosticsState,
 ) error {
 	dial := func(ctx context.Context) (snapshotConnection, error) {
 		return sensors.DialVSOCK(ctx, vsock.Host, port)
 	}
-	return publishSnapshotsWithDialer(ctx, disks, collector, dial)
+	return publishSnapshotsWithDialer(ctx, disks, collector, dial, diagnostics)
 }
 
 func publishSnapshotsWithDialer(
@@ -256,6 +263,7 @@ func publishSnapshotsWithDialer(
 	disks *diskCollector,
 	collector *hbaCollector,
 	dial snapshotDialer,
+	state *diagnosticsState,
 ) error {
 	publishLog := stickyErrorLog{context: "VSOCK publishing"}
 	for ctx.Err() == nil {
@@ -263,22 +271,34 @@ func publishSnapshotsWithDialer(
 		conn, err := dial(connectCtx)
 		cancel()
 		if err != nil {
+			if state != nil {
+				state.disconnected(err)
+			}
 			publishLog.update(err)
 			if !waitFor(ctx, defaultPublishInterval) {
 				break
 			}
 			continue
 		}
+		if state != nil {
+			state.connectedNow()
+		}
 		for ctx.Err() == nil {
 			if err = conn.SetWriteDeadline(time.Now().Add(vsockIOTimeout)); err == nil {
 				err = sensors.WriteFrame(conn, collectorSnapshot(disks, collector))
 			}
 			if err != nil {
+				if state != nil {
+					state.disconnected(err)
+				}
 				_ = conn.Close()
 				publishLog.update(err)
 				break
 			}
 			publishLog.update(nil)
+			if state != nil {
+				state.publishedNow()
+			}
 			if !waitFor(ctx, defaultPublishInterval) {
 				_ = conn.Close()
 				return nil

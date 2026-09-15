@@ -17,6 +17,7 @@ MPT3_FUZZ_TARGETS := FuzzParseMPT3PCIAddress \
 BASH_SCRIPTS := version.sh \
 	version_test.sh \
 	unraid-plugin/package.sh \
+	unraid-plugin/package_test.sh \
 	unraid-plugin/update-plg.sh \
 	unraid-plugin/update_plg_test.sh \
 	unraid-plugin/poll_attributes \
@@ -117,7 +118,9 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 		sh -n "$$script" || exit $$?; \
 	done
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
+	php -l unraid-plugin/UnraidVsockSensorsDiagnostics.page >/dev/null
 	bash version_test.sh
+	bash unraid-plugin/package_test.sh
 	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/rc_test.sh
 	bash unraid-plugin/service_test.sh

@@ -76,6 +76,15 @@ Le plugin propose :
 StorCLI utilise volontairement un intervalle plus long car sa collecte est plus
 coûteuse que l'accès ioctl natif MPT3.
 
+La page **Diagnostics**, accessible depuis la page du plugin, affiche en lecture
+seule l'état réel du daemon. La commande `unraid-vsock-sensors diagnostics`
+renvoie le même instantané JSON local. Elle ne déclenche aucune collecte SMART.
+Un heartbeat emhttpd stale active temporairement le fallback SMART direct ; cela
+n'indique pas nécessairement une panne de disque. Un lien VSOCK déconnecté
+signifie que le récepteur Proxmox n'est pas joignable. Les températures des
+disques en veille peuvent naturellement être indisponibles. Les IDs disque du
+diagnostic peuvent contenir des numéros de série : les masquer avant partage.
+
 Le backend `mpt3ctl` ne nécessite aucun utilitaire externe mais reste
 expérimental. Il est utilisé par l'auteur avec un LSI SAS3008.
 

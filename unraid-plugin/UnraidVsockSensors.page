@@ -73,6 +73,8 @@ if ($diskStatus !== 0 && is_executable('/usr/local/sbin/unraid-vsock-sensors')) 
 
 ### Service
 
+<p><a href="/Settings/UnraidVsockSensorsDiagnostics">View read-only diagnostics</a></p>
+
 _(Status)_:
 : <span class="<?=$running ? 'green' : 'red'?>"><?=htmlspecialchars($status, ENT_QUOTES)?></span>
 

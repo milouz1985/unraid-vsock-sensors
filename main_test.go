@@ -93,7 +93,7 @@ func capturePublishedSnapshots(
 		done <- publishSnapshotsWithDialer(ctx, disks, hbas, func(context.Context) (snapshotConnection, error) {
 			dials++
 			return client, nil
-		})
+		}, nil)
 	}()
 
 	reader := sensors.NewFrameReader(server)
@@ -139,6 +139,7 @@ func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
 					dials++
 					return conn, nil
 				},
+				nil,
 			)
 		}()
 

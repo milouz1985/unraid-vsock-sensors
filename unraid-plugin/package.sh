@@ -31,6 +31,8 @@ mkdir -p \
 install -m 0755 "$plugin_dir/rc.unraid-vsock-sensors" "$stage_dir/etc/rc.d/rc.unraid-vsock-sensors"
 install -m 0644 "$plugin_dir/UnraidVsockSensors.page" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/UnraidVsockSensors.page"
+install -m 0644 "$plugin_dir/UnraidVsockSensorsDiagnostics.page" \
+    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/UnraidVsockSensorsDiagnostics.page"
 install -m 0644 "$plugin_dir/images/icon.png" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/icon.png"
 install -m 0644 "$plugin_dir/default.cfg" \

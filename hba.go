@@ -18,13 +18,16 @@ import (
 )
 
 type hbaCollector struct {
-	interval  time.Duration
-	mode      hbaMode
-	mu        sync.RWMutex
-	readings  []sensors.HBA
-	err       error
-	updatedAt time.Time
-	reader    hbaSnapshotReader
+	interval           time.Duration
+	mode               hbaMode
+	mu                 sync.RWMutex
+	readings           []sensors.HBA
+	err                error
+	updatedAt          time.Time
+	lastSuccessfulAt   time.Time
+	lastErrorAt        time.Time
+	diagnosticReadings []sensors.HBA
+	reader             hbaSnapshotReader
 }
 
 type hbaMetadata struct {
@@ -240,12 +243,16 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	defer c.mu.Unlock()
 	c.err = err
 	if err != nil {
+		c.lastErrorAt = time.Now()
 		c.readings = nil
 		c.updatedAt = time.Time{}
 		return
 	}
 	c.readings = readings
 	c.updatedAt = time.Now()
+	c.lastSuccessfulAt = c.updatedAt
+	c.lastErrorAt = time.Time{}
+	c.diagnosticReadings = slices.Clone(readings)
 }
 
 func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
