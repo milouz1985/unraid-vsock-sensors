@@ -28,7 +28,7 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 		disks: []diskRuntimeDisk{{
 			disk:    unraidDisk{id: "serial", name: "disk1"},
 			reading: sensors.Disk{ID: "serial", Name: "disk1", Temp: 35}, hasReading: true,
-			state: diskState{lastValidAt: now.Add(-12 * time.Second), lastSource: diskSourceEmhttpd},
+			state: diskState{thermalState: diskThermalValid, lastValidAt: now.Add(-12 * time.Second), lastSource: diskSourceEmhttpd},
 		}},
 	}
 	hbas := hbaCollectorStatus{interval: 15 * time.Second, mode: hbaModeDisabled, backend: hbaBackendMPT3CTL}
@@ -62,10 +62,11 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 
 	disks.source.source = diskSourceDirect
 	disks.source.fallbackSince = now.Add(-time.Minute)
-	disks.source.lastObservedAttempt = now.Add(-5 * time.Second)
+	disks.source.lastFallbackAttempt = now.Add(-5 * time.Second)
 	disks.source.lastFallbackError = "SMART failed"
 	disks.err = errors.New("inventory failed")
 	disks.disks[0].reading.Unavailable = true
+	disks.disks[0].state.thermalState = diskThermalUnavailable
 	snapshot = buildDiagnosticsSnapshot(service, disks, hbas, now)
 	if snapshot.Emhttpd.Status != "stale" || snapshot.Emhttpd.TemperatureSource != "direct SMART fallback" || snapshot.Emhttpd.LastFallbackAttemptAgeSeconds == nil || *snapshot.Emhttpd.LastFallbackAttemptAgeSeconds != 5 {
 		t.Fatalf("unexpected fallback state: %+v", snapshot.Emhttpd)
@@ -181,7 +182,10 @@ func TestBuildDiagnosticDisksUsesStableIDs(t *testing.T) {
 		{disk: disks[1], standby: true, source: diskSourceDirect},
 		{disk: disks[0], source: diskSourceDirect},
 	}
-	states := diskStateTracker{"one": {thermalState: diskThermalValid, lastValidAt: now.Add(-30 * time.Second), lastSource: diskSourceDirect}}
+	states := diskStateTracker{
+		"one": {thermalState: diskThermalValid, lastValidAt: now.Add(-30 * time.Second), lastSource: diskSourceDirect},
+		"two": {thermalState: diskThermalStandby},
+	}
 	runtime := buildDiskRuntimeSnapshot(disks, readings, observations, states, false)
 	items := buildDiagnosticDisks(runtime)
 	if items[0].Temperature == nil || *items[0].Temperature != 30 || items[0].Source != "direct SMART fallback" {
@@ -201,12 +205,11 @@ func TestBuildDiagnosticDisksHidesSyntheticTemperatures(t *testing.T) {
 			state:      diskState{thermalState: diskThermalStandby},
 		},
 		{
-			disk:           unraidDisk{id: "waking", name: "disk2"},
-			reading:        sensors.Disk{ID: "waking", Temp: 0},
-			hasReading:     true,
-			observation:    diskObservation{err: errors.New("temperature pending")},
-			hasObservation: true,
-			state:          diskState{thermalState: diskThermalWaking},
+			disk:            unraidDisk{id: "waking", name: "disk2"},
+			reading:         sensors.Disk{ID: "waking", Temp: 0},
+			hasReading:      true,
+			collectionError: errors.New("temperature pending"),
+			state:           diskState{thermalState: diskThermalWaking},
 		},
 		{
 			disk:       unraidDisk{id: "zero", name: "disk3"},

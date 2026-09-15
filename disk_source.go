@@ -30,7 +30,7 @@ type smartSourceStatus struct {
 	lastHeartbeat       time.Time
 	source              diskTemperatureSource
 	fallbackSince       time.Time
-	lastObservedAttempt time.Time
+	lastFallbackAttempt time.Time
 	lastFallbackError   string
 	fallbackErrorAt     time.Time
 }
@@ -48,7 +48,7 @@ type smartSourceState struct {
 	fallbackActive      bool
 	fallbackSince       time.Time
 	lastDirectAttempt   time.Time
-	lastObservedAttempt time.Time
+	lastFallbackAttempt time.Time
 	pollInterval        time.Duration
 	configError         string
 	lastFallbackError   string
@@ -104,7 +104,7 @@ func (s *smartSourceState) evaluate(now time.Time, pollInterval time.Duration, c
 func (s *smartSourceState) beginDirectAttempt(now time.Time) {
 	s.mu.Lock()
 	s.lastDirectAttempt = now
-	s.lastObservedAttempt = now
+	s.lastFallbackAttempt = now
 	s.mu.Unlock()
 }
 
@@ -133,7 +133,7 @@ func (s *smartSourceState) status() smartSourceStatus {
 		pollInterval: s.pollInterval, configError: s.configError, initialized: s.initialized,
 		heartbeatSeen: s.heartbeatSeen, lastHeartbeat: s.lastHeartbeat, source: source,
 		fallbackSince:       s.fallbackSince,
-		lastObservedAttempt: s.lastObservedAttempt,
+		lastFallbackAttempt: s.lastFallbackAttempt,
 		lastFallbackError:   s.lastFallbackError, fallbackErrorAt: s.fallbackErrorAt,
 	}
 }

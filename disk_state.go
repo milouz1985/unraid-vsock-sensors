@@ -39,7 +39,6 @@ type diskObservation struct {
 	standby     bool
 	err         error
 	source      diskTemperatureSource
-	measuredAt  time.Time
 	cacheAt     time.Time
 }
 
@@ -63,8 +62,6 @@ func makeDiskObservations(disks []unraidDisk, smartDir string, now time.Time, fr
 				observation.cacheAt = info.ModTime()
 				if now.Sub(info.ModTime()) > freshness {
 					observation.err = fmt.Errorf("SMART cache for %s is stale by %s", disk.name, now.Sub(info.ModTime())-freshness)
-				} else {
-					observation.measuredAt = info.ModTime()
 				}
 			}
 		}
@@ -118,9 +115,9 @@ func (s diskStateTracker) apply(observations []diskObservation, now time.Time, w
 		case observation.err == nil:
 			state.thermalState = diskThermalValid
 			state.wakeStartedAt = time.Time{}
-			state.lastValidAt = observation.measuredAt
-			if state.lastValidAt.IsZero() {
-				state.lastValidAt = now
+			state.lastValidAt = now
+			if observation.source == diskSourceEmhttpd {
+				state.lastValidAt = observation.cacheAt
 			}
 			state.lastSource = observation.source
 			if !observation.cacheAt.IsZero() {

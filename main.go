@@ -115,15 +115,6 @@ func serve(args []string) error {
 			intervalExplicit = true
 		}
 	})
-	if *useSyslog {
-		writer, err := syslog.New(syslog.LOG_INFO|syslog.LOG_DAEMON, "unraid-vsock-sensors")
-		if err != nil {
-			return fmt.Errorf("connect to syslog: %w", err)
-		}
-		// The writer is intentionally kept for the process lifetime so errors
-		// returned by serve and logged by main use the same destination.
-		log.SetOutput(writer)
-	}
 	hbaMode := hbaMode(*hbaModeValue)
 	if hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
 		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
@@ -138,6 +129,15 @@ func serve(args []string) error {
 	}
 	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
+	}
+	if *useSyslog {
+		writer, err := syslog.New(syslog.LOG_INFO|syslog.LOG_DAEMON, "unraid-vsock-sensors")
+		if err != nil {
+			return fmt.Errorf("connect to syslog: %w", err)
+		}
+		// The writer is intentionally kept for the process lifetime so errors
+		// returned by serve and logged by main use the same destination.
+		log.SetOutput(writer)
 	}
 	disks := newDiskCollector(defaultDiskDataPaths)
 	log.Printf("starting unraid-vsock-sensors v%s; pushing to host VSOCK port %d", version, *port)

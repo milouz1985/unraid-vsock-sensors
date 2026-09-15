@@ -47,7 +47,7 @@ func TestSmartSourceStateLifecycleAndAttemptCadence(t *testing.T) {
 	decision = state.evaluate(enteredAt.Add(31*time.Second), 30*time.Second, nil)
 	status = state.status()
 	if decision.source != diskSourceEmhttpd || !decision.justRecovered ||
-		!status.lastObservedAttempt.Equal(enteredAt.Add(30*time.Second)) || status.lastFallbackError != "" {
+		!status.lastFallbackAttempt.Equal(enteredAt.Add(30*time.Second)) || status.lastFallbackError != "" {
 		t.Fatalf("fallback recovery = %+v, status=%+v", decision, status)
 	}
 	reenteredAt := enteredAt.Add(77 * time.Second)

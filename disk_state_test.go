@@ -224,6 +224,13 @@ func TestSMARTCacheFreshnessBoundary(t *testing.T) {
 			if len(observations) != 1 || (observations[0].err != nil) != (age > freshness) {
 				t.Fatalf("observation at age %s = %#v", age, observations)
 			}
+			if age <= freshness {
+				tracker := make(diskStateTracker)
+				tracker.apply(observations, now, time.Minute)
+				if got := tracker["serial"].lastValidAt; !got.Equal(mtime) {
+					t.Fatalf("last valid timestamp = %s; want cache mtime %s", got, mtime)
+				}
+			}
 		})
 	}
 }

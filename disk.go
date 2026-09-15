@@ -65,13 +65,12 @@ type diskCollector struct {
 }
 
 type diskRuntimeDisk struct {
-	disk           unraidDisk
-	reading        sensors.Disk
-	hasReading     bool
-	observation    diskObservation
-	hasObservation bool
-	state          diskState
-	reused         bool
+	disk            unraidDisk
+	reading         sensors.Disk
+	hasReading      bool
+	collectionError error
+	state           diskState
+	reused          bool
 }
 
 type diskCollectorStatus struct {
@@ -129,10 +128,10 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
 
-	now := c.now()
+	decisionAt := c.now()
 	pollInterval, configErr := readPollAttributes(c.paths.varINI)
 	c.logPollAttributesChange(pollInterval, configErr)
-	decision := c.smartSource.evaluate(now, pollInterval, configErr)
+	decision := c.smartSource.evaluate(decisionAt, pollInterval, configErr)
 	if decision.justEntered {
 		log.Printf("emhttpd SMART polling stale, enabling direct SMART fallback")
 	}
@@ -143,14 +142,23 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 
 	disks, err := c.readInventory()
 	if err != nil {
+		finishedAt := c.now()
 		c.state.invalidateContinuity()
-		c.publishDiskFailure(err, now, c.smartSource.status())
+		c.publishDiskFailure(err, finishedAt, c.smartSource.status())
 		return
 	}
 
-	readings, observations, reused := c.collectTemperatures(ctx, disks, decision, now, pollInterval)
+	readings, observations, reused, fallbackErr := c.collectTemperatures(ctx, disks, decision, decisionAt, pollInterval)
+	finishedAt := c.now()
+	if !reused {
+		readings = c.state.apply(observations, finishedAt, pollInterval+diskWakeMargin)
+	}
+	if decision.source == diskSourceDirect && decision.directDue {
+		c.smartSource.recordFallbackResult(finishedAt, fallbackErr)
+		c.fallbackLog.update(fallbackErr)
+	}
 	runtimeDisks := buildDiskRuntimeSnapshot(disks, readings, observations, c.state, reused)
-	c.publishDiskSuccess(runtimeDisks, now, c.smartSource.status())
+	c.publishDiskSuccess(runtimeDisks, finishedAt, c.smartSource.status())
 }
 
 func (c *diskCollector) readInventory() ([]unraidDisk, error) {
@@ -171,21 +179,19 @@ func (c *diskCollector) collectTemperatures(
 	ctx context.Context,
 	disks []unraidDisk,
 	decision smartSourceDecision,
-	now time.Time,
+	decisionAt time.Time,
 	pollInterval time.Duration,
-) ([]sensors.Disk, []diskObservation, bool) {
+) ([]sensors.Disk, []diskObservation, bool, error) {
 	if decision.source == diskSourceEmhttpd {
-		observations := makeDiskObservations(disks, c.paths.smartDir, now, smartFreshnessWindow(pollInterval))
-		return c.state.apply(observations, now, pollInterval+diskWakeMargin), observations, false
+		observations := makeDiskObservations(disks, c.paths.smartDir, decisionAt, smartFreshnessWindow(pollInterval))
+		return nil, observations, false, nil
 	}
 	if !decision.directDue {
-		return c.reuseFallbackReadings(disks), nil, true
+		return c.reuseFallbackReadings(disks), nil, true, nil
 	}
-	c.smartSource.beginDirectAttempt(now)
+	c.smartSource.beginDirectAttempt(decisionAt)
 	observations, err := c.collectFallback(ctx, disks)
-	c.smartSource.recordFallbackResult(now, err)
-	c.fallbackLog.update(err)
-	return c.state.apply(observations, now, pollInterval+diskWakeMargin), observations, false
+	return nil, observations, false, err
 }
 
 func (c *diskCollector) publishDiskFailure(err error, now time.Time, source smartSourceStatus) {
@@ -305,19 +311,18 @@ func buildDiskRuntimeSnapshot(
 	for _, reading := range readings {
 		readingsByID[reading.ID] = reading
 	}
-	observationsByID := make(map[string]diskObservation, len(observations))
+	collectionErrorsByID := make(map[string]error, len(observations))
 	for _, observation := range observations {
-		observationsByID[observation.disk.id] = observation
+		collectionErrorsByID[observation.disk.id] = observation.err
 	}
 
 	result := make([]diskRuntimeDisk, 0, len(disks))
 	for _, disk := range disks {
 		reading, hasReading := readingsByID[disk.id]
-		observation, hasObservation := observationsByID[disk.id]
 		result = append(result, diskRuntimeDisk{
 			disk: disk, reading: reading, hasReading: hasReading,
-			observation: observation, hasObservation: hasObservation,
-			state: states[disk.id], reused: reused,
+			collectionError: collectionErrorsByID[disk.id],
+			state:           states[disk.id], reused: reused,
 		})
 	}
 	return result

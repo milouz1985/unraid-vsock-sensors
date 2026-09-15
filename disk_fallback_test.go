@@ -25,6 +25,83 @@ func fallbackTestCommand(t *testing.T, body string) string {
 	return path
 }
 
+func TestDiskRefreshSeparatesDecisionAndFinishedTimes(t *testing.T) {
+	decisionAt := time.Unix(1_800_000_100, 0)
+	finishedAt := decisionAt.Add(4 * time.Second)
+
+	t.Run("successful direct reading", func(t *testing.T) {
+		env := newDiskTestEnvironment(t, "30")
+		env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\n")
+		env.paths.smartctlType = fallbackTestCommand(t, "printf '{\"temperature\":{\"current\":42}}\\n'")
+		collector := env.collector()
+		collector.smartSource.evaluate(decisionAt.Add(-46*time.Second), 30*time.Second, nil)
+		calls := 0
+		collector.now = func() time.Time {
+			calls++
+			if calls == 1 {
+				return decisionAt
+			}
+			return finishedAt
+		}
+
+		collector.refresh()
+		status := collector.status()
+		if !collector.smartSource.lastDirectAttempt.Equal(decisionAt) ||
+			!status.source.lastFallbackAttempt.Equal(decisionAt) {
+			t.Fatalf("attempt timestamps = scheduler %s, diagnostic %s; want %s",
+				collector.smartSource.lastDirectAttempt, status.source.lastFallbackAttempt, decisionAt)
+		}
+		if !status.updatedAt.Equal(finishedAt) || !collector.state["serial"].lastValidAt.Equal(finishedAt) {
+			t.Fatalf("completion timestamps = snapshot %s, reading %s; want %s",
+				status.updatedAt, collector.state["serial"].lastValidAt, finishedAt)
+		}
+	})
+
+	t.Run("failed direct reading", func(t *testing.T) {
+		env := newDiskTestEnvironment(t, "30")
+		env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\n")
+		env.paths.smartctlType = fallbackTestCommand(t, "exit 1")
+		collector := env.collector()
+		collector.smartSource.evaluate(decisionAt.Add(-46*time.Second), 30*time.Second, nil)
+		calls := 0
+		collector.now = func() time.Time {
+			calls++
+			if calls == 1 {
+				return decisionAt
+			}
+			return finishedAt
+		}
+
+		collector.refresh()
+		status := collector.status()
+		if !status.updatedAt.Equal(finishedAt) || !status.source.fallbackErrorAt.Equal(finishedAt) {
+			t.Fatalf("failure timestamps = snapshot %s, fallback error %s; want %s",
+				status.updatedAt, status.source.fallbackErrorAt, finishedAt)
+		}
+	})
+
+	t.Run("inventory failure", func(t *testing.T) {
+		env := newDiskTestEnvironment(t, "30")
+		if err := os.Remove(env.paths.disksINI); err != nil {
+			t.Fatal(err)
+		}
+		collector := env.collector()
+		calls := 0
+		collector.now = func() time.Time {
+			calls++
+			if calls == 1 {
+				return decisionAt
+			}
+			return finishedAt
+		}
+
+		collector.refresh()
+		if status := collector.status(); !status.errorAt.Equal(finishedAt) {
+			t.Fatalf("inventory error timestamp = %s; want %s", status.errorAt, finishedAt)
+		}
+	})
+}
+
 func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")

@@ -203,8 +203,8 @@ func buildDiagnosticDiskServices(disks diskCollectorStatus, now time.Time) (diag
 		TemperatureSource:             string(disks.source.source),
 		FallbackActive:                fallback,
 		FallbackSince:                 timePointer(disks.source.fallbackSince),
-		LastFallbackAttemptAt:         timePointer(disks.source.lastObservedAttempt),
-		LastFallbackAttemptAgeSeconds: ageSeconds(timePointer(disks.source.lastObservedAttempt), now),
+		LastFallbackAttemptAt:         timePointer(disks.source.lastFallbackAttempt),
+		LastFallbackAttemptAgeSeconds: ageSeconds(timePointer(disks.source.lastFallbackAttempt), now),
 		Error:                         disks.source.configError,
 		FallbackError:                 disks.source.lastFallbackError,
 		FallbackErrorAt:               timePointer(disks.source.fallbackErrorAt),
@@ -241,7 +241,7 @@ func buildDiagnosticHBA(hbas hbaCollectorStatus, now time.Time) diagnosticHBA {
 		result.LastError = ""
 	} else if hbas.err != nil {
 		result.Status = diagnosticStatusError
-	} else if hbas.updatedAt.IsZero() || !now.Before(hbas.updatedAt.Add(hbas.interval+hbaCollectionTimeout)) {
+	} else if hbas.lastSuccessfulAt.IsZero() || !now.Before(hbas.lastSuccessfulAt.Add(hbas.interval+hbaCollectionTimeout)) {
 		result.Status = diagnosticStatusStale
 	} else {
 		result.Status = diagnosticStatusHealthy
@@ -270,38 +270,26 @@ func buildDiagnosticDisks(disks []diskRuntimeDisk) []diagnosticDisk {
 			LastValidAt:    timePointer(state.lastValidAt),
 			SMARTCacheAt:   timePointer(state.cacheAt),
 			Source:         string(state.lastSource),
-			Status:         diagnosticDiskValid,
+			Error:          errorText(runtime.collectionError),
 		}
-		if runtime.hasReading {
-			if runtime.reading.Unavailable {
-				item.Status = diagnosticDiskUnavailable
-			} else if runtime.reused {
+		switch state.thermalState {
+		case diskThermalValid:
+			item.Status = diagnosticDiskValid
+			if runtime.reused {
 				item.Status = diagnosticDiskRetained
 			}
-			if !runtime.reading.Unavailable && item.Status != diagnosticDiskStandby {
+			if runtime.hasReading {
 				value := runtime.reading.Temp
 				item.Temperature = &value
 			}
-		}
-		if runtime.hasObservation {
-			observation := runtime.observation
-			if observation.standby {
-				item.Status = diagnosticDiskStandby
-				item.Temperature = nil
-			} else if observation.err != nil {
-				item.Error = observation.err.Error()
-				if item.Status == diagnosticDiskValid {
-					item.Status = diagnosticDiskRetained
-				}
-			}
-		}
-		switch state.thermalState {
 		case diskThermalStandby:
 			item.Status = diagnosticDiskStandby
-			item.Temperature = nil
 		case diskThermalWaking:
 			item.Status = diagnosticDiskWaking
-			item.Temperature = nil
+		case diskThermalUnavailable:
+			item.Status = diagnosticDiskUnavailable
+		default:
+			item.Status = diagnosticDiskUnavailable
 		}
 		items = append(items, item)
 	}
