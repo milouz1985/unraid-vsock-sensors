@@ -37,8 +37,8 @@ func readDiskInventory(disksINIPath, devsINIPath string, selector *diskSelector)
 	return includedDisks(entries), nil
 }
 
-func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSelector, requireValid bool) ([]diskInventoryEntry, error) {
-	assigned, err := readAssignedEntries(disksINIPath, selector, requireValid)
+func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSelector, validateIncluded bool) ([]diskInventoryEntry, error) {
+	assigned, err := readAssignedEntries(disksINIPath, selector, validateIncluded)
 	if err != nil {
 		return nil, err
 	}
@@ -54,13 +54,15 @@ func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSe
 			}
 		}
 	}
-	unassigned, err := readUnassignedEntries(devsINIPath, selector, flashIDs, flashDevices, requireValid)
+	unassigned, err := readUnassignedEntries(devsINIPath, selector, flashIDs, flashDevices, validateIncluded)
 	if err != nil {
 		return nil, err
 	}
 
 	merged := make([]diskInventoryEntry, 0, len(assigned)+len(unassigned))
 	seenMergedIDs := make(map[string]struct{}, len(assigned)+len(unassigned))
+	// Assigned entries are visited first and win over devs.ini entries with
+	// the same stable ID.
 	for _, inventory := range [][]diskInventoryEntry{assigned, unassigned} {
 		for _, entry := range inventory {
 			if _, duplicate := seenMergedIDs[entry.disk.id]; duplicate && entry.disk.id != "" {
@@ -89,17 +91,7 @@ func includedDisks(entries []diskInventoryEntry) []unraidDisk {
 	return disks
 }
 
-// readDisks reads assigned-disk state from Unraid. The logical section name
-// selects the SMART cache report (for example disk1 -> smart/disk1).
-func readDisks(disksINIPath string, selector *diskSelector) ([]unraidDisk, error) {
-	entries, err := readAssignedEntries(disksINIPath, selector, true)
-	if err != nil {
-		return nil, err
-	}
-	return includedDisks(entries), nil
-}
-
-func readAssignedEntries(disksINIPath string, selector *diskSelector, requireValid bool) ([]diskInventoryEntry, error) {
+func readAssignedEntries(disksINIPath string, selector *diskSelector, validateIncluded bool) ([]diskInventoryEntry, error) {
 	config, err := ini.Load(disksINIPath)
 	if err != nil {
 		return nil, err
@@ -130,7 +122,7 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, requireVal
 			seenIDs[id] = struct{}{}
 		}
 		bus, policy, included := selector.evaluate(id, name, device)
-		if included && requireValid {
+		if included && validateIncluded {
 			if id == "" {
 				return nil, fmt.Errorf("active disk %q has no stable ID", name)
 			}
@@ -141,17 +133,15 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, requireVal
 				return nil, fmt.Errorf("active disk %q has no device", name)
 			}
 		}
-		disk, err := diskFromSection(section, id, name, device, name, transport, included && requireValid)
+		disk, err := diskFromSection(section, unraidDisk{
+			id: id, name: name, device: device, smartName: name, transport: transport,
+		}, included && validateIncluded)
 		if err != nil {
 			return nil, fmt.Errorf("disk %q: %w", name, err)
 		}
 		entry := diskInventoryEntry{
 			disk: disk,
 			bus:  bus, policy: policy, included: included,
-		}
-		if !included || !requireValid {
-			entries = append(entries, entry)
-			continue
 		}
 		entries = append(entries, entry)
 	}
@@ -161,17 +151,7 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, requireVal
 	return entries, nil
 }
 
-// readUnassignedDisks reads Unraid's native unassigned-device inventory. The
-// device name only selects the SMART report; the sensor identity remains id.
-func readUnassignedDisks(devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
-	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil, true)
-	if err != nil {
-		return nil, err
-	}
-	return includedDisks(entries), nil
-}
-
-func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs, flashDevices map[string]struct{}, requireValid bool) ([]diskInventoryEntry, error) {
+func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs, flashDevices map[string]struct{}, validateIncluded bool) ([]diskInventoryEntry, error) {
 	config, err := ini.Load(devsINIPath)
 	if err != nil {
 		return nil, err
@@ -200,7 +180,7 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs,
 			continue
 		}
 		bus, policy, included := selector.evaluate(id, name, device)
-		if included && requireValid {
+		if included && validateIncluded {
 			if device == "" {
 				continue
 			}
@@ -211,17 +191,15 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs,
 				return nil, fmt.Errorf("unassigned disk %q has a %d-byte stable ID; observed emhttpd limit is %d", name, len(id), maxUnraidDiskIDSize)
 			}
 		}
-		disk, err := diskFromSection(section, id, name, device, device, transport, included && requireValid)
+		disk, err := diskFromSection(section, unraidDisk{
+			id: id, name: name, device: device, smartName: device, transport: transport,
+		}, included && validateIncluded)
 		if err != nil {
 			return nil, fmt.Errorf("unassigned disk %q: %w", name, err)
 		}
 		entry := diskInventoryEntry{
 			disk: disk,
 			bus:  bus, policy: policy, included: included,
-		}
-		if !included || !requireValid {
-			entries = append(entries, entry)
-			continue
 		}
 		entries = append(entries, entry)
 	}
@@ -232,25 +210,22 @@ func diskTransport(section *ini.Section) string {
 	return strings.ToLower(strings.TrimSpace(section.Key("transport").String()))
 }
 
-func diskFromSection(section *ini.Section, id, name, device, smartName, transport string, requireThermalFields bool) (unraidDisk, error) {
-	rotational, err := parseBinaryDiskField(section, "rotational", requireThermalFields)
+func diskFromSection(section *ini.Section, disk unraidDisk, validateThermalFields bool) (unraidDisk, error) {
+	rotational, err := parseBinaryDiskField(section, "rotational", validateThermalFields)
 	if err != nil {
 		return unraidDisk{}, err
 	}
-	spundown, err := parseBinaryDiskField(section, "spundown", requireThermalFields)
+	spundown, err := parseBinaryDiskField(section, "spundown", validateThermalFields)
 	if err != nil {
 		return unraidDisk{}, err
 	}
-	return unraidDisk{
-		id: id, name: name, device: device, smartName: smartName,
-		transport:   transport,
-		temperature: strings.TrimSpace(section.Key("temp").String()),
-		rotational:  rotational,
-		spundown:    spundown,
-	}, nil
+	disk.temperature = strings.TrimSpace(section.Key("temp").String())
+	disk.rotational = rotational
+	disk.spundown = spundown
+	return disk, nil
 }
 
-func parseBinaryDiskField(section *ini.Section, name string, required bool) (bool, error) {
+func parseBinaryDiskField(section *ini.Section, name string, validate bool) (bool, error) {
 	value := strings.TrimSpace(section.Key(name).String())
 	switch value {
 	case "0":
@@ -258,7 +233,9 @@ func parseBinaryDiskField(section *ini.Section, name string, required bool) (boo
 	case "1":
 		return true, nil
 	default:
-		if !required {
+		if !validate {
+			// Invalid rotational/spundown values are tolerated only for excluded
+			// or display-only entries, where they are not used thermally.
 			return false, nil
 		}
 		return false, fmt.Errorf("%s must be 0 or 1, got %q", name, value)

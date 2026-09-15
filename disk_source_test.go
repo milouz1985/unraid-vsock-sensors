@@ -34,7 +34,7 @@ func TestSmartSourceStateLifecycleAndAttemptCadence(t *testing.T) {
 		t.Fatalf("fallback entry = %+v", decision)
 	}
 	state.beginDirectAttempt(enteredAt)
-	if got := state.status().lastDirectAttempt; !got.Equal(enteredAt) {
+	if got := state.lastDirectAttempt; !got.Equal(enteredAt) {
 		t.Fatalf("first attempt = %v, want %v", got, enteredAt)
 	}
 	if decision = state.evaluate(enteredAt.Add(29*time.Second), 30*time.Second, nil); decision.directDue {
@@ -49,7 +49,7 @@ func TestSmartSourceStateLifecycleAndAttemptCadence(t *testing.T) {
 	state.noteEmhttpPoll(enteredAt.Add(31 * time.Second))
 	decision = state.evaluate(enteredAt.Add(31*time.Second), 30*time.Second, nil)
 	status = state.status()
-	if decision.source != diskSourceEmhttpd || !decision.justRecovered || !status.lastDirectAttempt.IsZero() ||
+	if decision.source != diskSourceEmhttpd || !decision.justRecovered || !state.lastDirectAttempt.IsZero() ||
 		!status.lastObservedAttempt.Equal(enteredAt.Add(30*time.Second)) || status.lastFallbackError != "" {
 		t.Fatalf("fallback recovery = %+v, status=%+v", decision, status)
 	}
@@ -104,7 +104,7 @@ func TestSmartSourceStateConcurrentHeartbeatAndEvaluation(t *testing.T) {
 		}(worker)
 	}
 	workers.Wait()
-	if status := state.status(); !status.ready || !status.heartbeatSeen {
+	if status := state.status(); !status.initialized || !status.heartbeatSeen {
 		t.Fatalf("concurrent state lost updates: %+v", status)
 	}
 }

@@ -22,7 +22,7 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 		updatedAt:   now,
 		policyError: "invalid disk policy for ID \"serial\"",
 		source: smartSourceStatus{
-			ready: true, pollInterval: 30 * time.Second, heartbeatSeen: true,
+			initialized: true, pollInterval: 30 * time.Second, heartbeatSeen: true,
 			lastHeartbeat: now.Add(-2 * time.Second), source: diskSourceEmhttpd,
 		},
 		disks: []diskRuntimeDisk{{

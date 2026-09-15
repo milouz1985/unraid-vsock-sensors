@@ -12,6 +12,7 @@ type diskTemperatureSource string
 const (
 	diskSourceEmhttpd diskTemperatureSource = "emhttpd cache"
 	diskSourceDirect  diskTemperatureSource = "direct SMART fallback"
+	emhttpPollMargin                        = 15 * time.Second
 )
 
 type smartSourceDecision struct {
@@ -24,12 +25,11 @@ type smartSourceDecision struct {
 type smartSourceStatus struct {
 	pollInterval        time.Duration
 	configError         string
-	ready               bool
+	initialized         bool
 	heartbeatSeen       bool
 	lastHeartbeat       time.Time
 	source              diskTemperatureSource
 	fallbackSince       time.Time
-	lastDirectAttempt   time.Time
 	lastObservedAttempt time.Time
 	lastFallbackError   string
 	fallbackErrorAt     time.Time
@@ -51,7 +51,6 @@ type smartSourceState struct {
 	lastObservedAttempt time.Time
 	pollInterval        time.Duration
 	configError         string
-	ready               bool
 	lastFallbackError   string
 	fallbackErrorAt     time.Time
 }
@@ -73,7 +72,6 @@ func (s *smartSourceState) evaluate(now time.Time, pollInterval time.Duration, c
 	}
 	s.pollInterval = pollInterval
 	s.configError = errorText(configErr)
-	s.ready = true
 
 	reference := s.startedAt
 	if s.heartbeatSeen {
@@ -132,9 +130,9 @@ func (s *smartSourceState) status() smartSourceStatus {
 		source = diskSourceDirect
 	}
 	return smartSourceStatus{
-		pollInterval: s.pollInterval, configError: s.configError, ready: s.ready,
+		pollInterval: s.pollInterval, configError: s.configError, initialized: s.initialized,
 		heartbeatSeen: s.heartbeatSeen, lastHeartbeat: s.lastHeartbeat, source: source,
-		fallbackSince: s.fallbackSince, lastDirectAttempt: s.lastDirectAttempt,
+		fallbackSince:       s.fallbackSince,
 		lastObservedAttempt: s.lastObservedAttempt,
 		lastFallbackError:   s.lastFallbackError, fallbackErrorAt: s.fallbackErrorAt,
 	}

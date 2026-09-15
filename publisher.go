@@ -19,6 +19,7 @@ import (
 const (
 	publisherStatusConnected    = "connected"
 	publisherStatusReconnecting = "reconnecting"
+	vsockIOTimeout              = 3 * time.Second
 )
 
 type snapshotConnection interface {

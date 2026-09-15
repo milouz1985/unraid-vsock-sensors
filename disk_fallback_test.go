@@ -91,7 +91,7 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	collector.noteEmhttpPoll()
 	collector.refresh()
 	status := collector.smartSource.status()
-	if status.source != diskSourceEmhttpd || !status.lastDirectAttempt.IsZero() || !status.lastHeartbeat.Equal(env.now) {
+	if status.source != diskSourceEmhttpd || !collector.smartSource.lastDirectAttempt.IsZero() || !status.lastHeartbeat.Equal(env.now) {
 		t.Fatal("fresh emhttpd event did not restore the native source")
 	}
 	if disk := requireSingleDisk(t, collector); disk.temp != 39 || disk.unavailable {

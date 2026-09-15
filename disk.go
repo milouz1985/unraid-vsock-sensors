@@ -14,17 +14,13 @@ import (
 )
 
 const (
-	defaultDisksINIPath       = "/var/local/emhttp/disks.ini"
-	defaultDevsINIPath        = "/var/local/emhttp/devs.ini"
-	defaultSMARTCacheDir      = "/var/local/emhttp/smart"
-	defaultUnraidVarINIPath   = "/var/local/emhttp/var.ini"
-	defaultPollAttributes     = 30 * time.Second
-	diskWatchdogInterval      = 5 * time.Second
-	diskSnapshotTimeout       = 3 * diskWatchdogInterval
-	diskWakeMargin            = 5 * time.Second
-	emhttpPollMargin          = 15 * time.Second
-	minimumSMARTFreshness     = 10 * time.Second
-	maximumRecommendedPolling = 60 * time.Second
+	defaultDisksINIPath     = "/var/local/emhttp/disks.ini"
+	defaultDevsINIPath      = "/var/local/emhttp/devs.ini"
+	defaultSMARTCacheDir    = "/var/local/emhttp/smart"
+	defaultUnraidVarINIPath = "/var/local/emhttp/var.ini"
+	diskWatchdogInterval    = 5 * time.Second
+	diskSnapshotTimeout     = 3 * diskWatchdogInterval
+	diskWakeMargin          = 5 * time.Second
 )
 
 type diskDataPaths struct {
@@ -127,10 +123,6 @@ func requestDiskRefresh(refresh chan<- struct{}) {
 	case refresh <- struct{}{}:
 	default:
 	}
-}
-
-func (c *diskCollector) refresh() {
-	c.refreshWithContext(context.Background())
 }
 
 func (c *diskCollector) refreshWithContext(ctx context.Context) {

@@ -75,6 +75,26 @@ func (environment *diskTestEnvironment) collector() *diskCollector {
 	return collector
 }
 
+func (c *diskCollector) refresh() {
+	c.refreshWithContext(context.Background())
+}
+
+func readDisks(disksINIPath string, selector *diskSelector) ([]unraidDisk, error) {
+	entries, err := readAssignedEntries(disksINIPath, selector, true)
+	if err != nil {
+		return nil, err
+	}
+	return includedDisks(entries), nil
+}
+
+func readUnassignedDisks(devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
+	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	return includedDisks(entries), nil
+}
+
 func requireSingleDisk(t *testing.T, collector *diskCollector) sensorsDisk {
 	t.Helper()
 	readings, err := collector.snapshot()

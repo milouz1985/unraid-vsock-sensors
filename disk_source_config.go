@@ -15,6 +15,12 @@ import (
 	"gopkg.in/ini.v1"
 )
 
+const (
+	defaultPollAttributes     = 30 * time.Second
+	minimumSMARTFreshness     = 10 * time.Second
+	maximumRecommendedPolling = 60 * time.Second
+)
+
 func smartFreshnessWindow(pollInterval time.Duration) time.Duration {
 	margin := pollInterval / 5
 	if margin < minimumSMARTFreshness {

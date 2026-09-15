@@ -149,7 +149,7 @@ func buildDiagnosticVSOCK(publisher publisherRuntimeStatus, now time.Time) diagn
 
 func buildDiagnosticDiskServices(disks diskCollectorStatus, now time.Time) (diagnosticDisks, diagnosticEmhttpd) {
 	pollInterval := disks.source.pollInterval
-	if pollInterval == 0 && !disks.source.ready {
+	if pollInterval == 0 && !disks.source.initialized {
 		pollInterval = defaultPollAttributes
 	}
 	staleAfter := "disabled"
