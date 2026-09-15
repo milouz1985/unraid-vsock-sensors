@@ -232,7 +232,7 @@ UVSS suit séparément l'heure du dernier événement `poll_attributes` : le mti
 d'un rapport SMART ne sert pas de heartbeat, car il peut rester ancien pendant
 la veille d'un disque. Si aucun événement n'arrive pendant
 `poll_attributes + 15 secondes` (45 s avec le réglage 30 s), UVSS interroge
-temporairement les disques via `smartctl_type` avec `-n standby`. Pour les HDD
+temporairement les disques via `smartctl_type` avec `-n standby,3`. Pour les HDD
 ATA, il vérifie d'abord l'état avec `sdspin` et n'interroge que les disques
 actifs ; les HDD d'un autre bus ou de type inconnu restent indisponibles par
 prudence. La première collecte directe démarre dès la détection du blocage ;
@@ -247,12 +247,22 @@ de republier une ancienne mesure. Le failsafe hwmon de 10 secondes peut alors
 prendre le relais. `poll_attributes=0` désactive ce fallback, puisqu'aucun
 événement périodique n'est attendu.
 
-Un disque en veille reste inventorié à `0 °C`. Après son réveil, la dernière
-mesure valide bénéficie d'une période de grâce de :
+Un disque en veille reste inventorié avec `Temp=0`, une sentinelle synthétique
+de contrôle qui ne représente jamais une température physique. Les diagnostics
+l'affichent comme `standby`, sans température courante. Après son réveil, UVSS
+conserve temporairement cette sentinelle, avec l'état `waking`, pendant qu'il
+attend la première température SMART fraîche. L'ancienne température mesurée
+avant la veille n'est jamais réutilisée. Cette attente est limitée à :
 
 ```text
 poll_attributes + 5 secondes
 ```
+
+La première mesure fraîche remplace immédiatement la sentinelle. Si elle
+n'arrive pas avant l'expiration de cette fenêtre, le disque devient
+`Unavailable` et le failsafe hwmon peut prendre le relais. Une observation
+invalide d'un disque actif sans transition préalable depuis `standby` devient
+indisponible immédiatement.
 
 `poll_attributes` est lu dans `/var/local/emhttp/var.ini`. Une valeur invalide
 utilise un défaut interne de `30s` pour les calculs de fraîcheur et de

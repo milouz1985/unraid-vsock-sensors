@@ -127,6 +127,9 @@ L'agent :
   heartbeat `poll_attributes` absent, lance temporairement `smartctl_type`
   avec protection standby et des délais bornés ;
 - ne doit pas réveiller les disques ;
+- publie `Temp=0` comme sentinelle synthétique pendant la veille et la courte
+  attente d'une première mesure après réveil, sans jamais réutiliser la
+  température antérieure à la veille ;
 - publie les snapshots via AF_VSOCK.
 
 Les températures des disques proviennent de :
