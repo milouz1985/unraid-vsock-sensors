@@ -17,7 +17,7 @@ function uvssDiagState($state): string {
     $state = (string)$state;
     if (in_array($state, ['running', 'connected', 'healthy', 'valid'], true)) {
         $class = 'green';
-    } elseif (in_array($state, ['stale', 'reconnecting', 'retained', 'standby', 'unknown', 'unknown/config error'], true)) {
+    } elseif (in_array($state, ['stale', 'reconnecting', 'retained', 'standby', 'waking', 'unknown', 'unknown/config error'], true)) {
         $class = 'orange';
     } elseif (in_array($state, ['disabled', 'polling disabled'], true)) {
         $class = 'gray';

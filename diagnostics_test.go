@@ -177,7 +177,7 @@ func TestBuildDiagnosticDisksUsesStableIDs(t *testing.T) {
 		{disk: disks[1], standby: true, source: diskSourceDirect},
 		{disk: disks[0], source: diskSourceDirect},
 	}
-	states := diskStateTracker{"one": {hasValid: true, lastValidAt: now.Add(-30 * time.Second), lastSource: diskSourceDirect}}
+	states := diskStateTracker{"one": {thermalState: diskThermalValid, lastValidAt: now.Add(-30 * time.Second), lastSource: diskSourceDirect}}
 	runtime := buildDiskRuntimeSnapshot(disks, readings, observations, states, false)
 	items := buildDiagnosticDisks(runtime)
 	if items[0].Temperature == nil || *items[0].Temperature != 30 || items[0].Source != "direct SMART fallback" {
@@ -185,6 +185,32 @@ func TestBuildDiagnosticDisksUsesStableIDs(t *testing.T) {
 	}
 	if items[1].Status != "standby" || items[1].Temperature != nil {
 		t.Fatalf("standby sample: %+v", items[1])
+	}
+}
+
+func TestBuildDiagnosticDisksHidesSyntheticTemperatures(t *testing.T) {
+	disks := []diskRuntimeDisk{
+		{
+			disk:       unraidDisk{id: "standby", name: "disk1"},
+			reading:    sensors.Disk{ID: "standby", Temp: 0},
+			hasReading: true,
+			state:      diskState{thermalState: diskThermalStandby},
+		},
+		{
+			disk:           unraidDisk{id: "waking", name: "disk2"},
+			reading:        sensors.Disk{ID: "waking", Temp: 0},
+			hasReading:     true,
+			observation:    diskObservation{err: errors.New("temperature pending")},
+			hasObservation: true,
+			state:          diskState{thermalState: diskThermalWaking},
+		},
+	}
+	items := buildDiagnosticDisks(disks)
+	if items[0].Status != diagnosticDiskStandby || items[0].Temperature != nil {
+		t.Fatalf("standby diagnostic = %+v", items[0])
+	}
+	if items[1].Status != diagnosticDiskWaking || items[1].Temperature != nil || items[1].Error == "" {
+		t.Fatalf("waking diagnostic = %+v", items[1])
 	}
 }
 

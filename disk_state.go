@@ -15,16 +15,23 @@ import (
 )
 
 type diskState struct {
-	lastValid   float64
-	hasValid    bool
-	failedSince time.Time
-	hardFailed  bool
-	lastValidAt time.Time
-	lastSource  diskTemperatureSource
-	cacheAt     time.Time
+	thermalState  diskThermalState
+	wakeStartedAt time.Time
+	lastValidAt   time.Time
+	lastSource    diskTemperatureSource
+	cacheAt       time.Time
 }
 
 type diskStateTracker map[string]diskState
+
+type diskThermalState uint8
+
+const (
+	diskThermalUnavailable diskThermalState = iota
+	diskThermalValid
+	diskThermalStandby
+	diskThermalWaking
+)
 
 type diskObservation struct {
 	disk        unraidDisk
@@ -32,24 +39,15 @@ type diskObservation struct {
 	standby     bool
 	err         error
 	source      diskTemperatureSource
-	failure     diskFailurePolicy
 	measuredAt  time.Time
 	cacheAt     time.Time
 }
-
-type diskFailurePolicy uint8
-
-const (
-	diskFailureRetainPrevious diskFailurePolicy = iota
-	diskFailureDiscardPrevious
-)
 
 func makeDiskObservations(disks []unraidDisk, smartDir string, now time.Time, freshness time.Duration) []diskObservation {
 	observations := make([]diskObservation, 0, len(disks))
 	for _, disk := range disks {
 		observation := diskObservation{
 			disk: disk, standby: disk.spundown, source: diskSourceEmhttpd,
-			failure: diskFailureRetainPrevious,
 		}
 		if disk.spundown {
 			observations = append(observations, observation)
@@ -86,19 +84,16 @@ func parseCachedTemperature(raw string) (float64, error) {
 	if math.IsNaN(temperature) || math.IsInf(temperature, 0) {
 		return 0, fmt.Errorf("cached temperature %q is invalid", raw)
 	}
+	if temperature == 0 {
+		return 0, errors.New("cached temperature 0 is reserved for synthetic standby state")
+	}
 	return temperature, nil
 }
 
-func (s diskStateTracker) markFailure(now time.Time) {
-	for id, state := range s {
-		if state.failedSince.IsZero() {
-			state.failedSince = now
-			s[id] = state
-		}
-	}
-}
-
-func (s diskStateTracker) apply(observations []diskObservation, now time.Time, grace time.Duration) []sensors.Disk {
+// wakeGrace is the maximum time Unraid has to publish the first fresh SMART
+// temperature after a disk transitions from standby to active. During that
+// transition, 0 is a synthetic control value and never a measured temperature.
+func (s diskStateTracker) apply(observations []diskObservation, now time.Time, wakeGrace time.Duration) []sensors.Disk {
 	present := make(map[string]struct{}, len(observations))
 	readings := make([]sensors.Disk, 0, len(observations))
 	for _, observation := range observations {
@@ -109,11 +104,11 @@ func (s diskStateTracker) apply(observations []diskObservation, now time.Time, g
 		switch {
 		case observation.standby:
 			temperature = 0
-			state.failedSince = time.Time{}
-			state.hardFailed = false
+			state.thermalState = diskThermalStandby
+			state.wakeStartedAt = time.Time{}
 		case observation.err == nil:
-			state.lastValid = observation.temperature
-			state.hasValid = true
+			state.thermalState = diskThermalValid
+			state.wakeStartedAt = time.Time{}
 			state.lastValidAt = observation.measuredAt
 			if state.lastValidAt.IsZero() {
 				state.lastValidAt = now
@@ -122,18 +117,20 @@ func (s diskStateTracker) apply(observations []diskObservation, now time.Time, g
 			if !observation.cacheAt.IsZero() {
 				state.cacheAt = observation.cacheAt
 			}
-			state.failedSince = time.Time{}
-			state.hardFailed = false
 		default:
-			if state.failedSince.IsZero() {
-				state.failedSince = now
+			if observation.source == diskSourceEmhttpd && state.thermalState == diskThermalStandby {
+				state.thermalState = diskThermalWaking
+				state.wakeStartedAt = now
 			}
-			state.hardFailed = state.hardFailed || observation.failure == diskFailureDiscardPrevious
-			if !state.hardFailed && state.hasValid && now.Sub(state.failedSince) < grace {
-				temperature = state.lastValid
+			if observation.source == diskSourceEmhttpd && state.thermalState == diskThermalWaking &&
+				now.Sub(state.wakeStartedAt) < wakeGrace {
+				// Preserve only the synthetic standby value while Unraid obtains
+				// the first post-wake sample; never reuse the pre-standby reading.
+				temperature = 0
 			} else {
 				temperature = 0
 				unavailable = true
+				state.thermalState = diskThermalUnavailable
 			}
 		}
 		s[disk.id] = state

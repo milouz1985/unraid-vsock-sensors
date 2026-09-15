@@ -121,7 +121,7 @@ func (c *diskCollector) fallbackObservation(ctx context.Context, disk unraidDisk
 
 func newDirectSMARTObservation(disk unraidDisk) diskObservation {
 	return diskObservation{
-		disk: disk, source: diskSourceDirect, failure: diskFailureDiscardPrevious,
+		disk: disk, source: diskSourceDirect,
 		err: errors.New("direct SMART temperature unavailable"),
 	}
 }

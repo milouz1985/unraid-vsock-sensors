@@ -8,7 +8,9 @@ import "strings"
 // ProtocolVersion identifies incompatible revisions of the VSOCK snapshot.
 const ProtocolVersion = 1
 
-// Disk describes an Unraid disk and its latest collected temperature.
+// Disk describes an Unraid disk and its current safe control temperature.
+// Temp=0 with Unavailable=false can be a synthetic standby/waking sentinel;
+// it does not represent a physical 0 °C SMART measurement.
 type Disk struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`

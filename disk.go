@@ -21,7 +21,7 @@ const (
 	defaultPollAttributes     = 30 * time.Second
 	diskWatchdogInterval      = 5 * time.Second
 	diskSnapshotTimeout       = 3 * diskWatchdogInterval
-	diskFailureMargin         = 5 * time.Second
+	diskWakeMargin            = 5 * time.Second
 	emhttpPollMargin          = 15 * time.Second
 	minimumSMARTFreshness     = 10 * time.Second
 	maximumRecommendedPolling = 60 * time.Second
@@ -149,7 +149,6 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 
 	disks, err := c.readInventory()
 	if err != nil {
-		c.state.markFailure(now)
 		c.publishDiskFailure(err, now, c.smartSource.status())
 		return
 	}
@@ -179,7 +178,7 @@ func (c *diskCollector) collectTemperatures(
 ) ([]sensors.Disk, []diskObservation, bool) {
 	if decision.source == diskSourceEmhttpd {
 		observations := makeDiskObservations(disks, c.paths.smartDir, now, smartFreshnessWindow(pollInterval))
-		return c.state.apply(observations, now, pollInterval+diskFailureMargin), observations, false
+		return c.state.apply(observations, now, pollInterval+diskWakeMargin), observations, false
 	}
 	if !decision.directDue {
 		return c.reuseFallbackReadings(disks), nil, true
@@ -188,7 +187,7 @@ func (c *diskCollector) collectTemperatures(
 	observations, err := c.collectFallback(ctx, disks)
 	c.smartSource.recordFallbackResult(now, err)
 	c.fallbackLog.update(err)
-	return c.state.apply(observations, now, pollInterval+diskFailureMargin), observations, false
+	return c.state.apply(observations, now, pollInterval+diskWakeMargin), observations, false
 }
 
 func (c *diskCollector) publishDiskFailure(err error, now time.Time, source smartSourceStatus) {

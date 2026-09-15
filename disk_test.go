@@ -220,6 +220,7 @@ func TestActiveDiskRejectsMissingReportAndInvalidTemperature(t *testing.T) {
 		"missing report":      {temperature: "35"},
 		"missing temperature": {temperature: "", report: true},
 		"asterisk":            {temperature: "*", report: true},
+		"synthetic zero":      {temperature: "0", report: true},
 		"not numeric":         {temperature: "warm", report: true},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -275,13 +276,18 @@ func TestSleepingDiskAllowsOldSMARTReport(t *testing.T) {
 		id: "serial", name: "disk1", device: "sda", smartName: "disk1",
 		temperature: "*", spundown: true,
 	}}, directory, now, time.Minute)
-	readings := make(diskStateTracker).apply(observations, now, time.Minute)
+	tracker := make(diskStateTracker)
+	readings := tracker.apply(observations, now, time.Minute)
 	if len(readings) != 1 || readings[0].Unavailable || readings[0].Temp != 0 {
 		t.Fatalf("sleeping disk = %#v", readings)
 	}
+	readings = tracker.apply(observations, now.Add(time.Hour), time.Minute)
+	if readings[0].Unavailable || readings[0].Temp != 0 || tracker["serial"].thermalState != diskThermalStandby {
+		t.Fatalf("disk remaining in standby = %#v; state=%#v", readings, tracker["serial"])
+	}
 }
 
-func TestWakeGraceUnavailableAndRecovery(t *testing.T) {
+func TestWakeGraceUsesSyntheticZeroUntilFreshTemperature(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	writeAssigned := func(spundown, temperature string) {
 		environment.write(t, environment.paths.disksINI, strings.TrimSpace(`
@@ -295,7 +301,6 @@ func TestWakeGraceUnavailableAndRecovery(t *testing.T) {
 			temp="`+temperature+`"
 		`)+"\n")
 	}
-	freshness := smartFreshnessWindow(30 * time.Second)
 	writeAssigned("0", "35")
 	environment.report(t, "disk1", environment.now)
 	collector := environment.collector()
@@ -311,26 +316,102 @@ func TestWakeGraceUnavailableAndRecovery(t *testing.T) {
 		t.Fatalf("sleeping disk = %#v", disk)
 	}
 
-	writeAssigned("0", "36")
+	environment.now = environment.now.Add(2 * time.Hour)
+	collector.noteEmhttpPoll()
+	writeAssigned("0", "*")
 	collector.refresh()
-	if disk := requireSingleDisk(t, collector); disk.temp != 35 || disk.unavailable {
+	if disk := requireSingleDisk(t, collector); disk.temp != 0 || disk.unavailable {
 		t.Fatalf("disk during wake grace = %#v", disk)
 	}
-
-	environment.now = environment.now.Add(freshness)
-	collector.refresh()
-	if disk := requireSingleDisk(t, collector); disk.temp != 0 || !disk.unavailable {
-		t.Fatalf("disk after wake grace = %#v", disk)
+	wakeStartedAt := collector.state["serial"].wakeStartedAt
+	if collector.state["serial"].thermalState != diskThermalWaking || !wakeStartedAt.Equal(environment.now) {
+		t.Fatalf("wake state = %#v", collector.state["serial"])
+	}
+	if source := collector.smartSource.status().source; source != diskSourceEmhttpd {
+		t.Fatalf("invalid per-disk cache changed healthy emhttpd source to %q", source)
 	}
 
+	environment.now = environment.now.Add(30 * time.Second)
+	collector.noteEmhttpPoll()
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); disk.temp != 0 || disk.unavailable {
+		t.Fatalf("disk before fresh post-wake sample = %#v", disk)
+	}
+	if !collector.state["serial"].wakeStartedAt.Equal(wakeStartedAt) {
+		t.Fatal("invalid refresh restarted the wake grace")
+	}
+
+	writeAssigned("0", "28")
 	environment.report(t, "disk1", environment.now)
 	collector.refresh()
-	if disk := requireSingleDisk(t, collector); disk.temp != 36 || disk.unavailable {
+	if disk := requireSingleDisk(t, collector); disk.temp != 28 || disk.unavailable {
 		t.Fatalf("recovered disk = %#v", disk)
+	}
+	if state := collector.state["serial"]; state.thermalState != diskThermalValid || !state.wakeStartedAt.IsZero() {
+		t.Fatalf("state after fresh post-wake sample = %#v", state)
 	}
 }
 
-func TestInventoryFailureCountsTowardDiskGracePeriod(t *testing.T) {
+func TestWakeGraceExpiresWithoutFreshTemperature(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	wakeGrace := 30*time.Second + diskWakeMargin
+	disk := unraidDisk{id: "serial", name: "disk1", device: "sda"}
+	tracker := make(diskStateTracker)
+	tracker.apply([]diskObservation{{disk: disk, standby: true, source: diskSourceEmhttpd}}, now, wakeGrace)
+	readings := tracker.apply([]diskObservation{{disk: disk, source: diskSourceEmhttpd, err: errors.New("temperature pending")}}, now.Add(time.Hour), wakeGrace)
+	if len(readings) != 1 || readings[0].Temp != 0 || readings[0].Unavailable || tracker["serial"].thermalState != diskThermalWaking {
+		t.Fatalf("initial wake reading = %#v; state=%#v", readings, tracker["serial"])
+	}
+	wakeStartedAt := tracker["serial"].wakeStartedAt
+	readings = tracker.apply([]diskObservation{{disk: disk, source: diskSourceEmhttpd, err: errors.New("temperature pending")}}, wakeStartedAt.Add(wakeGrace), wakeGrace)
+	if len(readings) != 1 || readings[0].Temp != 0 || !readings[0].Unavailable || tracker["serial"].thermalState != diskThermalUnavailable {
+		t.Fatalf("expired wake reading = %#v; state=%#v", readings, tracker["serial"])
+	}
+}
+
+func TestActiveObservationFailureDoesNotRetainPreviousTemperature(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	disk := unraidDisk{id: "serial", name: "disk1", device: "sda"}
+	tracker := make(diskStateTracker)
+	tracker.apply([]diskObservation{{disk: disk, temperature: 35, source: diskSourceEmhttpd}}, now, time.Minute)
+	readings := tracker.apply([]diskObservation{{disk: disk, source: diskSourceEmhttpd, err: errors.New("invalid cache")}}, now.Add(time.Second), time.Minute)
+	if len(readings) != 1 || readings[0].Temp != 0 || !readings[0].Unavailable || tracker["serial"].thermalState != diskThermalUnavailable {
+		t.Fatalf("invalid active reading = %#v; state=%#v", readings, tracker["serial"])
+	}
+}
+
+func TestWakeGraceReturnsToStandbyAndRestartsOnNextWake(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	disk := unraidDisk{id: "serial", name: "disk1", device: "sda"}
+	tracker := make(diskStateTracker)
+	tracker.apply([]diskObservation{{disk: disk, standby: true, source: diskSourceEmhttpd}}, now, time.Minute)
+	tracker.apply([]diskObservation{{disk: disk, source: diskSourceEmhttpd, err: errors.New("temperature pending")}}, now.Add(time.Second), time.Minute)
+	firstWake := tracker["serial"].wakeStartedAt
+	readings := tracker.apply([]diskObservation{{disk: disk, standby: true, source: diskSourceEmhttpd}}, now.Add(2*time.Second), time.Minute)
+	if readings[0].Temp != 0 || readings[0].Unavailable || tracker["serial"].thermalState != diskThermalStandby || !tracker["serial"].wakeStartedAt.IsZero() {
+		t.Fatalf("returned standby reading = %#v; state=%#v", readings, tracker["serial"])
+	}
+	tracker.apply([]diskObservation{{disk: disk, source: diskSourceEmhttpd, err: errors.New("temperature pending")}}, now.Add(3*time.Second), time.Minute)
+	if state := tracker["serial"]; state.thermalState != diskThermalWaking || !state.wakeStartedAt.After(firstWake) {
+		t.Fatalf("second wake state = %#v", state)
+	}
+}
+
+func TestWakeStateDoesNotTransferToReplacement(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	oldDisk := unraidDisk{id: "old", name: "disk1", device: "sda"}
+	newDisk := unraidDisk{id: "new", name: "disk1", device: "sda"}
+	tracker := make(diskStateTracker)
+	tracker.apply([]diskObservation{{disk: oldDisk, standby: true, source: diskSourceEmhttpd}}, now, time.Minute)
+	tracker.apply([]diskObservation{{disk: oldDisk, source: diskSourceEmhttpd, err: errors.New("temperature pending")}}, now.Add(time.Second), time.Minute)
+	readings := tracker.apply([]diskObservation{{disk: newDisk, source: diskSourceEmhttpd, err: errors.New("temperature pending")}}, now.Add(2*time.Second), time.Minute)
+	if _, exists := tracker["old"]; exists || tracker["new"].thermalState != diskThermalUnavailable ||
+		len(readings) != 1 || !readings[0].Unavailable {
+		t.Fatalf("replacement reading = %#v; states=%#v", readings, tracker)
+	}
+}
+
+func TestInventoryFailureDoesNotPublishStaleDiskAfterRecovery(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	inventory := strings.TrimSpace(`
 		["disk1"]
@@ -674,7 +755,8 @@ func TestDuplicateDiskIDDoesNotPublishPartialSnapshot(t *testing.T) {
 	if response.Disks != nil || !strings.Contains(response.Error, "duplicate disk ID \"serial1\" in disks.ini") {
 		t.Fatalf("published snapshot = %#v; want error and no partial disks", response)
 	}
-	if len(collector.state) != 2 || !collector.state["serial1"].hasValid || !collector.state["serial2"].hasValid {
+	if len(collector.state) != 2 || collector.state["serial1"].thermalState != diskThermalValid ||
+		collector.state["serial2"].thermalState != diskThermalValid {
 		t.Fatalf("previous disk state was lost: %#v", collector.state)
 	}
 
@@ -855,7 +937,7 @@ func TestRefreshRequestsAreCoalesced(t *testing.T) {
 	<-done
 }
 
-func TestWatchdogDetectsCacheExpirationWithoutEvent(t *testing.T) {
+func TestWatchdogMarksExpiredCacheUnavailableWithoutEvent(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "0")
 	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nspundown=0\ntemp=35\n")
 	environment.report(t, "disk1", environment.now)
@@ -875,29 +957,9 @@ func TestWatchdogDetectsCacheExpirationWithoutEvent(t *testing.T) {
 	eventuallyDisk(t, collector, func(disk sensorsDisk) bool { return disk.temp == 35 && !disk.unavailable })
 
 	nowUnixNano.Add(int64(11 * time.Second))
-	eventuallyDiskFailure(t, collector, "serial")
-	if disk := requireSingleDisk(t, collector); disk.temp != 35 || disk.unavailable {
-		t.Fatalf("disk during watchdog grace = %#v", disk)
-	}
-	nowUnixNano.Add(int64(10 * time.Second))
 	eventuallyDisk(t, collector, func(disk sensorsDisk) bool { return disk.unavailable })
 	cancel()
 	<-done
-}
-
-func eventuallyDiskFailure(t *testing.T, collector *diskCollector, id string) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		collector.refreshMu.Lock()
-		failedSince := collector.state[id].failedSince
-		collector.refreshMu.Unlock()
-		if !failedSince.IsZero() {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("watchdog did not detect the stale SMART cache")
 }
 
 func eventuallyDisk(t *testing.T, collector *diskCollector, accept func(sensorsDisk) bool) {

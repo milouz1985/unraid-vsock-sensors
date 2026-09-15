@@ -28,6 +28,7 @@ const (
 	diagnosticDiskRetained    = "retained"
 	diagnosticDiskUnavailable = "unavailable"
 	diagnosticDiskStandby     = "standby"
+	diagnosticDiskWaking      = "waking"
 )
 
 type diagnosticsSnapshot struct {
@@ -240,6 +241,14 @@ func buildDiagnosticDisks(disks []diskRuntimeDisk) []diagnosticDisk {
 					item.Status = diagnosticDiskRetained
 				}
 			}
+		}
+		switch state.thermalState {
+		case diskThermalStandby:
+			item.Status = diagnosticDiskStandby
+			item.Temperature = nil
+		case diskThermalWaking:
+			item.Status = diagnosticDiskWaking
+			item.Temperature = nil
 		}
 		items = append(items, item)
 	}

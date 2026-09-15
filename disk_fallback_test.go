@@ -206,6 +206,9 @@ func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 	if !disk.unavailable || disk.temp != 0 {
 		t.Fatalf("failed fallback reused an old temperature: %#v", disk)
 	}
+	if state := collector.state["serial"]; state.thermalState != diskThermalUnavailable {
+		t.Fatalf("failed fallback state = %#v", state)
+	}
 	samples, _ := makeHWMonSamples(sensors.Response{Disks: []sensors.Disk{{ID: disk.id, Name: disk.name, Device: disk.device, Transport: "nvme", Unavailable: disk.unavailable}}})
 	if len(samples) != 1 || !samples[0].omitOnCommit {
 		t.Fatalf("hwmon should let the 10-second failsafe expire: %#v", samples)
@@ -324,7 +327,7 @@ func TestFallbackReuseUsesStableIdentityAndRejectsChangedTransport(t *testing.T)
 		{reading: sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41}, hasReading: true},
 		{reading: sensors.Disk{ID: "second", Device: "nvme1n1", Transport: "nvme", Temp: 52}, hasReading: true},
 	}
-	collector.state = diskStateTracker{"first": {hasValid: true}, "second": {hasValid: true}}
+	collector.state = diskStateTracker{"first": {}, "second": {}}
 
 	readings := collector.reuseFallbackReadings([]unraidDisk{
 		{id: "second", device: "nvme1n1", transport: "nvme"},
@@ -349,7 +352,7 @@ func TestFallbackReuseDoesNotReviveSnapshotAfterCollectionFailure(t *testing.T) 
 		hasReading: true,
 	}}
 	collector.err = errors.New("inventory failed")
-	collector.state = diskStateTracker{"first": {hasValid: true}}
+	collector.state = diskStateTracker{"first": {}}
 
 	readings := collector.reuseFallbackReadings([]unraidDisk{{
 		id: "first", device: "nvme0n1", transport: "nvme",
