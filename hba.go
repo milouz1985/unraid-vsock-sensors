@@ -19,7 +19,6 @@ type hbaCollector struct {
 	interval               time.Duration
 	mode                   hbaMode
 	mu                     sync.RWMutex
-	readings               []sensors.HBA
 	err                    error
 	updatedAt              time.Time
 	lastSuccessfulAt       time.Time
@@ -177,11 +176,9 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	c.err = err
 	if err != nil {
 		c.lastErrorAt = time.Now()
-		c.readings = nil
 		c.updatedAt = time.Time{}
 		return
 	}
-	c.readings = readings
 	c.updatedAt = time.Now()
 	c.lastSuccessfulAt = c.updatedAt
 	c.lastErrorAt = time.Time{}
@@ -201,7 +198,7 @@ func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	if !time.Now().Before(c.updatedAt.Add(c.interval + hbaCollectionTimeout)) {
 		return nil, errors.New("HBA temperature snapshot expired")
 	}
-	return slices.Clone(c.readings), nil
+	return slices.Clone(c.lastSuccessfulSnapshot), nil
 }
 
 func (c *hbaCollector) status() hbaCollectorStatus {

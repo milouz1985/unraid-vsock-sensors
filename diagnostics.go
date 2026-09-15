@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
@@ -191,7 +190,7 @@ func buildDiagnosticsSnapshot(service serviceStatus, disks diskCollectorStatus, 
 
 	result.HBA = diagnosticHBA{Mode: hbas.mode, Backend: service.backend, Interval: hbas.interval.String(),
 		LastSuccessfulAt: timePointer(hbas.lastSuccessfulAt), LastError: errorText(hbas.err),
-		LastErrorAt: timePointer(hbas.lastErrorAt), Items: slices.Clone(hbas.lastSuccessfulSnapshot)}
+		LastErrorAt: timePointer(hbas.lastErrorAt), Items: hbas.lastSuccessfulSnapshot}
 	if hbas.mode == hbaModeDisabled {
 		result.HBA.Status = diagnosticStatusDisabled
 		result.HBA.LastError = ""

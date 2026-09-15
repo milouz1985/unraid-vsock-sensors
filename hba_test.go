@@ -141,6 +141,42 @@ func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 	if len(readings) != 0 || err == nil {
 		t.Fatalf("failed refresh returned %#v, %v", readings, err)
 	}
+	status := collector.status()
+	if len(status.lastSuccessfulSnapshot) != 1 || status.lastSuccessfulSnapshot[0].Temp != 42 {
+		t.Fatalf("last successful diagnostic snapshot = %#v", status.lastSuccessfulSnapshot)
+	}
+	response := collectorSnapshot(newDiskCollector(diskDataPaths{}), collector)
+	if len(response.HBAs) != 0 || response.HBAError == "" {
+		t.Fatalf("publisher response after HBA failure = %#v", response)
+	}
+}
+
+func TestHBACollectorSnapshotReturnsDefensiveCopy(t *testing.T) {
+	collector := newTestHBACollector(time.Minute, hbaModeEnabled)
+	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
+		return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
+	})
+	collector.refresh(context.Background())
+	readings, err := collector.snapshot()
+	if err != nil || len(readings) != 1 {
+		t.Fatalf("snapshot = %#v, %v", readings, err)
+	}
+	readings[0].Temp = 99
+	if fresh, err := collector.snapshot(); err != nil || fresh[0].Temp != 42 {
+		t.Fatalf("snapshot mutation reached collector: %#v, %v", fresh, err)
+	}
+}
+
+func TestHBACollectorSuccessfulEmptyInventory(t *testing.T) {
+	collector := newTestHBACollector(time.Minute, hbaModeEnabled)
+	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
+		return []sensors.HBA{}, nil
+	})
+	collector.refresh(context.Background())
+	readings, err := collector.snapshot()
+	if err != nil || readings == nil || len(readings) != 0 {
+		t.Fatalf("empty snapshot = %#v, %v", readings, err)
+	}
 }
 
 func TestHBACollectorExpiresBlockedRefreshAndRecovers(t *testing.T) {
@@ -215,8 +251,8 @@ func TestBlockedHBACollectionDoesNotStopSnapshotPublication(t *testing.T) {
 			2,
 		)
 		for index, frame := range frames {
-			if frame.HBAError == "" {
-				t.Fatalf("frame %d did not publish the blocked HBA collection error: %#v", index, frame)
+			if frame.HBAError == "" || len(frame.HBAs) != 0 {
+				t.Fatalf("frame %d republished HBA data instead of the collection error: %#v", index, frame)
 			}
 		}
 
