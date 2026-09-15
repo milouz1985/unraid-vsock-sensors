@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -270,6 +271,48 @@ func TestFallbackRetainedReadingsFollowInventoryWithoutReusingChangedDevice(t *t
 	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.unavailable || disk.temp != 42 || disk.device != "nvme2n1" {
 		t.Fatalf("next direct poll did not recover changed device: %#v", disk)
+	}
+}
+
+func TestFallbackReuseUsesStableIdentityAndRejectsChangedTransport(t *testing.T) {
+	collector := newDiskCollector(diskDataPaths{})
+	collector.err = nil
+	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{
+		{reading: sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41}, hasReading: true},
+		{reading: sensors.Disk{ID: "second", Device: "nvme1n1", Transport: "nvme", Temp: 52}, hasReading: true},
+	}
+	collector.state = diskStateTracker{"first": {hasValid: true}, "second": {hasValid: true}}
+
+	readings := collector.reuseFallbackReadings([]unraidDisk{
+		{id: "second", device: "nvme1n1", transport: "nvme"},
+		{id: "first", device: "nvme0n1", transport: "nvme"},
+	})
+	if len(readings) != 2 || readings[0].ID != "second" || readings[0].Temp != 52 || readings[1].ID != "first" || readings[1].Temp != 41 {
+		t.Fatalf("readings were associated by position: %#v", readings)
+	}
+
+	readings = collector.reuseFallbackReadings([]unraidDisk{{
+		id: "first", device: "nvme0n1", transport: "ata",
+	}})
+	if len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
+		t.Fatalf("changed transport reused an old measurement: %#v", readings)
+	}
+}
+
+func TestFallbackReuseDoesNotReviveSnapshotAfterCollectionFailure(t *testing.T) {
+	collector := newDiskCollector(diskDataPaths{})
+	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{{
+		reading:    sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41},
+		hasReading: true,
+	}}
+	collector.err = errors.New("inventory failed")
+	collector.state = diskStateTracker{"first": {hasValid: true}}
+
+	readings := collector.reuseFallbackReadings([]unraidDisk{{
+		id: "first", device: "nvme0n1", transport: "nvme",
+	}})
+	if len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
+		t.Fatalf("failed collection revived the previous snapshot: %#v", readings)
 	}
 }
 

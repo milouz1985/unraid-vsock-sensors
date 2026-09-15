@@ -52,7 +52,6 @@ type diskCollector struct {
 
 	refreshMu              sync.Mutex
 	mu                     sync.RWMutex
-	readings               []sensors.Disk
 	err                    error
 	updatedAt              time.Time
 	errorAt                time.Time
@@ -157,7 +156,7 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 
 	readings, observations, reused := c.collectTemperatures(ctx, disks, decision, now, pollInterval)
 	runtimeDisks := buildDiskRuntimeSnapshot(disks, readings, observations, c.state, reused)
-	c.publishDiskSuccess(readings, runtimeDisks, now, c.smartSource.status())
+	c.publishDiskSuccess(runtimeDisks, now, c.smartSource.status())
 }
 
 func (c *diskCollector) readInventory() ([]unraidDisk, error) {
@@ -197,17 +196,15 @@ func (c *diskCollector) publishDiskFailure(err error, now time.Time, source smar
 	defer c.mu.Unlock()
 	c.err = err
 	c.errorAt = now
-	c.readings = nil
 	c.updatedAt = time.Time{}
 	c.publishedSource = source
 }
 
-func (c *diskCollector) publishDiskSuccess(readings []sensors.Disk, runtimeDisks []diskRuntimeDisk, now time.Time, source smartSourceStatus) {
+func (c *diskCollector) publishDiskSuccess(runtimeDisks []diskRuntimeDisk, now time.Time, source smartSourceStatus) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.err = nil
 	c.errorAt = time.Time{}
-	c.readings = readings
 	c.updatedAt = now
 	c.lastSuccessfulSnapshot = runtimeDisks
 	c.publishedSource = source
@@ -219,9 +216,13 @@ func (c *diskCollector) publishDiskSuccess(readings []sensors.Disk, runtimeDisks
 // the next direct poll.
 func (c *diskCollector) reuseFallbackReadings(disks []unraidDisk) []sensors.Disk {
 	c.mu.RLock()
-	previous := make(map[string]sensors.Disk, len(c.readings))
-	for _, reading := range c.readings {
-		previous[reading.ID] = reading
+	previous := make(map[string]sensors.Disk, len(c.lastSuccessfulSnapshot))
+	if c.err == nil {
+		for _, runtime := range c.lastSuccessfulSnapshot {
+			if runtime.hasReading {
+				previous[runtime.reading.ID] = runtime.reading
+			}
+		}
 	}
 	c.mu.RUnlock()
 
@@ -256,7 +257,20 @@ func (c *diskCollector) snapshot() ([]sensors.Disk, error) {
 	if !c.now().Before(c.updatedAt.Add(diskSnapshotTimeout)) {
 		return nil, errors.New("disk cache snapshot expired")
 	}
-	return slices.Clone(c.readings), nil
+	return diskReadingsFromRuntime(c.lastSuccessfulSnapshot), nil
+}
+
+func diskReadingsFromRuntime(runtimeDisks []diskRuntimeDisk) []sensors.Disk {
+	if runtimeDisks == nil {
+		return nil
+	}
+	readings := make([]sensors.Disk, 0, len(runtimeDisks))
+	for _, runtime := range runtimeDisks {
+		if runtime.hasReading {
+			readings = append(readings, runtime.reading)
+		}
+	}
+	return readings
 }
 
 func (c *diskCollector) status() diskCollectorStatus {

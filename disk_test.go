@@ -91,6 +91,41 @@ type sensorsDisk struct {
 	unavailable      bool
 }
 
+func TestDiskSnapshotUsesRuntimeOrderAndReturnsCopy(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	collector := newDiskCollector(diskDataPaths{})
+	collector.now = func() time.Time { return now }
+	collector.err = nil
+	collector.updatedAt = now
+	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{
+		{reading: sensors.Disk{ID: "second", Temp: 52}, hasReading: true},
+		{reading: sensors.Disk{ID: "first", Temp: 41}, hasReading: true},
+	}
+
+	readings, err := collector.snapshot()
+	if err != nil || len(readings) != 2 || readings[0].ID != "second" || readings[1].ID != "first" {
+		t.Fatalf("snapshot order = %#v, %v", readings, err)
+	}
+	readings[0].Temp = 99
+	again, err := collector.snapshot()
+	if err != nil || again[0].Temp != 52 {
+		t.Fatalf("caller mutated runtime snapshot: %#v, %v", again, err)
+	}
+}
+
+func TestDiskSnapshotPreservesSuccessfulEmptyInventory(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	collector := newDiskCollector(diskDataPaths{})
+	collector.now = func() time.Time { return now }
+	collector.err = nil
+	collector.updatedAt = now
+	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{}
+	readings, err := collector.snapshot()
+	if err != nil || readings == nil || len(readings) != 0 {
+		t.Fatalf("empty snapshot = %#v, %v", readings, err)
+	}
+}
+
 func TestAssignedDiskUsesFreshUnraidTemperatureAndLogicalSMARTName(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI, strings.TrimSpace(`
