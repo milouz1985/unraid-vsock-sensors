@@ -28,74 +28,97 @@ func diskPolicyCommand(args []string, output io.Writer) error {
 	}
 	switch args[0] {
 	case "list":
-		fs := flag.NewFlagSet("disks list", flag.ContinueOnError)
-		disksINI := fs.String("disks-ini", defaultDisksINIPath, "assigned disk inventory")
-		devsINI := fs.String("devs-ini", defaultDevsINIPath, "unassigned disk inventory")
-		sysBlockRoot := fs.String("sys-block-root", defaultSysBlockRoot, "sysfs block root")
-		policyFile := fs.String("policy-file", defaultDiskPolicyFile, "persistent disk policies")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		if fs.NArg() != 0 {
-			return errors.New("disks list does not accept positional arguments")
-		}
-		policies, err := readDiskPolicies(*policyFile)
-		if err != nil {
-			return err
-		}
-		selector := &diskSelector{sysBlockRoot: *sysBlockRoot, policies: policies}
-		entries, err := readDiskInventoryEntries(*disksINI, *devsINI, selector, false)
-		if err != nil {
-			return err
-		}
-		rows := make([]diskPolicyRow, 0, len(entries))
-		for _, entry := range entries {
-			rows = append(rows, diskPolicyRow{
-				ID: entry.disk.id, Name: entry.disk.name, Device: entry.disk.device,
-				Transport: entry.disk.transport, Bus: entry.bus, Policy: entry.policy,
-				Included: entry.included,
-			})
-		}
-		return json.NewEncoder(output).Encode(rows)
+		return diskPolicyListCommand(args[1:], output)
 	case "set":
-		fs := flag.NewFlagSet("disks set", flag.ContinueOnError)
-		encodedID := fs.String("id-base64", "", "base64-encoded stable Unraid disk ID")
-		policy := fs.String("policy", "", "auto, include or exclude")
-		policyFile := fs.String("policy-file", defaultDiskPolicyFile, "persistent disk policies")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		if fs.NArg() != 0 {
-			return errors.New("disks set does not accept positional arguments")
-		}
-		idBytes, err := base64.StdEncoding.Strict().DecodeString(*encodedID)
-		if err != nil || !utf8.Valid(idBytes) {
-			return errors.New("invalid base64 disk ID")
-		}
-		if err := writeDiskPolicy(*policyFile, string(idBytes), diskPolicy(*policy)); err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(output, "disk policy saved")
-		return err
-	case "validate", "reset":
-		fs := flag.NewFlagSet("disks "+args[0], flag.ContinueOnError)
-		policyFile := fs.String("policy-file", defaultDiskPolicyFile, "persistent disk policies")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		if fs.NArg() != 0 {
-			return fmt.Errorf("disks %s does not accept positional arguments", args[0])
-		}
-		if args[0] == "validate" {
-			_, err := readDiskPolicies(*policyFile)
-			return err
-		}
-		if err := resetDiskPolicies(*policyFile); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintln(output, "disk policies reset")
-		return err
+		return diskPolicySetCommand(args[1:], output)
+	case "validate":
+		return diskPolicyValidateCommand(args[1:])
+	case "reset":
+		return diskPolicyResetCommand(args[1:], output)
 	default:
 		return fmt.Errorf("unknown disks command %q", args[0])
 	}
+}
+
+func diskPolicyListCommand(args []string, output io.Writer) error {
+	fs := flag.NewFlagSet("disks list", flag.ContinueOnError)
+	disksINI := fs.String("disks-ini", defaultDisksINIPath, "assigned disk inventory")
+	devsINI := fs.String("devs-ini", defaultDevsINIPath, "unassigned disk inventory")
+	sysBlockRoot := fs.String("sys-block-root", defaultSysBlockRoot, "sysfs block root")
+	policyFile := fs.String("policy-file", defaultDiskPolicyFile, "persistent disk policies")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("disks list does not accept positional arguments")
+	}
+	policies, err := readDiskPolicies(*policyFile)
+	if err != nil {
+		return err
+	}
+	selector := &diskSelector{sysBlockRoot: *sysBlockRoot, policies: policies}
+	entries, err := readDiskInventoryEntries(*disksINI, *devsINI, selector, false)
+	if err != nil {
+		return err
+	}
+	rows := make([]diskPolicyRow, 0, len(entries))
+	for _, entry := range entries {
+		rows = append(rows, diskPolicyRow{
+			ID: entry.disk.id, Name: entry.disk.name, Device: entry.disk.device,
+			Transport: entry.disk.transport, Bus: entry.bus, Policy: entry.policy,
+			Included: entry.included,
+		})
+	}
+	return json.NewEncoder(output).Encode(rows)
+}
+
+func diskPolicySetCommand(args []string, output io.Writer) error {
+	fs := flag.NewFlagSet("disks set", flag.ContinueOnError)
+	encodedID := fs.String("id-base64", "", "base64-encoded stable Unraid disk ID")
+	policy := fs.String("policy", "", "auto, include or exclude")
+	policyFile := fs.String("policy-file", defaultDiskPolicyFile, "persistent disk policies")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("disks set does not accept positional arguments")
+	}
+	idBytes, err := base64.StdEncoding.Strict().DecodeString(*encodedID)
+	if err != nil || !utf8.Valid(idBytes) {
+		return errors.New("invalid base64 disk ID")
+	}
+	if err := writeDiskPolicy(*policyFile, string(idBytes), diskPolicy(*policy)); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(output, "disk policy saved")
+	return err
+}
+
+func diskPolicyValidateCommand(args []string) error {
+	fs := flag.NewFlagSet("disks validate", flag.ContinueOnError)
+	policyFile := fs.String("policy-file", defaultDiskPolicyFile, "persistent disk policies")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("disks validate does not accept positional arguments")
+	}
+	_, err := readDiskPolicies(*policyFile)
+	return err
+}
+
+func diskPolicyResetCommand(args []string, output io.Writer) error {
+	fs := flag.NewFlagSet("disks reset", flag.ContinueOnError)
+	policyFile := fs.String("policy-file", defaultDiskPolicyFile, "persistent disk policies")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("disks reset does not accept positional arguments")
+	}
+	if err := resetDiskPolicies(*policyFile); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(output, "disk policies reset")
+	return err
 }

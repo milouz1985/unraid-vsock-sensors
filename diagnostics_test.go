@@ -17,7 +17,7 @@ import (
 
 func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
-	service := newServiceState(990, hbaBackendMPT3CTL).status()
+	service := newServiceState(990).status()
 	disks := diskCollectorStatus{
 		updatedAt:   now,
 		policyError: "invalid disk policy for ID \"serial\"",
@@ -31,7 +31,7 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 			state: diskState{lastValidAt: now.Add(-12 * time.Second), lastSource: diskSourceEmhttpd},
 		}},
 	}
-	hbas := hbaCollectorStatus{interval: 15 * time.Second, mode: hbaModeDisabled}
+	hbas := hbaCollectorStatus{interval: 15 * time.Second, mode: hbaModeDisabled, backend: hbaBackendMPT3CTL}
 	before := append([]diskRuntimeDisk(nil), disks.disks...)
 	snapshot := buildDiagnosticsSnapshot(service, disks, hbas, now)
 	if snapshot.Emhttpd.Status != "healthy" || snapshot.Emhttpd.TemperatureSource != "emhttpd cache" || snapshot.Emhttpd.LastPollAt == nil {
@@ -101,11 +101,11 @@ func TestCollectorStatusReturnsIndependentCopies(t *testing.T) {
 }
 
 func TestDiagnosticsVSOCKAndHBAError(t *testing.T) {
-	service := newServiceState(991, hbaBackendStorCLI)
+	service := newServiceState(991)
 	service.connectedNow()
 	service.publishedNow()
 	hbas := hbaCollectorStatus{
-		interval: 30 * time.Second, mode: hbaModeEnabled,
+		interval: 30 * time.Second, mode: hbaModeEnabled, backend: hbaBackendStorCLI,
 		err: errors.New("backend unavailable"), lastErrorAt: time.Now(),
 		lastSuccessfulAt:       time.Now().Add(-time.Minute),
 		lastSuccessfulSnapshot: []sensors.HBA{{ID: "sas:1", Temp: 45}},
@@ -131,7 +131,7 @@ func TestDiagnosticsVSOCKAndHBAError(t *testing.T) {
 func TestReadDiagnosticsRuntimeFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runtime", "diagnostics.json")
 	now := time.Now()
-	service := newServiceState(990, hbaBackendMPT3CTL)
+	service := newServiceState(990)
 	snapshot := buildDiagnosticsSnapshot(
 		service.status(), newDiskCollector(diskDataPaths{}).status(),
 		newConfiguredHBACollector(15*time.Second, hbaModeDisabled, hbaBackendMPT3CTL).status(), now,

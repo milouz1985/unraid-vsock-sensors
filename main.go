@@ -152,7 +152,7 @@ func serve(args []string) error {
 	refreshRequests := make(chan struct{}, 1)
 	go forwardDiskRefreshSignals(ctx, refreshSignals, pollSignals, refreshRequests, disks)
 	hbas := newConfiguredHBACollector(hbaInterval, hbaMode, hbaBackend)
-	service := newServiceState(uint32(*port), hbaBackend)
+	service := newServiceState(uint32(*port))
 	// Collection remains independent from publication so a disk or controller
 	// command can never block the VSOCK heartbeat.
 	go disks.run(ctx, refreshRequests)

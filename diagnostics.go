@@ -124,24 +124,39 @@ type diagnosticHBA struct {
 func buildDiagnosticsSnapshot(service serviceStatus, disks diskCollectorStatus, hbas hbaCollectorStatus, now time.Time) diagnosticsSnapshot {
 	vsock := buildDiagnosticVSOCK(service.publisher, now)
 	diagnosticDisks, emhttpd := buildDiagnosticDiskServices(disks, now)
-	hba := buildDiagnosticHBA(hbas, service.backend, now)
+	hba := buildDiagnosticHBA(hbas, now)
 	return diagnosticsSnapshot{
-		SchemaVersion: 1, Version: version, PID: service.pid, StartedAt: service.startedAt, GeneratedAt: now,
-		Service: "running", UptimeSeconds: int64(max(0, now.Sub(service.startedAt).Seconds())),
+		SchemaVersion: 1,
+		Version:       version,
+		PID:           service.pid,
+		StartedAt:     service.startedAt,
+		GeneratedAt:   now,
+		Service:       "running",
+		UptimeSeconds: int64(max(0, now.Sub(service.startedAt).Seconds())),
 		Config: diagnosticConfig{
-			VSOCKPort: service.port, HBAMode: hbas.mode, HBABackend: service.backend, HBAInterval: hbas.interval.String(),
-			PollAttributes: emhttpd.PollAttributes, EmhttpdStaleAfter: emhttpd.StaleAfter,
+			VSOCKPort:         service.publisher.port,
+			HBAMode:           hbas.mode,
+			HBABackend:        hbas.backend,
+			HBAInterval:       hbas.interval.String(),
+			PollAttributes:    emhttpd.PollAttributes,
+			EmhttpdStaleAfter: emhttpd.StaleAfter,
 		},
-		VSOCK: vsock, Emhttpd: emhttpd, Disks: diagnosticDisks, HBA: hba,
+		VSOCK:   vsock,
+		Emhttpd: emhttpd,
+		Disks:   diagnosticDisks,
+		HBA:     hba,
 	}
 }
 
 func buildDiagnosticVSOCK(publisher publisherRuntimeStatus, now time.Time) diagnosticVSOCK {
 	result := diagnosticVSOCK{
-		Status: publisher.status, HostCID: publisher.hostCID, Port: publisher.port,
+		Status:          publisher.status,
+		HostCID:         publisher.hostCID,
+		Port:            publisher.port,
 		LastConnectedAt: timePointer(publisher.lastConnectedAt),
 		LastPublishedAt: timePointer(publisher.lastPublishedAt),
-		LastError:       publisher.lastError, LastErrorAt: timePointer(publisher.lastErrorAt),
+		LastError:       publisher.lastError,
+		LastErrorAt:     timePointer(publisher.lastErrorAt),
 	}
 	result.LastPublishedAgeSeconds = ageSeconds(result.LastPublishedAt, now)
 	return result
@@ -158,8 +173,12 @@ func buildDiagnosticDiskServices(disks diskCollectorStatus, now time.Time) (diag
 	}
 	fallback := disks.source.source == diskSourceDirect
 	diskResult := diagnosticDisks{
-		Status: diagnosticStatusHealthy, UpdatedAt: timePointer(disks.updatedAt), Error: errorText(disks.err),
-		ErrorAt: timePointer(disks.errorAt), PolicyError: disks.policyError, Items: buildDiagnosticDisks(disks.disks),
+		Status:      diagnosticStatusHealthy,
+		UpdatedAt:   timePointer(disks.updatedAt),
+		Error:       errorText(disks.err),
+		ErrorAt:     timePointer(disks.errorAt),
+		PolicyError: disks.policyError,
+		Items:       buildDiagnosticDisks(disks.disks),
 	}
 	if disks.err != nil {
 		diskResult.Status = diagnosticStatusError
@@ -178,13 +197,17 @@ func buildDiagnosticDiskServices(disks diskCollectorStatus, now time.Time) (diag
 	}
 
 	emhttpd := diagnosticEmhttpd{
-		Status: diagnosticStatusHealthy, PollAttributes: pollInterval.String(), StaleAfter: staleAfter,
-		TemperatureSource: string(disks.source.source), FallbackActive: fallback,
+		Status:                        diagnosticStatusHealthy,
+		PollAttributes:                pollInterval.String(),
+		StaleAfter:                    staleAfter,
+		TemperatureSource:             string(disks.source.source),
+		FallbackActive:                fallback,
 		FallbackSince:                 timePointer(disks.source.fallbackSince),
 		LastFallbackAttemptAt:         timePointer(disks.source.lastObservedAttempt),
 		LastFallbackAttemptAgeSeconds: ageSeconds(timePointer(disks.source.lastObservedAttempt), now),
-		Error:                         disks.source.configError, FallbackError: disks.source.lastFallbackError,
-		FallbackErrorAt: timePointer(disks.source.fallbackErrorAt),
+		Error:                         disks.source.configError,
+		FallbackError:                 disks.source.lastFallbackError,
+		FallbackErrorAt:               timePointer(disks.source.fallbackErrorAt),
 	}
 	if disks.source.heartbeatSeen {
 		emhttpd.LastPollAt = timePointer(disks.source.lastHeartbeat)
@@ -203,10 +226,16 @@ func buildDiagnosticDiskServices(disks diskCollectorStatus, now time.Time) (diag
 	return diskResult, emhttpd
 }
 
-func buildDiagnosticHBA(hbas hbaCollectorStatus, backend hbaBackendMode, now time.Time) diagnosticHBA {
-	result := diagnosticHBA{Mode: hbas.mode, Backend: backend, Interval: hbas.interval.String(),
-		LastSuccessfulAt: timePointer(hbas.lastSuccessfulAt), LastError: errorText(hbas.err),
-		LastErrorAt: timePointer(hbas.lastErrorAt), Items: hbas.lastSuccessfulSnapshot}
+func buildDiagnosticHBA(hbas hbaCollectorStatus, now time.Time) diagnosticHBA {
+	result := diagnosticHBA{
+		Mode:             hbas.mode,
+		Backend:          hbas.backend,
+		Interval:         hbas.interval.String(),
+		LastSuccessfulAt: timePointer(hbas.lastSuccessfulAt),
+		LastError:        errorText(hbas.err),
+		LastErrorAt:      timePointer(hbas.lastErrorAt),
+		Items:            hbas.lastSuccessfulSnapshot,
+	}
 	if hbas.mode == hbaModeDisabled {
 		result.Status = diagnosticStatusDisabled
 		result.LastError = ""
@@ -230,10 +259,19 @@ func buildDiagnosticDisks(disks []diskRuntimeDisk) []diagnosticDisk {
 	for _, runtime := range disks {
 		disk := runtime.disk
 		state := runtime.state
-		item := diagnosticDisk{Name: disk.name, ID: disk.id, Device: "/dev/" + disk.device,
-			Transport: disk.transport, Rotational: disk.rotational, Spundown: disk.spundown,
-			SMARTCacheName: disk.smartName, LastValidAt: timePointer(state.lastValidAt),
-			SMARTCacheAt: timePointer(state.cacheAt), Source: string(state.lastSource), Status: diagnosticDiskValid}
+		item := diagnosticDisk{
+			Name:           disk.name,
+			ID:             disk.id,
+			Device:         "/dev/" + disk.device,
+			Transport:      disk.transport,
+			Rotational:     disk.rotational,
+			Spundown:       disk.spundown,
+			SMARTCacheName: disk.smartName,
+			LastValidAt:    timePointer(state.lastValidAt),
+			SMARTCacheAt:   timePointer(state.cacheAt),
+			Source:         string(state.lastSource),
+			Status:         diagnosticDiskValid,
+		}
 		if runtime.hasReading {
 			if runtime.reading.Unavailable {
 				item.Status = diagnosticDiskUnavailable

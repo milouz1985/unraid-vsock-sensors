@@ -213,28 +213,22 @@ func (c *diskCollector) publishDiskSuccess(runtimeDisks []diskRuntimeDisk, now t
 // the next direct poll.
 func (c *diskCollector) reuseFallbackReadings(disks []unraidDisk) []sensors.Disk {
 	c.mu.RLock()
-	previous := make(map[string]sensors.Disk, len(c.lastSuccessfulSnapshot))
-	previousDisks := make(map[string]unraidDisk, len(c.lastSuccessfulSnapshot))
+	previous := make(map[string]diskRuntimeDisk, len(c.lastSuccessfulSnapshot))
 	for _, runtime := range c.lastSuccessfulSnapshot {
-		previousDisks[runtime.disk.id] = runtime.disk
+		previous[runtime.disk.id] = runtime
 	}
-	if c.err == nil {
-		for _, runtime := range c.lastSuccessfulSnapshot {
-			if runtime.hasReading {
-				previous[runtime.reading.ID] = runtime.reading
-			}
-		}
-	}
+	canReuse := c.err == nil
 	c.mu.RUnlock()
 
 	readings := make([]sensors.Disk, 0, len(disks))
 	present := make(map[string]struct{}, len(disks))
 	for _, disk := range disks {
 		present[disk.id] = struct{}{}
-		reading, ok := previous[disk.id]
-		previousDisk, existed := previousDisks[disk.id]
-		identityChanged := existed && (previousDisk.device != disk.device ||
-			previousDisk.transport != disk.transport || previousDisk.rotational != disk.rotational)
+		runtime, existed := previous[disk.id]
+		reading := runtime.reading
+		identityChanged := existed && (runtime.disk.device != disk.device ||
+			runtime.disk.transport != disk.transport || runtime.disk.rotational != disk.rotational)
+		ok := canReuse && runtime.hasReading
 		if !ok || identityChanged {
 			reading.Temp = 0
 			reading.Unavailable = true

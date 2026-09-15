@@ -40,6 +40,13 @@ type hwmonPublisher struct {
 	cacheDirty bool
 }
 
+type hwmonConfig struct {
+	cid          uint32
+	port         uint32
+	cachePath    string
+	restartUnits []string
+}
+
 type receivedSnapshot struct {
 	response sensors.Response
 	// receivedAt is recorded after the complete frame has been read. It bounds
@@ -79,14 +86,22 @@ func hwmon(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), unix.SIGINT, unix.SIGTERM)
 	defer stop()
+	return runHWMon(ctx, hwmonConfig{
+		cid:          uint32(*cid),
+		port:         uint32(*port),
+		cachePath:    *cache,
+		restartUnits: restartUnits,
+	})
+}
 
-	listener, err := vsock.Listen(uint32(*port), nil)
+func runHWMon(ctx context.Context, config hwmonConfig) error {
+	listener, err := vsock.Listen(config.port, nil)
 	if err != nil {
-		return fmt.Errorf("listen on vsock port %d: %w", *port, err)
+		return fmt.Errorf("listen on vsock port %d: %w", config.port, err)
 	}
 	defer listener.Close()
-	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through %s", *port, virtTempDevicePath)
-	publisher := &hwmonPublisher{cachePath: *cache}
+	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through %s", config.port, virtTempDevicePath)
+	publisher := &hwmonPublisher{cachePath: config.cachePath}
 	err = publisher.restore(virtTempDevicePath)
 	if err != nil {
 		log.Printf("hwmon inventory cache warning: %s", err)
@@ -99,18 +114,18 @@ func hwmon(args []string) error {
 	snapshots := make(chan receivedSnapshot, 1)
 	backgroundErrors := make(chan error, 1)
 	go func() {
-		backgroundErrors <- receiveSnapshots(ctx, listener, uint32(*cid), snapshots)
+		backgroundErrors <- receiveSnapshots(ctx, listener, config.cid, snapshots)
 	}()
 
 	updateLog := stickyErrorLog{context: "hwmon update"}
 	seenGuestSnapshot := false
 	tryRestartConsumers := func() <-chan time.Time {
-		if err := restartSystemdUnits(ctx, restartUnits); err != nil {
+		if err := restartSystemdUnits(ctx, config.restartUnits); err != nil {
 			log.Printf("topology consumer restart warning: %s; retrying in %s", err, restartRetryDelay)
 			return time.After(restartRetryDelay)
 		}
-		if len(restartUnits) != 0 {
-			log.Printf("restarted topology consumers: %s", strings.Join(restartUnits, ", "))
+		if len(config.restartUnits) != 0 {
+			log.Printf("restarted topology consumers: %s", strings.Join(config.restartUnits, ", "))
 		}
 		return nil
 	}

@@ -56,8 +56,6 @@ type publisherRuntimeStatus struct {
 type serviceStatus struct {
 	startedAt time.Time
 	pid       int
-	port      uint32
-	backend   hbaBackendMode
 	publisher publisherRuntimeStatus
 }
 
@@ -67,14 +65,12 @@ type serviceState struct {
 	mu        sync.RWMutex
 	startedAt time.Time
 	pid       int
-	port      uint32
-	backend   hbaBackendMode
 	publisher publisherRuntimeStatus
 }
 
-func newServiceState(port uint32, backend hbaBackendMode) *serviceState {
+func newServiceState(port uint32) *serviceState {
 	return &serviceState{
-		startedAt: time.Now(), pid: os.Getpid(), port: port, backend: backend,
+		startedAt: time.Now(), pid: os.Getpid(),
 		publisher: publisherRuntimeStatus{status: publisherStatusReconnecting, hostCID: uint32(vsock.Host), port: port},
 	}
 }
@@ -106,7 +102,7 @@ func (s *serviceState) status() serviceStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return serviceStatus{
-		startedAt: s.startedAt, pid: s.pid, port: s.port, backend: s.backend,
+		startedAt: s.startedAt, pid: s.pid,
 		publisher: s.publisher,
 	}
 }

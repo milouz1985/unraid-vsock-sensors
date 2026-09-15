@@ -18,6 +18,7 @@ import (
 type hbaCollector struct {
 	interval               time.Duration
 	mode                   hbaMode
+	backend                hbaBackendMode
 	mu                     sync.RWMutex
 	err                    error
 	updatedAt              time.Time
@@ -30,6 +31,7 @@ type hbaCollector struct {
 type hbaCollectorStatus struct {
 	interval               time.Duration
 	mode                   hbaMode
+	backend                hbaBackendMode
 	updatedAt              time.Time
 	lastSuccessfulAt       time.Time
 	lastErrorAt            time.Time
@@ -148,6 +150,7 @@ func newConfiguredHBACollector(interval time.Duration, mode hbaMode, backend hba
 	c := &hbaCollector{
 		interval: interval,
 		mode:     mode,
+		backend:  backend,
 		err:      errors.New("HBA temperatures have not been collected yet"),
 		reader:   newHBAReaderForBackend(backend),
 	}
@@ -183,7 +186,8 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	// Do not hold c.mu during backend I/O: a synchronous ioctl may outlive its
 	// context, while snapshots must remain readable and expire independently.
 	readings, err := c.reader.collect(ctx)
-	if !time.Now().Before(deadline) {
+	finishedAt := time.Now()
+	if !finishedAt.Before(deadline) {
 		err = context.DeadlineExceeded
 	} else if err == nil {
 		// Do not accept a successful result if the parent was canceled while
@@ -194,12 +198,12 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	defer c.mu.Unlock()
 	c.err = err
 	if err != nil {
-		c.lastErrorAt = time.Now()
+		c.lastErrorAt = finishedAt
 		c.updatedAt = time.Time{}
 		return
 	}
-	c.updatedAt = time.Now()
-	c.lastSuccessfulAt = c.updatedAt
+	c.updatedAt = finishedAt
+	c.lastSuccessfulAt = finishedAt
 	c.lastErrorAt = time.Time{}
 	c.lastSuccessfulSnapshot = slices.Clone(readings)
 }
@@ -224,7 +228,7 @@ func (c *hbaCollector) status() hbaCollectorStatus {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return hbaCollectorStatus{
-		interval: c.interval, mode: c.mode, updatedAt: c.updatedAt,
+		interval: c.interval, mode: c.mode, backend: c.backend, updatedAt: c.updatedAt,
 		lastSuccessfulAt: c.lastSuccessfulAt, lastErrorAt: c.lastErrorAt, err: c.err,
 		lastSuccessfulSnapshot: slices.Clone(c.lastSuccessfulSnapshot),
 	}
