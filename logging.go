@@ -4,6 +4,13 @@ package main
 
 import "log"
 
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
 // stickyErrorLog only deduplicates repeated log messages. Runtime error state
 // belongs to the component that produced the error.
 type stickyErrorLog struct {

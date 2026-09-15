@@ -27,8 +27,7 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 		disks: []diskRuntimeDisk{{
 			disk:    unraidDisk{id: "serial", name: "disk1"},
 			reading: sensors.Disk{ID: "serial", Name: "disk1", Temp: 35}, hasReading: true,
-			state:            diskState{lastValidAt: now.Add(-12 * time.Second), lastSource: diskSourceEmhttpd},
-			collectionSource: diskSourceEmhttpd,
+			state: diskState{lastValidAt: now.Add(-12 * time.Second), lastSource: diskSourceEmhttpd},
 		}},
 	}
 	hbas := hbaCollectorStatus{interval: 15 * time.Second, mode: hbaModeDisabled}
@@ -179,7 +178,7 @@ func TestBuildDiagnosticDisksUsesStableIDs(t *testing.T) {
 		{disk: disks[0], source: diskSourceDirect},
 	}
 	states := diskStateTracker{"one": {hasValid: true, lastValidAt: now.Add(-30 * time.Second), lastSource: diskSourceDirect}}
-	runtime := buildDiskRuntimeSnapshot(disks, readings, observations, states, diskSourceDirect, false)
+	runtime := buildDiskRuntimeSnapshot(disks, readings, observations, states, false)
 	items := buildDiagnosticDisks(runtime)
 	if items[0].Temperature == nil || *items[0].Temperature != 30 || items[0].Source != "direct SMART fallback" {
 		t.Fatalf("disk one received the wrong reading: %+v", items[0])

@@ -69,14 +69,13 @@ type diskCollector struct {
 }
 
 type diskRuntimeDisk struct {
-	disk             unraidDisk
-	reading          sensors.Disk
-	hasReading       bool
-	observation      diskObservation
-	hasObservation   bool
-	state            diskState
-	collectionSource diskTemperatureSource
-	reused           bool
+	disk           unraidDisk
+	reading        sensors.Disk
+	hasReading     bool
+	observation    diskObservation
+	hasObservation bool
+	state          diskState
+	reused         bool
 }
 
 type diskCollectorStatus struct {
@@ -157,7 +156,7 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 	}
 
 	readings, observations, reused := c.collectTemperatures(ctx, disks, decision, now, pollInterval)
-	runtimeDisks := buildDiskRuntimeSnapshot(disks, readings, observations, c.state, decision.source, reused)
+	runtimeDisks := buildDiskRuntimeSnapshot(disks, readings, observations, c.state, reused)
 	c.publishDiskSuccess(readings, runtimeDisks, now, c.smartSource.status())
 }
 
@@ -261,22 +260,23 @@ func (c *diskCollector) snapshot() ([]sensors.Disk, error) {
 }
 
 func (c *diskCollector) status() diskCollectorStatus {
-	liveSource := c.smartSource.status()
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	source := c.publishedSource
-	// Heartbeats are independent signals and were historically observable even
-	// while a collection was in progress. Collection decisions remain the
-	// atomically published state from the last completed refresh.
-	source.heartbeatSeen = liveSource.heartbeatSeen
-	source.lastHeartbeat = liveSource.lastHeartbeat
-	return diskCollectorStatus{
+	result := diskCollectorStatus{
 		updatedAt: c.updatedAt,
 		errorAt:   c.errorAt,
 		err:       c.err,
 		disks:     slices.Clone(c.lastSuccessfulSnapshot),
-		source:    source,
+		source:    c.publishedSource,
 	}
+	c.mu.RUnlock()
+
+	liveSource := c.smartSource.status()
+	// Heartbeats are independent signals and were historically observable even
+	// while a collection was in progress. Collection decisions remain the
+	// atomically published state from the last completed refresh.
+	result.source.heartbeatSeen = liveSource.heartbeatSeen
+	result.source.lastHeartbeat = liveSource.lastHeartbeat
+	return result
 }
 
 func buildDiskRuntimeSnapshot(
@@ -284,7 +284,6 @@ func buildDiskRuntimeSnapshot(
 	readings []sensors.Disk,
 	observations []diskObservation,
 	states diskStateTracker,
-	source diskTemperatureSource,
 	reused bool,
 ) []diskRuntimeDisk {
 	readingsByID := make(map[string]sensors.Disk, len(readings))
@@ -303,7 +302,7 @@ func buildDiskRuntimeSnapshot(
 		result = append(result, diskRuntimeDisk{
 			disk: disk, reading: reading, hasReading: hasReading,
 			observation: observation, hasObservation: hasObservation,
-			state: states[disk.id], collectionSource: source, reused: reused,
+			state: states[disk.id], reused: reused,
 		})
 	}
 	return result

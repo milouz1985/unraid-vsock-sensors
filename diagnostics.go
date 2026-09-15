@@ -242,9 +242,6 @@ func buildDiagnosticDisks(disks []diskRuntimeDisk) []diagnosticDisk {
 				}
 			}
 		}
-		if runtime.collectionSource == diskSourceDirect && item.Status == diagnosticDiskValid {
-			item.Source = string(diskSourceDirect)
-		}
 		items = append(items, item)
 	}
 	return items
@@ -264,13 +261,6 @@ func ageSeconds(value *time.Time, now time.Time) *int64 {
 	age := int64(max(0, now.Sub(*value).Seconds()))
 	return &age
 }
-func errorText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
 func runDiagnostics(ctx context.Context, path string, state *serviceState, disks *diskCollector, hbas *hbaCollector) {
 	logState := stickyErrorLog{context: "diagnostics snapshot"}
 	write := func() {
