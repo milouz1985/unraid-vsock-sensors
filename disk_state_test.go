@@ -107,6 +107,60 @@ type sensorsDisk struct {
 	unavailable      bool
 }
 
+func TestDiskStateReadingsMatchThermalState(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	disk := unraidDisk{id: "serial", name: "disk1", device: "sda"}
+	collectionErr := errors.New("temperature unavailable")
+
+	for _, test := range []struct {
+		name            string
+		initialState    diskState
+		observation     diskObservation
+		wantState       diskThermalState
+		wantTemperature float64
+		wantUnavailable bool
+	}{
+		{
+			name:            "valid",
+			observation:     diskObservation{disk: disk, temperature: 37, source: diskSourceDirect},
+			wantState:       diskThermalValid,
+			wantTemperature: 37,
+		},
+		{
+			name:        "standby",
+			observation: diskObservation{disk: disk, standby: true, source: diskSourceEmhttpd},
+			wantState:   diskThermalStandby,
+		},
+		{
+			name:         "waking",
+			initialState: diskState{thermalState: diskThermalStandby},
+			observation:  diskObservation{disk: disk, source: diskSourceEmhttpd, err: collectionErr},
+			wantState:    diskThermalWaking,
+		},
+		{
+			name:            "unavailable",
+			observation:     diskObservation{disk: disk, source: diskSourceDirect, err: collectionErr},
+			wantState:       diskThermalUnavailable,
+			wantUnavailable: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tracker := diskStateTracker{disk.id: test.initialState}
+			readings := tracker.apply([]diskObservation{test.observation}, now, time.Minute)
+			if len(readings) != 1 {
+				t.Fatalf("readings = %#v; want one reading", readings)
+			}
+			if got := tracker[disk.id].thermalState; got != test.wantState {
+				t.Fatalf("thermal state = %v; want %v", got, test.wantState)
+			}
+			if reading := readings[0]; reading.Temp != test.wantTemperature || reading.Unavailable != test.wantUnavailable {
+				t.Fatalf("reading = %#v; want temperature %v, unavailable=%v",
+					reading, test.wantTemperature, test.wantUnavailable)
+			}
+		})
+	}
+}
+
 func TestDiskSnapshotUsesRuntimeOrderAndReturnsCopy(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	collector := newDiskCollector(diskDataPaths{})
