@@ -29,14 +29,11 @@ func newDiskTestEnvironment(t *testing.T, pollAttributes string) *diskTestEnviro
 	environment := &diskTestEnvironment{
 		paths: diskDataPaths{
 			disksINI: filepath.Join(root, "disks.ini"), devsINI: filepath.Join(root, "devs.ini"),
-			smartDir: filepath.Join(root, "smart"), varINI: filepath.Join(root, "var.ini"),
+			varINI:       filepath.Join(root, "var.ini"),
 			sysBlockRoot: filepath.Join(root, "class", "block"),
 			policyFile:   filepath.Join(root, "disk-policies.json"),
 		},
 		now: time.Unix(1_800_000_000, 0),
-	}
-	if err := os.Mkdir(environment.paths.smartDir, 0700); err != nil {
-		t.Fatal(err)
 	}
 	environment.write(t, environment.paths.disksINI, "[flash]\ndevice=sdz\nrotational=0\nspundown=0\n")
 	environment.write(t, environment.paths.devsINI, "")
@@ -52,15 +49,6 @@ func unknownBusSelector(t *testing.T) *diskSelector {
 func (environment *diskTestEnvironment) write(t *testing.T, path, data string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func (environment *diskTestEnvironment) report(t *testing.T, name string, mtime time.Time) {
-	t.Helper()
-	path := filepath.Join(environment.paths.smartDir, name)
-	environment.write(t, path, "cached SMART report\n")
-	if err := os.Chtimes(path, mtime, mtime); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -196,7 +184,7 @@ func TestDiskSnapshotPreservesSuccessfulEmptyInventory(t *testing.T) {
 	}
 }
 
-func TestAssignedDiskUsesFreshUnraidTemperatureAndLogicalSMARTName(t *testing.T) {
+func TestAssignedDiskUsesUnraidTemperatureAndLogicalSMARTName(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI, strings.TrimSpace(`
 		["disk1"]
@@ -208,7 +196,6 @@ func TestAssignedDiskUsesFreshUnraidTemperatureAndLogicalSMARTName(t *testing.T)
 		spundown="0"
 		temp="35"
 	`)+"\n")
-	environment.report(t, "disk1", environment.now)
 
 	collector := environment.collector()
 	collector.refresh()
@@ -216,9 +203,6 @@ func TestAssignedDiskUsesFreshUnraidTemperatureAndLogicalSMARTName(t *testing.T)
 	if disk.id != "WDC_stable_serial" || disk.name != "disk1" || disk.device != "sda" ||
 		disk.temp != 35 || disk.unavailable {
 		t.Fatalf("assigned disk = %#v", disk)
-	}
-	if _, err := os.Stat(filepath.Join(environment.paths.smartDir, "sda")); !os.IsNotExist(err) {
-		t.Fatalf("assigned disk unexpectedly required smart/sda: %v", err)
 	}
 }
 
@@ -237,7 +221,6 @@ func TestUnassignedDiskUsesDeviceSMARTNameAndStableIdentity(t *testing.T) {
 		`)+"\n")
 	}
 	writeDevice("/dev/sda")
-	environment.report(t, "sda", environment.now)
 
 	collector := environment.collector()
 	collector.refresh()
@@ -247,7 +230,6 @@ func TestUnassignedDiskUsesDeviceSMARTNameAndStableIdentity(t *testing.T) {
 	}
 
 	writeDevice("sdb")
-	environment.report(t, "sdb", environment.now)
 	collector.refresh()
 	second := requireSingleDisk(t, collector)
 	if second.id != first.id || second.device != "sdb" || second.temp != 42 || second.unavailable {
@@ -255,65 +237,29 @@ func TestUnassignedDiskUsesDeviceSMARTNameAndStableIdentity(t *testing.T) {
 	}
 }
 
-func TestSMARTCacheFreshnessBoundary(t *testing.T) {
+func TestEmhttpdTemperatureIsAuthoritativeWhenHeartbeatHealthy(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
-	freshness := smartFreshnessWindow(30 * time.Second)
-	for name, age := range map[string]time.Duration{
-		"exactly at limit": freshness,
-		"just past limit":  freshness + time.Nanosecond,
-	} {
-		t.Run(name, func(t *testing.T) {
-			directory := t.TempDir()
-			path := filepath.Join(directory, "disk1")
-			if err := os.WriteFile(path, nil, 0600); err != nil {
-				t.Fatal(err)
-			}
-			mtime := now.Add(-age)
-			if err := os.Chtimes(path, mtime, mtime); err != nil {
-				t.Fatal(err)
-			}
-			observations := makeDiskObservations([]unraidDisk{{
-				id: "serial", name: "disk1", device: "sda", smartName: "disk1", temperature: "35",
-			}}, directory, now, freshness)
-			if len(observations) != 1 || (observations[0].err != nil) != (age > freshness) {
-				t.Fatalf("observation at age %s = %#v", age, observations)
-			}
-			if age <= freshness {
-				tracker := make(diskStateTracker)
-				tracker.apply(observations, now, time.Minute)
-				if got := tracker["serial"].lastValidAt; !got.Equal(mtime) {
-					t.Fatalf("last valid timestamp = %s; want cache mtime %s", got, mtime)
-				}
-			}
-		})
+	observations := makeDiskObservations([]unraidDisk{{
+		id: "serial", name: "disk1", device: "sda", temperature: "35",
+	}}, true)
+	tracker := make(diskStateTracker)
+	tracker.apply(observations, now, time.Minute)
+	if state := tracker["serial"]; state.thermalState != diskThermalValid || !state.lastValidAt.Equal(now) {
+		t.Fatalf("emhttpd reading = %#v; want valid with now", state)
 	}
 }
 
-func TestActiveDiskRejectsMissingReportAndInvalidTemperature(t *testing.T) {
-	for name, test := range map[string]struct {
-		temperature string
-		report      bool
-	}{
-		"missing report":      {temperature: "35"},
-		"missing temperature": {temperature: "", report: true},
-		"asterisk":            {temperature: "*", report: true},
-		"not numeric":         {temperature: "warm", report: true},
+func TestActiveDiskRejectsInvalidTemperature(t *testing.T) {
+	for name, temperature := range map[string]string{
+		"missing temperature": "",
+		"asterisk":            "*",
+		"not numeric":         "warm",
 	} {
 		t.Run(name, func(t *testing.T) {
 			now := time.Unix(1_800_000_000, 0)
-			directory := t.TempDir()
-			if test.report {
-				path := filepath.Join(directory, "disk1")
-				if err := os.WriteFile(path, nil, 0600); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Chtimes(path, now, now); err != nil {
-					t.Fatal(err)
-				}
-			}
 			observations := makeDiskObservations([]unraidDisk{{
-				id: "serial", name: "disk1", device: "sda", smartName: "disk1", temperature: test.temperature,
-			}}, directory, now, time.Minute)
+				id: "serial", name: "disk1", device: "sda", temperature: temperature,
+			}}, true)
 			readings := make(diskStateTracker).apply(observations, now, time.Minute)
 			if len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
 				t.Fatalf("reading = %#v; want unavailable", readings)
@@ -322,7 +268,7 @@ func TestActiveDiskRejectsMissingReportAndInvalidTemperature(t *testing.T) {
 	}
 }
 
-func TestCachedTemperatureAllowsValuesOutsideTypicalSensorRange(t *testing.T) {
+func TestEmhttpdTemperatureAllowsValuesOutsideTypicalSensorRange(t *testing.T) {
 	for _, test := range []struct {
 		raw  string
 		want float64
@@ -331,17 +277,16 @@ func TestCachedTemperatureAllowsValuesOutsideTypicalSensorRange(t *testing.T) {
 		{raw: "-40.125", want: -40.125},
 		{raw: "151.5", want: 151.5},
 	} {
-		got, err := parseCachedTemperature(test.raw)
+		got, err := parseEmhttpdTemperature(test.raw)
 		if err != nil || got != test.want {
-			t.Errorf("parseCachedTemperature(%q) = %g, %v; want %g", test.raw, got, err, test.want)
+			t.Errorf("parseEmhttpdTemperature(%q) = %g, %v; want %g", test.raw, got, err, test.want)
 		}
 	}
 }
 
-func TestZeroCachedTemperatureIsValidReading(t *testing.T) {
+func TestZeroEmhttpdTemperatureIsValidReading(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntemp=0\n")
-	environment.report(t, "disk1", environment.now)
 	collector := environment.collector()
 	collector.refresh()
 	disk := requireSingleDisk(t, collector)
@@ -350,21 +295,12 @@ func TestZeroCachedTemperatureIsValidReading(t *testing.T) {
 	}
 }
 
-func TestSleepingDiskAllowsOldSMARTReport(t *testing.T) {
+func TestSleepingDiskReportsStandby(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
-	directory := t.TempDir()
-	path := filepath.Join(directory, "disk1")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	old := now.Add(-24 * time.Hour)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
 	observations := makeDiskObservations([]unraidDisk{{
-		id: "serial", name: "disk1", device: "sda", smartName: "disk1",
+		id: "serial", name: "disk1", device: "sda",
 		temperature: "*", spundown: true,
-	}}, directory, now, time.Minute)
+	}}, true)
 	tracker := make(diskStateTracker)
 	readings := tracker.apply(observations, now, time.Minute)
 	if len(readings) != 1 || readings[0].Unavailable || readings[0].Temp != 0 {
@@ -391,7 +327,6 @@ func TestWakeGraceUsesSyntheticZeroUntilFreshTemperature(t *testing.T) {
 		`)+"\n")
 	}
 	writeAssigned("0", "35")
-	environment.report(t, "disk1", environment.now)
 	collector := environment.collector()
 	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.temp != 35 || disk.unavailable {
@@ -399,7 +334,6 @@ func TestWakeGraceUsesSyntheticZeroUntilFreshTemperature(t *testing.T) {
 	}
 
 	writeAssigned("1", "*")
-	environment.report(t, "disk1", environment.now.Add(-time.Hour))
 	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.temp != 0 || disk.unavailable {
 		t.Fatalf("sleeping disk = %#v", disk)
@@ -431,7 +365,6 @@ func TestWakeGraceUsesSyntheticZeroUntilFreshTemperature(t *testing.T) {
 	}
 
 	writeAssigned("0", "28")
-	environment.report(t, "disk1", environment.now)
 	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.temp != 28 || disk.unavailable {
 		t.Fatalf("recovered disk = %#v", disk)
@@ -539,7 +472,6 @@ func TestInventoryFailureBreaksStandbyWakeContinuity(t *testing.T) {
 			}
 
 			writeAssigned("0", "35")
-			environment.report(t, "disk1", environment.now)
 			collector := environment.collector()
 			collector.refresh()
 			writeAssigned("1", "*")
@@ -567,7 +499,6 @@ func TestInventoryFailureBreaksStandbyWakeContinuity(t *testing.T) {
 			collector.refresh()
 			writeAssigned(scenario.spundown, scenario.temperature)
 			if scenario.temperature == "28" {
-				environment.report(t, "disk1", environment.now)
 			}
 			collector.refresh()
 			disk := requireSingleDisk(t, collector)
@@ -578,7 +509,6 @@ func TestInventoryFailureBreaksStandbyWakeContinuity(t *testing.T) {
 
 			if scenario.thenFresh {
 				writeAssigned("0", "28")
-				environment.report(t, "disk1", environment.now)
 				collector.refresh()
 				disk = requireSingleDisk(t, collector)
 				if disk.temp != 28 || disk.unavailable || collector.state["serial"].thermalState != diskThermalValid {
@@ -602,7 +532,6 @@ func TestInventoryFailureDoesNotPublishStaleDiskAfterRecovery(t *testing.T) {
 		temp="35"
 	`) + "\n"
 	environment.write(t, environment.paths.disksINI, inventory)
-	environment.report(t, "disk1", environment.now)
 
 	collector := environment.collector()
 	collector.refresh()
@@ -618,10 +547,11 @@ func TestInventoryFailureDoesNotPublishStaleDiskAfterRecovery(t *testing.T) {
 		t.Fatal("broken inventory did not make the disk snapshot unavailable")
 	}
 
-	environment.now = environment.now.Add(smartFreshnessWindow(30*time.Second) + time.Second)
+	environment.now = environment.now.Add(time.Minute)
+	collector.noteEmhttpPoll()
 	environment.write(t, environment.paths.disksINI, inventory)
 	collector.refresh()
-	if disk := requireSingleDisk(t, collector); disk.temp != 0 || !disk.unavailable {
-		t.Fatalf("disk after prolonged inventory failure = %#v", disk)
+	if disk := requireSingleDisk(t, collector); disk.temp != 35 || disk.unavailable {
+		t.Fatalf("disk after inventory failure recovery = %#v", disk)
 	}
 }

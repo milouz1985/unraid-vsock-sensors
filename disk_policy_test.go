@@ -126,13 +126,11 @@ func TestDiskCollectorAppliesPolicyChangesBeforeSMART(t *testing.T) {
 	}
 	collector.refresh()
 	readings, err = collector.snapshot()
-	if err != nil || len(readings) != 1 || !readings[0].Unavailable || len(collector.state) != 1 {
-		t.Fatalf("included USB without SMART cache = %#v, %v; state = %#v", readings, err, collector.state)
+	if err != nil || len(readings) != 1 || len(collector.state) != 1 {
+		t.Fatalf("included USB = %#v, %v; state = %#v", readings, err, collector.state)
 	}
-	environment.report(t, "disk1", environment.now)
-	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.temp != 35 || disk.unavailable {
-		t.Fatalf("included USB with SMART cache = %#v", disk)
+		t.Fatalf("included USB = %#v", disk)
 	}
 	if err := writeDiskPolicy(environment.paths.policyFile, "bridge_serial", diskPolicyExclude); err != nil {
 		t.Fatal(err)
@@ -157,7 +155,6 @@ func TestDiskBusFollowsSysfsTopologyWithSameIDAndDevice(t *testing.T) {
 			addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", test.initialUSB)
 			environment.write(t, environment.paths.disksINI,
 				"[disk1]\nid=stable_serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
-			environment.report(t, "disk1", environment.now)
 			collector := environment.collector()
 			check := func(wantIncluded bool) {
 				t.Helper()
@@ -288,7 +285,6 @@ func TestInvalidDiskPolicyFileDoesNotBlockCollector(t *testing.T) {
 	environment.write(t, environment.paths.disksINI,
 		"[disk1]\nid=internal\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n[disk2]\nid=external\ndevice=sdi\ntransport=ata\nrotational=1\nspundown=0\ntemp=36\n")
 	environment.write(t, environment.paths.policyFile, `{ "internal": "invalid" }`)
-	environment.report(t, "disk1", environment.now)
 	collector := environment.collector()
 	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.id != "internal" || disk.unavailable {

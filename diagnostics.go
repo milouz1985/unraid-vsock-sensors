@@ -92,8 +92,6 @@ type diagnosticDisk struct {
 	Status              string     `json:"status"`
 	Source              string     `json:"source,omitempty"`
 	Spundown            bool       `json:"spundown"`
-	SMARTCacheName      string     `json:"smart_cache_name,omitempty"`
-	SMARTCacheAt        *time.Time `json:"smart_cache_at,omitempty"`
 	LastValidAt         *time.Time `json:"last_valid_at,omitempty"`
 	LastValidAgeSeconds *int64     `json:"last_valid_age_seconds,omitempty"`
 	Error               string     `json:"error,omitempty"`
@@ -260,17 +258,15 @@ func buildDiagnosticDisks(disks []diskRuntimeDisk) []diagnosticDisk {
 		disk := runtime.disk
 		state := runtime.state
 		item := diagnosticDisk{
-			Name:           disk.name,
-			ID:             disk.id,
-			Device:         "/dev/" + disk.device,
-			Transport:      disk.transport,
-			Rotational:     disk.rotational,
-			Spundown:       disk.spundown,
-			SMARTCacheName: disk.smartName,
-			LastValidAt:    timePointer(state.lastValidAt),
-			SMARTCacheAt:   timePointer(state.cacheAt),
-			Source:         string(state.lastSource),
-			Error:          errorText(runtime.collectionError),
+			Name:        disk.name,
+			ID:          disk.id,
+			Device:      "/dev/" + disk.device,
+			Transport:   disk.transport,
+			Rotational:  disk.rotational,
+			Spundown:    disk.spundown,
+			LastValidAt: timePointer(state.lastValidAt),
+			Source:      string(state.lastSource),
+			Error:       errorText(runtime.collectionError),
 		}
 		switch state.thermalState {
 		case diskThermalValid:

@@ -182,11 +182,13 @@ func TestBuildDiagnosticDisksUsesStableIDs(t *testing.T) {
 		{disk: disks[1], standby: true, source: diskSourceDirect},
 		{disk: disks[0], source: diskSourceDirect},
 	}
-	states := diskStateTracker{
-		"one": {thermalState: diskThermalValid, lastValidAt: now.Add(-30 * time.Second), lastSource: diskSourceDirect},
-		"two": {thermalState: diskThermalStandby},
+	collector := &diskCollector{
+		state: diskStateTracker{
+			"one": {thermalState: diskThermalValid, lastValidAt: now.Add(-30 * time.Second), lastSource: diskSourceDirect},
+			"two": {thermalState: diskThermalStandby},
+		},
 	}
-	runtime := buildDiskRuntimeSnapshot(disks, readings, observations, states, false)
+	runtime := collector.buildDiskRuntimeSnapshot(disks, readings, observations, false)
 	items := buildDiagnosticDisks(runtime)
 	if items[0].Temperature == nil || *items[0].Temperature != 30 || items[0].Source != "direct SMART fallback" {
 		t.Fatalf("disk one received the wrong reading: %+v", items[0])

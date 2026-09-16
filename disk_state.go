@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -19,7 +17,6 @@ type diskState struct {
 	wakeStartedAt time.Time
 	lastValidAt   time.Time
 	lastSource    diskTemperatureSource
-	cacheAt       time.Time
 }
 
 type diskStateTracker map[string]diskState
@@ -39,10 +36,9 @@ type diskObservation struct {
 	standby     bool
 	err         error
 	source      diskTemperatureSource
-	cacheAt     time.Time
 }
 
-func makeDiskObservations(disks []unraidDisk, smartDir string, now time.Time, freshness time.Duration) []diskObservation {
+func makeDiskObservations(disks []unraidDisk, pollingEnabled bool) []diskObservation {
 	observations := make([]diskObservation, 0, len(disks))
 	for _, disk := range disks {
 		observation := diskObservation{
@@ -52,34 +48,29 @@ func makeDiskObservations(disks []unraidDisk, smartDir string, now time.Time, fr
 			observations = append(observations, observation)
 			continue
 		}
-
-		observation.temperature, observation.err = parseCachedTemperature(disk.temperature)
-		if observation.err == nil {
-			info, err := os.Stat(filepath.Join(smartDir, disk.smartName))
-			if err != nil {
-				observation.err = fmt.Errorf("SMART cache for %s: %w", disk.name, err)
-			} else {
-				observation.cacheAt = info.ModTime()
-				if now.Sub(info.ModTime()) > freshness {
-					observation.err = fmt.Errorf("SMART cache for %s is stale by %s", disk.name, now.Sub(info.ModTime())-freshness)
-				}
-			}
+		if !pollingEnabled {
+			// With poll_attributes=0, emhttpd does not periodically refresh
+			// temperatures. Active disks cannot be considered fresh.
+			observation.err = errors.New("SMART polling is disabled; active disk temperature is not refreshed")
+			observations = append(observations, observation)
+			continue
 		}
+		observation.temperature, observation.err = parseEmhttpdTemperature(disk.temperature)
 		observations = append(observations, observation)
 	}
 	return observations
 }
 
-func parseCachedTemperature(raw string) (float64, error) {
+func parseEmhttpdTemperature(raw string) (float64, error) {
 	if raw == "" || raw == "*" {
-		return 0, errors.New("cached temperature is unavailable")
+		return 0, errors.New("emhttpd temperature is unavailable")
 	}
 	temperature, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		return 0, fmt.Errorf("cached temperature %q is not numeric", raw)
+		return 0, fmt.Errorf("emhttpd temperature %q is not numeric", raw)
 	}
 	if math.IsNaN(temperature) || math.IsInf(temperature, 0) {
-		return 0, fmt.Errorf("cached temperature %q is invalid", raw)
+		return 0, fmt.Errorf("emhttpd temperature %q is invalid", raw)
 	}
 	return temperature, nil
 }
@@ -116,13 +107,7 @@ func (s diskStateTracker) apply(observations []diskObservation, now time.Time, w
 			state.thermalState = diskThermalValid
 			state.wakeStartedAt = time.Time{}
 			state.lastValidAt = now
-			if observation.source == diskSourceEmhttpd {
-				state.lastValidAt = observation.cacheAt
-			}
 			state.lastSource = observation.source
-			if !observation.cacheAt.IsZero() {
-				state.cacheAt = observation.cacheAt
-			}
 		default:
 			if observation.source == diskSourceEmhttpd && state.thermalState == diskThermalStandby {
 				state.thermalState = diskThermalWaking

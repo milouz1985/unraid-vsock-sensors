@@ -122,10 +122,11 @@ Le projet cherche à conserver une séparation claire entre les responsabilités
 
 L'agent :
 
-- consomme l'état déjà maintenu par `emhttpd` ;
-- utilise normalement les températures collectées par emhttpd ; en cas de
-  heartbeat `poll_attributes` absent, lance temporairement `smartctl_type`
-  avec protection standby et des délais bornés ;
+- consomme les champs `temp` et `spundown` déjà maintenus par `emhttpd` ;
+- lorsque le heartbeat `poll_attributes` est sain, Unraid est l'autorité pour
+  ces champs ; UVSS ne revalide pas indépendamment la fraîcheur du cache SMART ;
+- en cas de heartbeat `poll_attributes` absent, lance temporairement
+  `smartctl_type` avec protection standby et des délais bornés ;
 - ne doit pas réveiller les disques ;
 - publie `Temp=0` comme sentinelle synthétique en état `standby` ou `waking`,
   sans confondre ce cas avec une vraie mesure à `0 °C` ni réutiliser la
@@ -138,7 +139,6 @@ Les températures des disques proviennent de :
 ```text
 /var/local/emhttp/disks.ini
 /var/local/emhttp/devs.ini
-/var/local/emhttp/smart/*
 ```
 
 La collecte HBA reste séparée de la collecte disque.

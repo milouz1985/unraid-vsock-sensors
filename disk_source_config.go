@@ -17,17 +17,8 @@ import (
 
 const (
 	defaultPollAttributes     = 30 * time.Second
-	minimumSMARTFreshness     = 10 * time.Second
 	maximumRecommendedPolling = 60 * time.Second
 )
-
-func smartFreshnessWindow(pollInterval time.Duration) time.Duration {
-	margin := pollInterval / 5
-	if margin < minimumSMARTFreshness {
-		margin = minimumSMARTFreshness
-	}
-	return pollInterval + margin
-}
 
 func parsePollAttributes(data []byte) (time.Duration, error) {
 	config, err := ini.Load(data)
@@ -81,7 +72,7 @@ func (c *diskCollector) logPollAttributesChange(interval time.Duration, configEr
 
 func logPollAttributes(interval time.Duration, configErr error) {
 	if configErr != nil {
-		log.Printf("warning: %v; using %s for SMART cache freshness and stalled-poll detection", configErr, defaultPollAttributes)
+		log.Printf("warning: %v; using %s for stalled-poll detection", configErr, defaultPollAttributes)
 		return
 	}
 	if interval == 0 {

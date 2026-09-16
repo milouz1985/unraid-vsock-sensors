@@ -93,12 +93,8 @@ func TestVMUnraidSMARTCacheCollector(t *testing.T) {
 	paths := diskDataPaths{
 		disksINI:   filepath.Join(directory, "disks.ini"),
 		devsINI:    filepath.Join(directory, "devs.ini"),
-		smartDir:   filepath.Join(directory, "smart"),
 		varINI:     filepath.Join(directory, "var.ini"),
 		policyFile: filepath.Join(directory, "disk-policies.json"),
-	}
-	if err := os.Mkdir(paths.smartDir, 0700); err != nil {
-		t.Fatal(err)
 	}
 	if err := os.WriteFile(paths.devsINI, nil, 0600); err != nil {
 		t.Fatal(err)
@@ -118,10 +114,7 @@ transport="ata"
 spundown="0"
 temp="31"
 
-`, disk.name, disk.serial, filepath.Base(disk.path))
-		if err := os.WriteFile(filepath.Join(paths.smartDir, disk.name), []byte("QEMU SMART cache\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
+	`, disk.name, disk.serial, filepath.Base(disk.path))
 	}
 	if err := os.WriteFile(paths.disksINI, []byte(inventory.String()), 0600); err != nil {
 		t.Fatal(err)
@@ -160,7 +153,7 @@ temp="31"
 		}
 	}
 
-	t.Log("publish Unraid-cached temperatures through virt_temp")
+	t.Log("publish Unraid temperatures through virt_temp")
 	publish(readings, true)
 	for _, disk := range devices {
 		requireVMHWMonTemp(t, "disk", "disk:"+disk.serial, "31000")

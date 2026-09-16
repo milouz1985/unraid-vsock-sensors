@@ -14,7 +14,7 @@ import (
 
 const maxUnraidDiskIDSize = 79
 
-// unraidDisk is inventory, power state and cached temperature produced by
+// unraidDisk is inventory, power state and temperature produced by
 // Unraid. smartName locates the matching report in /var/local/emhttp/smart.
 type unraidDisk struct {
 	id, name, device, transport, temperature, smartName string

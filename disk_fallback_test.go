@@ -105,7 +105,6 @@ func TestDiskRefreshSeparatesDecisionAndFinishedTimes(t *testing.T) {
 func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
-	env.report(t, "disk1", env.now)
 	callLog := filepath.Join(t.TempDir(), "calls")
 	env.paths.sdspin = fallbackTestCommand(t, "printf 'sdspin %s %s\\n' \"$1\" \"$2\" >> '"+callLog+"'\nexit 0")
 	env.paths.smartctlType = fallbackTestCommand(t, "printf 'smart %s %s\\n' \"$1\" \"$2\" >> '"+callLog+"'\nif [ \"$(grep -c '^smart ' '"+callLog+"')\" -gt 1 ]; then exit 1; fi\nprintf '{\"temperature\":{\"current\":42}}\\n'")
@@ -164,7 +163,6 @@ func TestEmhttpPollHeartbeatAndFallbackRecovery(t *testing.T) {
 	}
 	env.now = env.now.Add(time.Second)
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=39\n")
-	env.report(t, "disk1", env.now)
 	collector.noteEmhttpPoll()
 	collector.refresh()
 	status := collector.smartSource.status()
@@ -278,7 +276,6 @@ func TestFallbackSmartctlExitCodesAndResults(t *testing.T) {
 func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")
-	env.report(t, "disk1", env.now)
 	env.paths.smartctlType = fallbackTestCommand(t, "exit 1")
 	env.paths.sdspin = fallbackTestCommand(t, "exit 1")
 	collector := env.collector()
@@ -297,16 +294,16 @@ func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 		t.Fatalf("hwmon should let the 10-second failsafe expire: %#v", samples)
 	}
 	// A poll event without a new temperature must not re-enable the usual
-	// wake-up grace and resurrect the value from before the stalled period.
+	// wake-up grace. With emhttpd as authority, the same numeric value is
+	// accepted as a valid reading (UVSS does not determine if the value changed).
 	env.now = env.now.Add(time.Second)
 	collector.noteEmhttpPoll()
 	collector.refresh()
-	if disk := requireSingleDisk(t, collector); !disk.unavailable {
-		t.Fatalf("old native cache resurrected stale temperature: %#v", disk)
+	if disk := requireSingleDisk(t, collector); disk.unavailable || disk.temp != 35 {
+		t.Fatalf("emhttpd reading after fallback failure: %#v; want temp 35 available", disk)
 	}
 	env.now = env.now.Add(time.Second)
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=40\n")
-	env.report(t, "disk1", env.now)
 	collector.noteEmhttpPoll()
 	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.unavailable || disk.temp != 40 {
@@ -317,7 +314,6 @@ func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 func TestFailedFallbackWaitsForNextPollInterval(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")
-	env.report(t, "disk1", env.now)
 	callLog := filepath.Join(t.TempDir(), "calls")
 	env.paths.smartctlType = fallbackTestCommand(t, "printf 'smart\\n' >> '"+callLog+"'\nexit 1")
 	collector := env.collector()
@@ -443,7 +439,6 @@ func TestFallbackReuseDoesNotReviveSnapshotAfterCollectionFailure(t *testing.T) 
 		thermalState: diskThermalUnavailable,
 		lastValidAt:  time.Unix(1_800_000_000, 0),
 		lastSource:   diskSourceDirect,
-		cacheAt:      time.Unix(1_799_999_990, 0),
 	}
 	collector.state = diskStateTracker{"first": wantState}
 

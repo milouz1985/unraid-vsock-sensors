@@ -45,10 +45,9 @@ func TestRefreshRequestsAreCoalesced(t *testing.T) {
 	<-done
 }
 
-func TestWatchdogMarksExpiredCacheUnavailableWithoutEvent(t *testing.T) {
+func TestPollingDisabledMarksActiveDisksUnavailable(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "0")
 	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n")
-	environment.report(t, "disk1", environment.now)
 
 	var nowUnixNano atomic.Int64
 	nowUnixNano.Store(environment.now.UnixNano())
@@ -62,12 +61,59 @@ func TestWatchdogMarksExpiredCacheUnavailableWithoutEvent(t *testing.T) {
 		collector.run(ctx, nil)
 		close(done)
 	}()
-	eventuallyDisk(t, collector, func(disk sensorsDisk) bool { return disk.temp == 35 && !disk.unavailable })
-
-	nowUnixNano.Add(int64(11 * time.Second))
+	// With poll_attributes=0, active disks are immediately unavailable.
 	eventuallyDisk(t, collector, func(disk sensorsDisk) bool { return disk.unavailable })
 	cancel()
 	<-done
+}
+
+func TestPollingDisabledKeepsStandbyDisksInStandby(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "0")
+	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=1\ntemp=*\n")
+
+	collector := newDiskCollector(environment.paths)
+	collector.now = func() time.Time { return environment.now }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		collector.run(ctx, nil)
+		close(done)
+	}()
+	// Standby disks remain in standby regardless of poll_attributes.
+	eventuallyDisk(t, collector, func(disk sensorsDisk) bool { return !disk.unavailable && disk.temp == 0 })
+	cancel()
+	<-done
+}
+
+func TestPollingDisabledStandbyToActiveIsImmediatelyUnavailable(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "0")
+	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=1\ntemp=*\n")
+
+	collector := newDiskCollector(environment.paths)
+	collector.now = func() time.Time { return environment.now }
+	collector.refresh()
+
+	// Initial state: standby with synthetic zero.
+	if disk := requireSingleDisk(t, collector); disk.unavailable || disk.temp != 0 {
+		t.Fatalf("standby disk = %#v; want temp 0, not unavailable", disk)
+	}
+	if state := collector.state["serial"]; state.thermalState != diskThermalStandby {
+		t.Fatalf("standby state = %#v", state)
+	}
+
+	// Disk wakes up: spundown=0.
+	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntemp=*\n")
+	collector.refresh()
+
+	// With poll_attributes=0, the disk must be immediately unavailable,
+	// never published as waking with a synthetic zero.
+	if disk := requireSingleDisk(t, collector); !disk.unavailable || disk.temp != 0 {
+		t.Fatalf("woken disk with polling disabled = %#v; want unavailable, temp 0", disk)
+	}
+	if state := collector.state["serial"]; state.thermalState != diskThermalUnavailable {
+		t.Fatalf("woken disk state = %#v; want unavailable", state)
+	}
 }
 
 func eventuallyDisk(t *testing.T, collector *diskCollector, accept func(sensorsDisk) bool) {
@@ -93,7 +139,6 @@ func eventuallyDisk(t *testing.T, collector *diskCollector, accept func(sensorsD
 func TestDiskCollectorConcurrentRefreshAndSnapshot(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n")
-	environment.report(t, "disk1", environment.now)
 	collector := environment.collector()
 	collector.refresh()
 

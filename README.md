@@ -19,7 +19,6 @@ VM Unraid                                      Hôte Proxmox
 ┌────────────────────────────┐                 ┌─────────────────────────────┐
 │ emhttpd                    │                 │ unraid-vsock-sensors hwmon  │
 │  └─ disks.ini, devs.ini    │                 │            │                │
-│     et cache smart/*       │                 │            ▼                │
 │ /dev/mpt3ctl ou StorCLI    │     AF_VSOCK    │ /dev/virt-temp              │
 │            │               │                 │            │                │
 │ unraid-vsock-sensors serve ├────────────────►│            ▼                │
@@ -213,24 +212,24 @@ Les overrides sont conservés dans :
 Un fichier invalide est ignoré par le daemon : tous les disques repassent alors
 en `Auto` et l'interface propose sa réinitialisation.
 
-### Fraîcheur SMART
+### Source de température
 
-UVSS utilise le champ `temp` déjà maintenu par Unraid et le `mtime` du rapport
-SMART correspondant.
+UVSS consomme les champs `temp` et `spundown` déjà maintenus par `emhttpd`.
+Lorsque le heartbeat `poll_attributes` est sain, Unraid est l'autorité pour
+ces deux champs : UVSS ne revalide pas indépendamment la fraîcheur du cache
+SMART.
 
-Une mesure est considérée fraîche pendant :
+Le champ `spundown` a toujours la priorité sur `temp` :
+- `spundown=1` → état `standby`, température synthétique 0 ;
+- `spundown=0` + `temp` numérique fini → mesure valide ;
+- `spundown=0` + `temp` indisponible/invalide → `waking` si l'état précédent
+  était `standby`, `unavailable` sinon.
 
-```text
-poll_attributes + max(10 secondes, 20 % de poll_attributes)
-```
+L'événement Unraid `poll_attributes` (SIGUSR2) demande une actualisation
+immédiate au daemon. Un watchdog de cinq secondes couvre les événements perdus
+et les changements d'état.
 
-L'événement Unraid `poll_attributes` demande une actualisation immédiate au
-daemon. Un watchdog de cinq secondes couvre les événements perdus et les
-changements d'état.
-
-UVSS suit séparément l'heure du dernier événement `poll_attributes` : le mtime
-d'un rapport SMART ne sert pas de heartbeat, car il peut rester ancien pendant
-la veille d'un disque. Si aucun événement n'arrive pendant
+Si aucun événement `poll_attributes` n'arrive pendant
 `poll_attributes + 15 secondes` (45 s avec le réglage 30 s), UVSS interroge
 temporairement les disques via `smartctl_type` avec `-n standby,3`. Pour les HDD
 ATA, il vérifie d'abord l'état avec `sdspin` et n'interroge que les disques
@@ -245,7 +244,10 @@ timeout et une concurrence bornée. Le premier nouvel événement
 Si une lecture directe échoue, UVSS marque la température indisponible au lieu
 de republier une ancienne mesure. Le failsafe hwmon de 10 secondes peut alors
 prendre le relais. `poll_attributes=0` désactive ce fallback, puisqu'aucun
-événement périodique n'est attendu.
+événement périodique n'est attendu. Dans ce mode, les disques actifs sont
+marqués indisponibles car leur température ne peut pas être considérée comme
+fraîche ; les disques en veille restent en `standby` avec la sentinelle
+synthétique.
 
 Lorsqu'un disque est en état `standby`, UVSS le conserve dans l'inventaire avec
 `Temp=0` comme sentinelle synthétique de contrôle. Cette valeur ne représente
@@ -254,25 +256,25 @@ valide. Les diagnostics utilisent l'état thermique interne pour afficher la
 sentinelle comme `standby`, sans température courante. Après un réveil observé
 sans interruption de visibilité sur l'inventaire, UVSS conserve temporairement
 cette sentinelle, avec l'état `waking`, pendant qu'il attend la première
-température SMART fraîche. L'ancienne température mesurée avant la veille n'est
+température emhttpd valide. L'ancienne température mesurée avant la veille n'est
 jamais réutilisée. Cette attente est limitée à :
 
 ```text
 poll_attributes + 5 secondes
 ```
 
-La première mesure fraîche remplace immédiatement la sentinelle. Si elle
+La première mesure valide remplace immédiatement la sentinelle. Si elle
 n'arrive pas avant l'expiration de cette fenêtre, le disque devient
 `Unavailable` et le failsafe hwmon peut prendre le relais. Une observation
 invalide d'un disque actif sans transition préalable depuis `standby` devient
 indisponible immédiatement. Une erreur d'inventaire casse la continuité : au
-retour, aucune wake grace n'est accordée à un disque actif sans mesure fraîche.
+retour, aucune wake grace n'est accordée à un disque actif sans mesure valide.
 Une nouvelle mesure valide ou un nouveau standby explicitement observé rétablit
 normalement un état disponible.
 
 `poll_attributes` est lu dans `/var/local/emhttp/var.ini`. Une valeur invalide
-utilise un défaut interne de `30s` pour les calculs de fraîcheur et de
-détection du polling bloqué, sans modifier la configuration Unraid.
+utilise un défaut interne de `30s` pour la détection du polling bloqué, sans
+modifier la configuration Unraid.
 
 ## Contrôleurs HBA
 

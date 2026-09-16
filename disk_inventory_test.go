@@ -235,15 +235,15 @@ func TestReadPollAttributesAlwaysReadsCurrentContents(t *testing.T) {
 	}
 }
 
-func TestSMARTFreshnessMargin(t *testing.T) {
-	for poll, want := range map[time.Duration]time.Duration{
-		30 * time.Second:  40 * time.Second,
-		60 * time.Second:  72 * time.Second,
-		300 * time.Second: 360 * time.Second,
-	} {
-		if got := smartFreshnessWindow(poll); got != want {
-			t.Fatalf("freshness for %s = %s, want %s", poll, got, want)
-		}
+func TestPollAttributesLogMessageWithoutSMARTCache(t *testing.T) {
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	logPollAttributes(defaultPollAttributes, errors.New("invalid config"))
+	if message := output.String(); !strings.Contains(message, "invalid config") || !strings.Contains(message, "stalled-poll detection") {
+		t.Fatalf("fallback warning = %q", message)
 	}
 }
 
@@ -264,7 +264,7 @@ func TestPollAttributesWarnings(t *testing.T) {
 	}
 	output.Reset()
 	logPollAttributes(defaultPollAttributes, errors.New("invalid config"))
-	if message := output.String(); !strings.Contains(message, "invalid config") || !strings.Contains(message, "30s for SMART cache freshness and stalled-poll detection") {
+	if message := output.String(); !strings.Contains(message, "invalid config") || !strings.Contains(message, "30s for stalled-poll detection") {
 		t.Fatalf("fallback warning = %q", message)
 	}
 }
@@ -348,8 +348,6 @@ func TestDuplicateDiskIDDoesNotPublishPartialSnapshot(t *testing.T) {
 	validInventory := "[disk1]\nid=serial1\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n" +
 		"[disk2]\nid=serial2\ndevice=sdb\nrotational=1\nspundown=0\ntemp=36\n"
 	environment.write(t, environment.paths.disksINI, validInventory)
-	environment.report(t, "disk1", environment.now)
-	environment.report(t, "disk2", environment.now)
 	collector := environment.collector()
 	collector.refresh()
 	if readings, err := collector.snapshot(); err != nil || len(readings) != 2 {
@@ -374,7 +372,7 @@ func TestDuplicateDiskIDDoesNotPublishPartialSnapshot(t *testing.T) {
 	for id, before := range previousState {
 		after := collector.state[id]
 		if after.thermalState != diskThermalUnavailable || !after.lastValidAt.Equal(before.lastValidAt) ||
-			after.lastSource != before.lastSource || !after.cacheAt.Equal(before.cacheAt) {
+			after.lastSource != before.lastSource {
 			t.Fatalf("disk %s state after inventory error = %#v; before=%#v", id, after, before)
 		}
 	}
@@ -426,8 +424,6 @@ func TestDiskInventoryExcludesUSBFromBothSourcesBeforeSMART(t *testing.T) {
 		spundown=0
 		temp=37
 	`)+"\n")
-	environment.report(t, "disk1", environment.now)
-	environment.report(t, "sdb", environment.now)
 
 	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI,
 		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})

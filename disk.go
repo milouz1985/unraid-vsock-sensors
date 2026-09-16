@@ -16,7 +16,6 @@ import (
 const (
 	defaultDisksINIPath     = "/var/local/emhttp/disks.ini"
 	defaultDevsINIPath      = "/var/local/emhttp/devs.ini"
-	defaultSMARTCacheDir    = "/var/local/emhttp/smart"
 	defaultUnraidVarINIPath = "/var/local/emhttp/var.ini"
 	diskWatchdogInterval    = 5 * time.Second
 	diskSnapshotTimeout     = 3 * diskWatchdogInterval
@@ -26,7 +25,6 @@ const (
 type diskDataPaths struct {
 	disksINI     string
 	devsINI      string
-	smartDir     string
 	varINI       string
 	sysBlockRoot string
 	policyFile   string
@@ -36,7 +34,7 @@ type diskDataPaths struct {
 
 var defaultDiskDataPaths = diskDataPaths{
 	disksINI: defaultDisksINIPath, devsINI: defaultDevsINIPath,
-	smartDir: defaultSMARTCacheDir, varINI: defaultUnraidVarINIPath,
+	varINI:       defaultUnraidVarINIPath,
 	sysBlockRoot: defaultSysBlockRoot, policyFile: defaultDiskPolicyFile,
 	sdspin: defaultSDSpinPath, smartctlType: defaultSmartctlTypePath,
 }
@@ -150,14 +148,18 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 
 	readings, observations, reused, fallbackErr := c.collectTemperatures(ctx, disks, decision, decisionAt, pollInterval)
 	finishedAt := c.now()
+	wakeGrace := time.Duration(0)
+	if pollInterval > 0 {
+		wakeGrace = pollInterval + diskWakeMargin
+	}
 	if !reused {
-		readings = c.state.apply(observations, finishedAt, pollInterval+diskWakeMargin)
+		readings = c.state.apply(observations, finishedAt, wakeGrace)
 	}
 	if decision.source == diskSourceDirect && decision.directDue {
 		c.smartSource.recordFallbackResult(finishedAt, fallbackErr)
 		c.fallbackLog.update(fallbackErr)
 	}
-	runtimeDisks := buildDiskRuntimeSnapshot(disks, readings, observations, c.state, reused)
+	runtimeDisks := c.buildDiskRuntimeSnapshot(disks, readings, observations, reused)
 	c.publishDiskSuccess(runtimeDisks, finishedAt, c.smartSource.status())
 }
 
@@ -183,7 +185,7 @@ func (c *diskCollector) collectTemperatures(
 	pollInterval time.Duration,
 ) ([]sensors.Disk, []diskObservation, bool, error) {
 	if decision.source == diskSourceEmhttpd {
-		observations := makeDiskObservations(disks, c.paths.smartDir, decisionAt, smartFreshnessWindow(pollInterval))
+		observations := makeDiskObservations(disks, pollInterval > 0)
 		return nil, observations, false, nil
 	}
 	if !decision.directDue {
@@ -300,20 +302,36 @@ func (c *diskCollector) status() diskCollectorStatus {
 	return result
 }
 
-func buildDiskRuntimeSnapshot(
+func (c *diskCollector) buildDiskRuntimeSnapshot(
 	disks []unraidDisk,
 	readings []sensors.Disk,
 	observations []diskObservation,
-	states diskStateTracker,
 	reused bool,
 ) []diskRuntimeDisk {
 	readingsByID := make(map[string]sensors.Disk, len(readings))
 	for _, reading := range readings {
 		readingsByID[reading.ID] = reading
 	}
-	collectionErrorsByID := make(map[string]error, len(observations))
-	for _, observation := range observations {
-		collectionErrorsByID[observation.disk.id] = observation.err
+
+	// When reusing fallback readings, observations is nil. Preserve the
+	// collection error from the previous snapshot so diagnostics continue
+	// to show why a disk is unavailable between direct SMART polls.
+	var previousErrors map[string]error
+	if reused {
+		c.mu.RLock()
+		previousErrors = make(map[string]error, len(c.lastSuccessfulSnapshot))
+		for _, runtime := range c.lastSuccessfulSnapshot {
+			previousErrors[runtime.disk.id] = runtime.collectionError
+		}
+		c.mu.RUnlock()
+	}
+
+	collectionErrorsByID := previousErrors
+	if !reused {
+		collectionErrorsByID = make(map[string]error, len(observations))
+		for _, observation := range observations {
+			collectionErrorsByID[observation.disk.id] = observation.err
+		}
 	}
 
 	result := make([]diskRuntimeDisk, 0, len(disks))
@@ -322,7 +340,7 @@ func buildDiskRuntimeSnapshot(
 		result = append(result, diskRuntimeDisk{
 			disk: disk, reading: reading, hasReading: hasReading,
 			collectionError: collectionErrorsByID[disk.id],
-			state:           states[disk.id], reused: reused,
+			state:           c.state[disk.id], reused: reused,
 		})
 	}
 	return result
