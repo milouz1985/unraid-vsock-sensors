@@ -233,17 +233,12 @@ func (c *diskCollector) reuseFallbackReadings(disks []unraidDisk) []sensors.Disk
 	present := make(map[string]struct{}, len(disks))
 	for _, disk := range disks {
 		present[disk.id] = struct{}{}
-		runtime, existed := previous[disk.id]
+		runtime := previous[disk.id]
 		reading := runtime.reading
-		identityChanged := existed && (runtime.disk.device != disk.device ||
-			runtime.disk.transport != disk.transport || runtime.disk.rotational != disk.rotational)
 		ok := canReuse && runtime.hasReading
-		if !ok || identityChanged {
+		if !ok {
 			reading.Temp = 0
 			reading.Unavailable = true
-		}
-		if identityChanged {
-			delete(c.state, disk.id)
 		}
 		reading.ID, reading.Name, reading.Device = disk.id, disk.name, disk.device
 		reading.Transport, reading.Rotational = disk.transport, disk.rotational
@@ -317,9 +312,8 @@ func (c *diskCollector) buildDiskRuntimeSnapshot(
 	// When reusing fallback readings, observations is nil. Preserve the
 	// collection error from the previous snapshot so diagnostics continue
 	// to show why a disk is unavailable between direct SMART polls. The error
-	// is only preserved when the hardware identity (device, transport,
-	// rotational) is unchanged, matching the criteria used by
-	// reuseFallbackReadings() to reject stale measurements.
+	// is only preserved for the same stable ID, matching the criterion used
+	// by reuseFallbackReadings() to retain measurements.
 	var previousByDisk map[string]diskRuntimeDisk
 	if reused {
 		c.mu.RLock()
@@ -335,13 +329,7 @@ func (c *diskCollector) buildDiskRuntimeSnapshot(
 		reading, hasReading := readingsByID[disk.id]
 		var collectionError error
 		if reused {
-			if previous, exists := previousByDisk[disk.id]; exists {
-				if previous.disk.device == disk.device &&
-					previous.disk.transport == disk.transport &&
-					previous.disk.rotational == disk.rotational {
-					collectionError = previous.collectionError
-				}
-			}
+			collectionError = previousByDisk[disk.id].collectionError
 		} else {
 			for _, observation := range observations {
 				if observation.disk.id == disk.id {

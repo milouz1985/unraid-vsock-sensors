@@ -424,7 +424,7 @@ func TestCollectionErrorPreservedBetweenDirectPolls(t *testing.T) {
 	}
 }
 
-func TestCollectionErrorNotPreservedAfterDeviceChange(t *testing.T) {
+func TestCollectionErrorPreservedAfterDeviceChangeForSameID(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")
 	env.paths.smartctlType = fallbackTestCommand(t, "exit 1")
@@ -441,6 +441,7 @@ func TestCollectionErrorNotPreservedAfterDeviceChange(t *testing.T) {
 	if len(status.disks) != 1 || status.disks[0].collectionError == nil {
 		t.Fatalf("collection error not recorded: %+v", status.disks)
 	}
+	initialError := status.disks[0].collectionError.Error()
 
 	// Device changes to nvme2n1.
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme2n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")
@@ -449,13 +450,13 @@ func TestCollectionErrorNotPreservedAfterDeviceChange(t *testing.T) {
 	if disk := requireSingleDisk(t, collector); !disk.unavailable {
 		t.Fatalf("disk after device change = %#v; want unavailable", disk)
 	}
-	// The old collection error must NOT be transferred to the new device.
+	// The stable ID still refers to the same disk between direct polls.
 	status = collector.status()
 	if len(status.disks) != 1 {
 		t.Fatalf("expected 1 disk, got %d", len(status.disks))
 	}
-	if status.disks[0].collectionError != nil {
-		t.Fatalf("old collection error transferred to new device: %v", status.disks[0].collectionError)
+	if status.disks[0].collectionError == nil || status.disks[0].collectionError.Error() != initialError {
+		t.Fatalf("collection error lost after device change: %v", status.disks[0].collectionError)
 	}
 }
 
@@ -512,7 +513,7 @@ func TestFallbackUsesConfiguredPollInterval(t *testing.T) {
 	}
 }
 
-func TestFallbackRetainedReadingsFollowInventoryWithoutReusingChangedDevice(t *testing.T) {
+func TestFallbackRetainedReadingsFollowStableIDsAcrossDeviceChange(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
 	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\n")
 	callLog := filepath.Join(t.TempDir(), "calls")
@@ -533,8 +534,8 @@ func TestFallbackRetainedReadingsFollowInventoryWithoutReusingChangedDevice(t *t
 	env.write(t, env.paths.disksINI, "[disk1]\nid=first\ndevice=nvme2n1\ntransport=nvme\nrotational=0\nspundown=0\n")
 	collector.refresh()
 	readings, err = collector.snapshot()
-	if err != nil || len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 || readings[0].Device != "nvme2n1" {
-		t.Fatalf("changed device reused an old measurement: %#v, %v", readings, err)
+	if err != nil || len(readings) != 1 || readings[0].Unavailable || readings[0].Temp != 42 || readings[0].Device != "nvme2n1" {
+		t.Fatalf("stable ID lost its retained measurement after device change: %#v, %v", readings, err)
 	}
 	calls, err := os.ReadFile(callLog)
 	if err != nil || string(calls) != "disk1\n" {
@@ -547,7 +548,7 @@ func TestFallbackRetainedReadingsFollowInventoryWithoutReusingChangedDevice(t *t
 	}
 }
 
-func TestFallbackReuseUsesStableIdentityAndRejectsChangedTransport(t *testing.T) {
+func TestFallbackReuseUsesStableIDAcrossTransportChange(t *testing.T) {
 	collector := newDiskCollector(diskDataPaths{})
 	collector.err = nil
 	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{
@@ -567,11 +568,21 @@ func TestFallbackReuseUsesStableIdentityAndRejectsChangedTransport(t *testing.T)
 	readings = collector.reuseFallbackReadings([]unraidDisk{{
 		id: "first", device: "nvme0n1", transport: "ata",
 	}})
+	if len(readings) != 1 || readings[0].Unavailable || readings[0].Temp != 41 || readings[0].Transport != "ata" {
+		t.Fatalf("stable ID lost its retained measurement after transport change: %#v", readings)
+	}
+	if _, exists := collector.state["first"]; !exists {
+		t.Fatal("stable ID lost its thermal history after transport change")
+	}
+
+	readings = collector.reuseFallbackReadings([]unraidDisk{{
+		id: "replacement", device: "nvme0n1", transport: "nvme",
+	}})
 	if len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
-		t.Fatalf("changed transport reused an old measurement: %#v", readings)
+		t.Fatalf("different ID reused an old measurement: %#v", readings)
 	}
 	if _, exists := collector.state["first"]; exists {
-		t.Fatal("changed disk identity retained its thermal history")
+		t.Fatal("removed stable ID retained its thermal history")
 	}
 }
 
