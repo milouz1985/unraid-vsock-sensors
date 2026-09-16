@@ -308,6 +308,13 @@ func (c *diskCollector) buildDiskRuntimeSnapshot(
 	for _, reading := range readings {
 		readingsByID[reading.ID] = reading
 	}
+	var errorsByID map[string]error
+	if !reused {
+		errorsByID = make(map[string]error, len(observations))
+		for _, observation := range observations {
+			errorsByID[observation.disk.id] = observation.err
+		}
+	}
 
 	// When reusing fallback readings, observations is nil. Preserve the
 	// collection error from the previous snapshot so diagnostics continue
@@ -331,12 +338,7 @@ func (c *diskCollector) buildDiskRuntimeSnapshot(
 		if reused {
 			collectionError = previousByDisk[disk.id].collectionError
 		} else {
-			for _, observation := range observations {
-				if observation.disk.id == disk.id {
-					collectionError = observation.err
-					break
-				}
-			}
+			collectionError = errorsByID[disk.id]
 		}
 		result = append(result, diskRuntimeDisk{
 			disk: disk, reading: reading, hasReading: hasReading,
