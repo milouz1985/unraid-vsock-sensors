@@ -10,7 +10,7 @@ import (
 type diskTemperatureSource string
 
 const (
-	diskSourceEmhttpd diskTemperatureSource = "emhttpd cache"
+	diskSourceEmhttpd diskTemperatureSource = "emhttpd"
 	diskSourceDirect  diskTemperatureSource = "direct SMART fallback"
 	emhttpPollMargin                        = 15 * time.Second
 )

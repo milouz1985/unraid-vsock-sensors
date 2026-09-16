@@ -34,8 +34,11 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 	hbas := hbaCollectorStatus{interval: 15 * time.Second, mode: hbaModeDisabled, backend: hbaBackendMPT3CTL}
 	before := append([]diskRuntimeDisk(nil), disks.disks...)
 	snapshot := buildDiagnosticsSnapshot(service, disks, hbas, now)
-	if snapshot.Emhttpd.Status != "healthy" || snapshot.Emhttpd.TemperatureSource != "emhttpd cache" || snapshot.Emhttpd.LastPollAt == nil {
+	if snapshot.Emhttpd.Status != "healthy" || snapshot.Emhttpd.TemperatureSource != "emhttpd" || snapshot.Emhttpd.LastPollAt == nil {
 		t.Fatalf("unexpected emhttpd state: %+v", snapshot.Emhttpd)
+	}
+	if snapshot.Disks.Items[0].Source != "emhttpd" {
+		t.Fatalf("unexpected disk source: %+v", snapshot.Disks.Items[0])
 	}
 	if snapshot.Emhttpd.LastPollAgeSeconds == nil || *snapshot.Emhttpd.LastPollAgeSeconds != 2 {
 		t.Fatalf("unexpected heartbeat age: %+v", snapshot.Emhttpd)
