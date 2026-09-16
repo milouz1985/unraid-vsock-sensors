@@ -45,6 +45,7 @@ type diskCollector struct {
 	now      func() time.Time
 
 	refreshMu              sync.Mutex
+	fallbackCursor         int // guarded by refreshMu
 	mu                     sync.RWMutex
 	err                    error
 	updatedAt              time.Time

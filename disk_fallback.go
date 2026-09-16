@@ -29,6 +29,11 @@ func (c *diskCollector) collectFallback(ctx context.Context, disks []unraidDisk)
 	for i, disk := range disks {
 		observations[i] = newDirectSMARTObservation(disk)
 	}
+	if len(disks) == 0 {
+		c.fallbackCursor = 0
+		return observations, nil
+	}
+	start := c.fallbackCursor % len(disks)
 	cycle, cancel := context.WithTimeout(ctx, fallbackCycleTimeout)
 	defer cancel()
 	var next atomic.Int64
@@ -38,15 +43,17 @@ func (c *diskCollector) collectFallback(ctx context.Context, disks []unraidDisk)
 		go func() {
 			defer workers.Done()
 			for cycle.Err() == nil {
-				index := int(next.Add(1) - 1)
-				if index >= len(disks) {
+				claimed := int(next.Add(1) - 1)
+				if claimed >= len(disks) {
 					return
 				}
+				index := (start + claimed) % len(disks)
 				observations[index] = c.fallbackObservation(cycle, disks[index])
 			}
 		}()
 	}
 	workers.Wait()
+	c.fallbackCursor = (start + min(int(next.Load()), len(disks))) % len(disks)
 	var firstError error
 	for _, observation := range observations {
 		if observation.err != nil {

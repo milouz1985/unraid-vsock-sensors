@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +16,80 @@ import (
 	"golang.org/x/sys/unix"
 	"unraid-vsock-sensors/internal/sensors"
 )
+
+func TestFallbackAdvancesPastSlowDisksAcrossCycles(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "attempts")
+	command := fallbackTestCommand(t, "printf '%s\\n' \"$1\" >> '"+logPath+"'\ncase \"$1\" in fast) printf '{\"temperature\":{\"current\":42}}\\n' ;; *) sleep 0.2 ;; esac")
+	collector := newDiskCollector(diskDataPaths{smartctlType: command})
+	disks := make([]unraidDisk, 0, 7)
+	for i := range 6 {
+		disks = append(disks, unraidDisk{name: "slow" + strconv.Itoa(i), id: "slow" + strconv.Itoa(i)})
+	}
+	disks = append(disks, unraidDisk{name: "fast", id: "fast"})
+	for cycle := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		observations, _ := collector.collectFallback(ctx, disks)
+		cancel()
+		attempts, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cycle == 0 && strings.Contains(string(attempts), "fast\n") {
+			t.Fatal("fast disk was unexpectedly reached in first constrained cycle")
+		}
+		if cycle == 2 {
+			if !strings.Contains(string(attempts), "fast\n") || observations[6].temperature != 42 || observations[6].err != nil {
+				t.Fatalf("fast disk starved across cycles: attempts %q, observation %#v", attempts, observations[6])
+			}
+		}
+	}
+}
+
+func TestFallbackCursorFollowsChangedInventories(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		cursor int
+		disks  []string
+		want   []string
+	}{
+		{name: "removed disk", cursor: 3, disks: []string{"a", "b", "c", "d"}, want: []string{"d", "a", "b"}},
+		{name: "added disk", cursor: 3, disks: []string{"a", "b", "c", "d", "e"}, want: []string{"d", "e", "a"}},
+		{name: "empty inventory", cursor: 3},
+		{name: "cursor beyond new length", cursor: 8, disks: []string{"a", "b", "c", "d"}, want: []string{"a", "b", "c"}},
+		{name: "reordered inventory", cursor: 3, disks: []string{"d", "c", "b", "a", "e"}, want: []string{"a", "e", "d"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "attempts")
+			command := fallbackTestCommand(t, "printf '%s\\n' \"$1\" >> '"+logPath+"'\nsleep 0.2")
+			collector := newDiskCollector(diskDataPaths{smartctlType: command})
+			collector.fallbackCursor = test.cursor
+			disks := make([]unraidDisk, len(test.disks))
+			for i, name := range test.disks {
+				disks[i] = unraidDisk{name: name, id: name}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			_, _ = collector.collectFallback(ctx, disks)
+			cancel()
+			if len(disks) == 0 {
+				if collector.fallbackCursor != 0 {
+					t.Fatalf("cursor after empty inventory = %d", collector.fallbackCursor)
+				}
+				return
+			}
+			attempts, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := strings.Fields(string(attempts))
+			slices.Sort(got)
+			want := slices.Clone(test.want)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Fatalf("attempts = %q; want %q", got, want)
+			}
+		})
+	}
+}
 
 func fallbackTestCommand(t *testing.T, body string) string {
 	t.Helper()
