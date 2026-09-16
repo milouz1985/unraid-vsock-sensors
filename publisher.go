@@ -160,29 +160,34 @@ func publishSnapshotsWithDialer(
 		if state != nil {
 			state.connectedNow()
 		}
-		for ctx.Err() == nil {
-			if err = conn.SetWriteDeadline(time.Now().Add(vsockIOTimeout)); err == nil {
-				err = sensors.WriteFrame(conn, collectorSnapshot(disks, hbas))
-			}
-			if err != nil {
-				if state != nil {
-					state.disconnected(err)
-				}
-				_ = conn.Close()
-				publishLog.update(err)
-				break
-			}
-			publishLog.update(nil)
-			if state != nil {
-				state.publishedNow()
-			}
-			if !waitFor(ctx, defaultPublishInterval) {
-				_ = conn.Close()
-				return nil
-			}
-		}
-		if ctx.Err() == nil && !waitFor(ctx, defaultPublishInterval) {
+		err = publishConnection(ctx, conn, disks, hbas, state, &publishLog)
+		if err != nil && ctx.Err() == nil && !waitFor(ctx, defaultPublishInterval) {
 			break
+		}
+	}
+	return nil
+}
+
+func publishConnection(ctx context.Context, conn snapshotConnection, disks *diskCollector, hbas *hbaCollector, state *serviceState, publishLog *stickyErrorLog) error {
+	defer conn.Close()
+	for ctx.Err() == nil {
+		err := conn.SetWriteDeadline(time.Now().Add(vsockIOTimeout))
+		if err == nil {
+			err = sensors.WriteFrame(conn, collectorSnapshot(disks, hbas))
+		}
+		if err != nil {
+			if state != nil {
+				state.disconnected(err)
+			}
+			publishLog.update(err)
+			return err
+		}
+		publishLog.update(nil)
+		if state != nil {
+			state.publishedNow()
+		}
+		if !waitFor(ctx, defaultPublishInterval) {
+			return nil
 		}
 	}
 	return nil

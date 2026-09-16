@@ -7,12 +7,85 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
+
+type closeCountingConnection struct {
+	closeCount  atomic.Int32
+	writes      atomic.Int32
+	onWrite     func()
+	writeErr    error
+	deadlineErr error
+}
+
+func (c *closeCountingConnection) Close() error {
+	c.closeCount.Add(1)
+	return nil
+}
+
+func (c *closeCountingConnection) Write(p []byte) (int, error) {
+	c.writes.Add(1)
+	if c.onWrite != nil {
+		c.onWrite()
+	}
+	if c.writeErr != nil {
+		return 0, c.writeErr
+	}
+	return len(p), nil
+}
+
+func (c *closeCountingConnection) SetWriteDeadline(time.Time) error { return c.deadlineErr }
+
+func TestPublisherClosesConnectionOnIOError(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		writeErr    error
+		deadlineErr error
+	}{
+		{name: "write", writeErr: errors.New("write failed")},
+		{name: "deadline", deadlineErr: errors.New("deadline failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conn := &closeCountingConnection{writeErr: test.writeErr, deadlineErr: test.deadlineErr}
+			log := stickyErrorLog{context: "test"}
+			err := publishConnection(context.Background(), conn,
+				newDiskCollector(diskDataPaths{}), newTestHBACollector(time.Minute, hbaModeDisabled), nil, &log)
+			if err == nil || conn.closeCount.Load() != 1 {
+				t.Fatalf("publish = %v, closes = %d", err, conn.closeCount.Load())
+			}
+		})
+	}
+}
+
+func TestPublisherClosesConnectionAfterDialCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	conn := &closeCountingConnection{}
+	err := publishSnapshotsWithDialer(ctx, newDiskCollector(diskDataPaths{}),
+		newTestHBACollector(time.Minute, hbaModeDisabled),
+		func(context.Context) (snapshotConnection, error) {
+			cancel()
+			return conn, nil
+		}, nil)
+	if err != nil || conn.closeCount.Load() != 1 || conn.writes.Load() != 0 {
+		t.Fatalf("publish = %v, closes = %d, writes = %d", err, conn.closeCount.Load(), conn.writes.Load())
+	}
+}
+
+func TestPublisherClosesConnectionDuringSnapshotWait(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	conn := &closeCountingConnection{onWrite: cancel}
+	err := publishSnapshotsWithDialer(ctx, newDiskCollector(diskDataPaths{}),
+		newTestHBACollector(time.Minute, hbaModeDisabled),
+		func(context.Context) (snapshotConnection, error) { return conn, nil }, nil)
+	if err != nil || conn.closeCount.Load() != 1 || conn.writes.Load() != 1 {
+		t.Fatalf("publish = %v, closes = %d, writes = %d", err, conn.closeCount.Load(), conn.writes.Load())
+	}
+}
 
 func TestResolveHBAInterval(t *testing.T) {
 	for _, test := range []struct {
