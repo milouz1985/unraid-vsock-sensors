@@ -141,8 +141,25 @@ est conservée pendant les mises à jour.
 Depuis la racine du dépôt :
 
 ```sh
+apt install debhelper rsync
 make hwmon-package
 ```
+
+La construction requiert aussi Go 1.27 ou plus récent dans le `PATH`. Le script
+`virt-temp/package.sh` prépare une arborescence source temporaire, puis utilise
+`dpkg-buildpackage` et debhelper 13. `dh_installsystemd` installe et active
+l'unité sans arrêter le service avant une mise à jour. Les scripts de
+maintenance gèrent explicitement DKMS : le `prerm`
+généré par `dh_dkms` retire l'ancienne version dès le début d'une mise à jour,
+ce qui empêcherait de conserver le module opérationnel si la compilation de la
+nouvelle version échouait.
+
+L'arborescence `debian/` permet aussi une construction directe avec
+`dpkg-buildpackage -b -us -uc` lorsque les dépendances de construction sont
+installées et que `debian/changelog` porte la version voulue. Sous Debian 13,
+Go 1.27 doit être installé séparément ; le script de projet utilise alors ce
+Go local et passe `-d` à `dpkg-buildpackage` pour ignorer le contrôle des
+`Build-Depends` indisponibles dans la distribution.
 
 Version explicite :
 

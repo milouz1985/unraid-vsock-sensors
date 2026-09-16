@@ -133,6 +133,10 @@ Paquet Debian et DKMS :
 make test-vm-package
 ```
 
+Le scénario installe debhelper et `rsync` dans le clone VM avant de construire
+les paquets. Il vérifie ensuite les scripts de maintenance générés, notamment
+la conservation de l'ancienne version DKMS lors d'une mise à jour ratée.
+
 Conserver le clone même après succès :
 
 ```sh

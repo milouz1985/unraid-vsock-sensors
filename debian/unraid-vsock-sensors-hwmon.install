@@ -1,0 +1,6 @@
+debian/tmp/usr/bin/unraid-vsock-sensors usr/bin
+debian/tmp/usr/src/virt-temp-* usr/src
+debian/tmp/usr/share/unraid-vsock-sensors-hwmon/unraid-vsock-hwmon.default usr/share/unraid-vsock-sensors-hwmon
+virt-temp/unraid-vsock-hwmon.service usr/lib/systemd/system
+debian/virt-temp.conf usr/lib/modules-load.d
+LICENSES/*.txt usr/share/doc/unraid-vsock-sensors-hwmon/LICENSES

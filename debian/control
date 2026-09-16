@@ -1,0 +1,16 @@
+Source: unraid-vsock-sensors
+Section: admin
+Priority: optional
+Maintainer: François HOYEZ <francois.hoyez@gmail.com>
+Build-Depends: debhelper-compat (= 13), golang-go (>= 2:1.27~)
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://github.com/milouz1985/unraid-vsock-sensors
+
+Package: unraid-vsock-sensors-hwmon
+Architecture: amd64
+Depends: ${misc:Depends}, dkms, build-essential, kmod, systemd, proxmox-default-headers
+Recommends: lm-sensors
+Description: Publish Unraid temperatures as native hwmon sensors
+ Receives disk and HBA temperature snapshots from an Unraid VM over AF_VSOCK
+ and exposes them through the Linux hwmon subsystem on a Proxmox host.

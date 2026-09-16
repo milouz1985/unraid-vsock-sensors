@@ -14,12 +14,13 @@ Le projet nécessite :
 - Bash ;
 - PHP CLI ;
 - ShellCheck ;
-- Git.
+- Git ;
+- `dpkg-buildpackage`, debhelper 13 et `rsync` pour construire le paquet Proxmox.
 
 Sous Debian ou Ubuntu :
 
 ```sh
-sudo apt install make shellcheck php-cli git
+sudo apt install make shellcheck php-cli git debhelper rsync
 ```
 
 Le module `virt-temp` nécessite également les headers Linux correspondant au

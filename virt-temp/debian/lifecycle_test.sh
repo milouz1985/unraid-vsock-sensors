@@ -50,6 +50,11 @@ SH
 cat > "$test_root/bin/systemctl" <<'SH'
 #!/bin/sh
 printf 'systemctl %s\n' "$1" >> "$TEST_EVENTS"
+[ "$1" != is-active ]
+SH
+cat > "$test_root/bin/deb-systemd-invoke" <<'SH'
+#!/bin/sh
+printf 'deb-systemd-invoke %s\n' "$1" >> "$TEST_EVENTS"
 SH
 cat > "$test_root/bin/modprobe" <<'SH'
 #!/bin/sh
@@ -93,7 +98,7 @@ cmp "$TEST_EVENTS" "$test_root/expected"
 unset TEST_FAIL_KERNEL
 : > "$TEST_EVENTS"
 sh "$test_root/postinst" configure old
-printf 'build A\nbuild B\ninstall A\ninstall B\nsystemctl stop\nmodprobe virt_temp\nsystemctl daemon-reload\nsystemctl enable\nremove old\n' > "$test_root/expected"
+printf 'build A\nbuild B\ninstall A\ninstall B\nsystemctl is-active\nsystemctl stop\nmodprobe virt_temp\nsystemctl daemon-reload\nsystemctl is-enabled\ndeb-systemd-invoke start\nremove old\n' > "$test_root/expected"
 cmp "$TEST_EVENTS" "$test_root/expected"
 [[ ! -e "$test_root/saved/virt-temp-old" && ! -d "$test_root/dkms/virt-temp/old" ]]
 echo "DKMS upgrade ordering: OK"
@@ -117,11 +122,11 @@ render_script prerm new "$test_root/prerm_new"
 sh "$test_root/prerm_new" remove
 # The two DKMS removes happen in glob order; normalise before comparing.
 {
-    grep -F 'systemctl disable' "$TEST_EVENTS"
+    grep -F 'systemctl stop' "$TEST_EVENTS"
     sort <(grep -F 'remove ' "$TEST_EVENTS")
 } > "$test_root/actual"
 {
-    printf 'systemctl disable\n'
+    printf 'systemctl stop\n'
     printf 'remove new\nremove old\n' | sort
 } > "$test_root/expected"
 cmp "$test_root/actual" "$test_root/expected"

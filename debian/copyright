@@ -1,0 +1,17 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: unraid-vsock-sensors
+Source: https://github.com/milouz1985/unraid-vsock-sensors
+
+Files: *
+Copyright: 2026 François HOYEZ
+License: GPL-3.0-or-later
+ The complete license text is shipped in
+ /usr/share/doc/unraid-vsock-sensors-hwmon/LICENSES/GPL-3.0-or-later.txt.
+Comment: The Go executable also embeds third-party modules. Their license
+ notices and texts are shipped in THIRD_PARTY_NOTICES.md and LICENSES/.
+
+Files: virt-temp/module/virt-temp.c
+Copyright: 2026 François HOYEZ
+License: GPL-2.0-only
+ The complete license text is shipped in
+ /usr/share/doc/unraid-vsock-sensors-hwmon/LICENSES/GPL-2.0-only.txt.

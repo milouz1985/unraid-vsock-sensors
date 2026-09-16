@@ -1,0 +1,44 @@
+#!/usr/bin/make -f
+
+GO ?= go
+UVSS_VERSION ?= $(shell dpkg-parsechangelog -S Version | sed -e 's/-[0-9][0-9]*$$//' -e 's/\~/-/' -e 's/+dev\./-dev./')
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	rm -f debian/uvss-go-binary \
+		debian/unraid-vsock-sensors-hwmon.postinst \
+		debian/unraid-vsock-sensors-hwmon.prerm \
+		debian/unraid-vsock-sensors-hwmon.postrm
+
+override_dh_auto_configure:
+	for script in postinst prerm postrm; do \
+		sed 's/@VERSION@/$(UVSS_VERSION)/g' \
+			"virt-temp/debian/$$script.in" \
+			> "debian/unraid-vsock-sensors-hwmon.$$script"; \
+		chmod 0755 "debian/unraid-vsock-sensors-hwmon.$$script"; \
+	done
+
+override_dh_auto_build:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -trimpath \
+		-ldflags="-s -w -X main.version=$(UVSS_VERSION)" \
+		-o debian/uvss-go-binary .
+
+override_dh_auto_test:
+	$(GO) test ./...
+
+override_dh_auto_install:
+	install -D -m 0755 debian/uvss-go-binary debian/tmp/usr/bin/unraid-vsock-sensors
+	install -D -m 0644 virt-temp/default \
+		debian/tmp/usr/share/unraid-vsock-sensors-hwmon/unraid-vsock-hwmon.default
+	VERSION="$(UVSS_VERSION)" ./virt-temp/prepare-dkms.sh debian/tmp/usr/src
+
+# The package reloads virt_temp only after all DKMS builds and installs work.
+# Let debhelper manage unit installation and enablement, then start it from
+# postinst after that reload.
+override_dh_installsystemd:
+	dh_installsystemd --no-start --no-stop-on-upgrade
+
+override_dh_compress:
+	dh_compress -X LICENSES -X THIRD_PARTY_NOTICES

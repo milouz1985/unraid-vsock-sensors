@@ -29,6 +29,9 @@ trap 'journalctl -u "$service" -n 80 --no-pager >&2' ERR
 modprobe vsock_loopback
 export DEBIAN_FRONTEND=noninteractive
 export GOTOOLCHAIN=local
+apt_vm() {
+    apt-get -o DPkg::Lock::Timeout=180 "$@"
+}
 debian_version() {
     VERSION="$1" "$repo_root/version.sh" --debian
 }
@@ -56,7 +59,7 @@ check_installed() {
 install_version() {
     local version="$1" package_file
     package_file="$(package_path "$version")"
-    apt-get install -y --no-install-recommends "$package_file"
+    apt_vm install -y --no-install-recommends "$package_file"
     check_installed "$version"
 }
 check_unregistered() {
@@ -161,6 +164,8 @@ final_version=0.0.0-vmtest.6
 phase_pre_reboot() {
     [[ ! -d /sys/module/virt_temp && ! -e "$config" && ! -e /usr/bin/unraid-vsock-sensors ]] ||
         die "Expected a clean VM without an existing UVSS installation"
+    apt_vm update
+    apt_vm install -y --no-install-recommends debhelper rsync
     echo "DKMS package: $(dpkg-query -W -f='${Version}' dkms)"
     echo "Building and installing the Debian package on kernel $kernel"
     for version in \
@@ -191,7 +196,7 @@ phase_pre_reboot() {
 
     echo "Checking state after an intentionally failed DKMS upgrade"
     failed_package="$(make_failed_package "$first_failed_version")"
-    if apt-get install -y --no-install-recommends "$failed_package"; then
+    if apt_vm install -y --no-install-recommends "$failed_package"; then
         echo "The intentionally broken DKMS upgrade unexpectedly succeeded" >&2
         exit 1
     fi
@@ -233,7 +238,7 @@ phase_repair_after_failed_upgrade() {
 
     echo "Creating a fresh broken upgrade to test direct removal"
     second_failed_package="$(make_failed_package "$second_failed_version")"
-    if apt-get install -y --no-install-recommends "$second_failed_package"; then
+    if apt_vm install -y --no-install-recommends "$second_failed_package"; then
         echo "The second intentionally broken DKMS upgrade unexpectedly succeeded" >&2
         exit 1
     fi
@@ -254,7 +259,7 @@ phase_remove_after_failed_upgrade() {
         die "Removal phase resumed without a VM reboot"
     check_failed_upgrade 0.0.0-vmtest.4 "$second_failed_version"
     echo "Checking direct removal of the half-configured package"
-    apt-get remove -y "$package"
+    apt_vm remove -y "$package"
     if systemctl is-active --quiet "$service"; then
         echo "Service is still active after package removal" >&2; exit 1
     fi
@@ -292,7 +297,7 @@ phase_final() {
     timing "package: final reboot recovery"
 
     echo "Checking package removal preserves configuration and unloads the module"
-    apt-get remove -y "$package"
+    apt_vm remove -y "$package"
     if systemctl is-active --quiet "$service"; then
         echo "Service is still active after package removal" >&2; exit 1
     fi
@@ -304,7 +309,7 @@ phase_final() {
     timing "package: remove"
 
     echo "Checking purge removes the preserved configuration"
-    apt-get purge -y "$package"
+    apt_vm purge -y "$package"
     [[ ! -e "$config" && ! -e "$cache" && ! -d /sys/module/virt_temp ]]
     for version in 0.0.0-vmtest.1 0.0.0-vmtest.2 "$first_failed_version" \
         0.0.0-vmtest.4 "$second_failed_version" "$final_version"; do

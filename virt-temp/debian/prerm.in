@@ -25,7 +25,7 @@ case "$1" in
         fi
         ;;
     remove|deconfigure)
-        systemctl disable --now "$service" 2>/dev/null || true
+        systemctl stop "$service" 2>/dev/null || true
         if grep -q '^virt_temp ' /proc/modules; then
             modprobe -r virt_temp
         fi
@@ -45,3 +45,5 @@ case "$1" in
         rmdir "$saved_sources" 2>/dev/null || true
         ;;
 esac
+
+#DEBHELPER#
