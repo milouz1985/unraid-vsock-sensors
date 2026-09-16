@@ -124,15 +124,25 @@ L'agent :
 
 - consomme les champs `temp` et `spundown` déjà maintenus par `emhttpd` ;
 - lorsque le heartbeat `poll_attributes` est sain, Unraid est l'autorité pour
-  ces champs ; UVSS ne revalide pas indépendamment la fraîcheur du cache SMART ;
+  ces champs ; UVSS ne connaît pas l'âge physique de la mesure emhttpd ;
 - en cas de heartbeat `poll_attributes` absent, lance temporairement
   `smartctl_type` avec protection standby et des délais bornés ;
 - ne doit pas réveiller les disques ;
 - publie `Temp=0` comme sentinelle synthétique en état `standby` ou `waking`,
-  sans confondre ce cas avec une vraie mesure à `0 °C` ni réutiliser la
-  température antérieure à la veille ; la wake grace exige une transition
-  standby vers actif observée sans erreur d'inventaire intermédiaire ;
+  sans confondre ce cas avec une vraie mesure à `0 °C` ; UVSS ne conserve pas
+  lui-même sa mesure pré-standby pour le réveil. La wake grace exige une
+  transition standby vers actif observée sans erreur d'inventaire intermédiaire ;
 - publie les snapshots via AF_VSOCK.
+
+Le backend StorCLI conserve l'identité des contrôleurs tant que la lecture des
+températures réussit avec le même ensemble d'index. Un remplacement à chaud
+avec index inchangés peut conserver une identité périmée jusqu'au redémarrage
+du daemon. `CommandContext(...).Output()` peut aussi attendre un enfant qui
+garde ses pipes ouverts après l'arrêt du processus principal ; ce cas a été
+reproduit avec un faux StorCLI, pas avec le binaire réel sur Unraid. Le snapshot
+HBA expire indépendamment pour protéger le failsafe hwmon. Si le cas est
+confirmé sur le vrai chemin StorCLI, traiter localement groupe de processus,
+annulation et attente bornée.
 
 Les températures des disques proviennent de :
 

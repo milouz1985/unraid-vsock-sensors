@@ -15,14 +15,14 @@
         pluginURL="&pluginURL;" launch="Settings/UnraidVsockSensors"
         min="6.12.0" icon="icon.png">
 <DESCRIPTION>
-Pushes disk temperatures from Unraid's SMART cache and HBA temperatures over
-AF_VSOCK to the Proxmox host, where they are exposed as native hwmon sensors.
+Pushes disk temperatures from Unraid's disks.ini and devs.ini, and HBA
+temperatures over AF_VSOCK to Proxmox as native hwmon sensors.
 </DESCRIPTION>
 <CHANGES>
 ### 2.0.0 - 2026-09-13
 
 - Push persistent disk and HBA snapshots over VSOCK to Proxmox hwmon sensors, with saved topology and a stale-data failsafe.
-- Read Unraid's SMART cache for assigned and unassigned disks, and exclude USB disks by physical bus.
+- Read temp and spundown from Unraid's disks.ini and devs.ini, and exclude USB disks by physical bus.
 - Add per-disk Auto, Include and Exclude policies with UI validation and reset.
 - Use backend-specific HBA polling defaults: 15 seconds for mpt3ctl and 30 seconds for StorCLI.
 

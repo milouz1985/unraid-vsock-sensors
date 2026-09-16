@@ -182,7 +182,7 @@ Unraid minimal avec :
 
 - `disks.ini` ;
 - `var.ini` ;
-- cache SMART.
+- les champs `temp` et `spundown` de `disks.ini`, sans cache SMART séparé.
 
 Aucune commande SMART matérielle n'est exécutée.
 

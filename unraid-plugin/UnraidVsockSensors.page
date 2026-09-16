@@ -30,7 +30,7 @@ $pollAttributes = $pollValid
 $pollValid = $pollValid && $pollAttributes !== false;
 
 if (!$pollValid) {
-    $pollDisplay = 'Unavailable (daemon freshness fallback: 30 seconds)';
+    $pollDisplay = 'Unavailable (daemon heartbeat interval: 30 seconds)';
 } elseif ($pollAttributes === 0) {
     $pollDisplay = 'Disabled';
 } else {
@@ -106,16 +106,16 @@ _(Unraid SMART polling interval)_:
 : <?=htmlspecialchars($pollDisplay, ENT_QUOTES)?>
 
 <blockquote class="inline_help">
-This read-only value comes from Unraid Disk Settings. The daemon uses it to assess cache freshness and detect stalled Unraid SMART polling. If polling stalls, UVSS temporarily reads SMART with standby protection.
+This read-only value comes from Unraid Disk Settings. While the poll_attributes heartbeat is healthy, Unraid's temp and spundown values are authoritative. If the heartbeat becomes stale, UVSS temporarily reads SMART directly with standby protection.
 </blockquote>
 
 <?php if (!$pollValid): ?>
 <p class="red">
-The Unraid <code>poll_attributes</code> value is missing or invalid. The daemon assumes 30 seconds for cache freshness and stalled-poll detection. It does not modify Unraid settings.
+The Unraid <code>poll_attributes</code> value is missing or invalid. The daemon assumes a 30-second heartbeat interval for stalled-poll detection. It does not modify Unraid settings.
 </p>
 <?php elseif ($pollAttributes === 0): ?>
 <p class="red">
-Automatic SMART polling is disabled in Unraid. Disk temperatures cannot remain fresh automatically.
+Automatic SMART polling is disabled in Unraid. UVSS does not start automatic fallback: active disks are unavailable, while standby disks retain their synthetic standby state.
 </p>
 <?php elseif ($pollAttributes > 60): ?>
 <p class="red">

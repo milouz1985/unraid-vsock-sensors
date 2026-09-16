@@ -176,6 +176,8 @@ Les unités non assignées proviennent de :
 ```
 
 `disks.ini` reste prioritaire lorsqu'un même ID apparaît dans les deux sources.
+Les copies de cet ID dans `devs.ini` sont ignorées avant toute validation de
+leurs champs ou de leurs doublons.
 
 Deux entrées actives partageant le même ID dans une même source invalident
 l'inventaire : aucun inventaire partiel n'est publié.
@@ -222,8 +224,8 @@ SMART.
 Le champ `spundown` a toujours la priorité sur `temp` :
 - `spundown=1` → état `standby`, température synthétique 0 ;
 - `spundown=0` + `temp` numérique fini → mesure valide ;
-- `spundown=0` + `temp` indisponible/invalide → `waking` si l'état précédent
-  était `standby`, `unavailable` sinon.
+- `spundown=0` + `temp` indisponible/invalide → `waking` si le polling est actif
+  et l'état précédent était `standby`, `unavailable` sinon.
 
 L'événement Unraid `poll_attributes` (SIGUSR2) demande une actualisation
 immédiate au daemon. Un watchdog de cinq secondes couvre les événements perdus
@@ -256,15 +258,19 @@ valide. Les diagnostics utilisent l'état thermique interne pour afficher la
 sentinelle comme `standby`, sans température courante. Après un réveil observé
 sans interruption de visibilité sur l'inventaire, UVSS conserve temporairement
 cette sentinelle, avec l'état `waking`, pendant qu'il attend la première
-température emhttpd valide. L'ancienne température mesurée avant la veille n'est
-jamais réutilisée. Cette attente est limitée à :
+température emhttpd valide. UVSS ne conserve ni ne republie lui-même sa mesure
+pré-standby pendant le réveil. Tant qu'emhttpd n'expose pas de température
+numérique, UVSS publie la sentinelle `waking`. Dès qu'emhttpd fournit une valeur
+numérique finie, elle fait autorité, même si elle est identique à celle observée
+avant la veille ; UVSS ne peut pas établir l'âge physique de cette mesure.
+Cette attente est limitée à :
 
 ```text
 poll_attributes + 5 secondes
 ```
 
-La première mesure valide remplace immédiatement la sentinelle. Si elle
-n'arrive pas avant l'expiration de cette fenêtre, le disque devient
+La première observation numérique valide remplace immédiatement la sentinelle.
+Si elle n'arrive pas avant l'expiration de cette fenêtre, le disque devient
 `Unavailable` et le failsafe hwmon peut prendre le relais. Une observation
 invalide d'un disque actif sans transition préalable depuis `standby` devient
 indisponible immédiatement. Une erreur d'inventaire casse la continuité : au
@@ -285,6 +291,11 @@ Deux backends sont disponibles :
 
 Le backend natif récupère également le modèle, l'adresse SAS et l'adresse PCI
 lorsqu'elles sont disponibles.
+
+StorCLI redécouvre l'identité des contrôleurs après une erreur ou un changement
+de l'ensemble de leurs index. Un remplacement ou une reconfiguration à chaud
+qui conserve les mêmes index peut nécessiter un redémarrage d'UVSS pour
+redécouvrir l'identité du matériel.
 
 Une collecte HBA possède un deadline de 15 secondes. Un ioctl natif pouvant
 rester bloqué au-delà de ce délai, le dernier snapshot valide expire

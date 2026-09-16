@@ -1,8 +1,8 @@
 unraid-vsock-sensors: unraid-vsock-sensors (AF_VSOCK temperature publisher)
 unraid-vsock-sensors:
 unraid-vsock-sensors: Sends disk and HBA temperatures over AF_VSOCK.
-unraid-vsock-sensors: Reads disk temperatures from Unraid's SMART cache.
-unraid-vsock-sensors: Never queries disks directly; Unraid owns SMART polling.
+unraid-vsock-sensors: Reads Unraid disks.ini and devs.ini temperatures.
+unraid-vsock-sensors: Uses bounded direct SMART fallback if polling stalls.
 unraid-vsock-sensors: Proxmox exposes them as native hwmon sensors.
 unraid-vsock-sensors: https://github.com/milouz1985/unraid-vsock-sensors
 unraid-vsock-sensors:
