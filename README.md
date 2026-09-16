@@ -218,8 +218,8 @@ en `Auto` et l'interface propose sa réinitialisation.
 
 UVSS consomme les champs `temp` et `spundown` déjà maintenus par `emhttpd`.
 Lorsque le heartbeat `poll_attributes` est sain, Unraid est l'autorité pour
-ces deux champs : UVSS ne revalide pas indépendamment la fraîcheur du cache
-SMART.
+ces deux champs. UVSS ne cherche pas à déterminer indépendamment l'âge physique
+de la mesure exposée par emhttpd.
 
 Le champ `spundown` a toujours la priorité sur `temp` :
 - `spundown=1` → état `standby`, température synthétique 0 ;
