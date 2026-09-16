@@ -187,6 +187,11 @@ dpkg --configure -a
 apt --fix-broken install
 ```
 
+Si une mise à jour DKMS échoue, le module déjà chargé peut continuer à
+fonctionner jusqu'au redémarrage. Réparer ou terminer l'installation du paquet
+avant de redémarrer l'hôte : cet état ne garantit pas qu'un module utilisable
+sera disponible après reboot.
+
 ## Désinstallation
 
 Conserver la configuration :
