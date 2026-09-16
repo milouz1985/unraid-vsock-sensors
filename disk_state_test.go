@@ -396,7 +396,7 @@ func TestActiveObservationFailureDoesNotRetainPreviousTemperature(t *testing.T) 
 	disk := unraidDisk{id: "serial", name: "disk1", device: "sda"}
 	tracker := make(diskStateTracker)
 	tracker.apply([]diskObservation{{disk: disk, temperature: 35, source: diskSourceEmhttpd}}, now, time.Minute)
-	readings := tracker.apply([]diskObservation{{disk: disk, source: diskSourceEmhttpd, err: errors.New("invalid cache")}}, now.Add(time.Second), time.Minute)
+	readings := tracker.apply([]diskObservation{{disk: disk, source: diskSourceEmhttpd, err: errors.New("invalid emhttpd temperature")}}, now.Add(time.Second), time.Minute)
 	if len(readings) != 1 || readings[0].Temp != 0 || !readings[0].Unavailable || tracker["serial"].thermalState != diskThermalUnavailable {
 		t.Fatalf("invalid active reading = %#v; state=%#v", readings, tracker["serial"])
 	}
