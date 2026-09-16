@@ -378,7 +378,7 @@ if (( TEST_PASSED )) && [[ "$VM_TEST_SUITE" == package || "$VM_TEST_SUITE" == al
     fi
     if (( TEST_PASSED )); then
         reboot_vm_and_wait "Rebooting VM $VMID with the second failed upgrade"
-        if ! run_guest_suite package-broken-5 "-a"; then
+        if ! run_guest_suite package-remove-after-failed-upgrade "-a"; then
             TEST_PASSED=0
         fi
     fi

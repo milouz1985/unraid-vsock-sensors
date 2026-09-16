@@ -8,8 +8,8 @@ source tests/vm/common.sh
 }
 verify_local_test_image
 suite="${1:-core}"
-[[ "$suite" == core || "$suite" == package-pre-reboot || "$suite" == package-post-reboot || "$suite" == package-broken-5 || "$suite" == package-final ]] ||
-    die "Usage: $0 [core|package-pre-reboot|package-post-reboot|package-broken-5|package-final]"
+[[ "$suite" == core || "$suite" == package-pre-reboot || "$suite" == package-post-reboot || "$suite" == package-remove-after-failed-upgrade || "$suite" == package-final ]] ||
+    die "Usage: $0 [core|package-pre-reboot|package-post-reboot|package-remove-after-failed-upgrade|package-final]"
 case "$(systemd-detect-virt --vm)" in
     kvm|qemu) ;;
     *) echo "Expected a QEMU/KVM VM" >&2; exit 1 ;;
@@ -18,7 +18,7 @@ kernel="$(uname -r)"
 [[ "$kernel" == *-pve && "$kernel" == "$(cat /etc/uvss-test-kernel)" ]] || {
     echo "VM must boot the Proxmox kernel recorded by the builder" >&2; exit 1;
 }
-if [[ "$suite" != package-post-reboot && "$suite" != package-broken-5 && "$suite" != package-final ]]; then
+if [[ "$suite" != package-post-reboot && "$suite" != package-remove-after-failed-upgrade && "$suite" != package-final ]]; then
     [[ ! -d /sys/module/virt_temp ]] || {
         echo "virt_temp is already loaded; refusing to disturb it" >&2; exit 1;
     }
@@ -39,7 +39,7 @@ if [[ "$suite" == core ]]; then
     go test -tags=integration -count=1 -timeout=120s -v -run '^TestVM' .
     timing "core: integration tests"
 fi
-if [[ "$suite" == package-pre-reboot || "$suite" == package-post-reboot || "$suite" == package-broken-5 || "$suite" == package-final ]]; then
+if [[ "$suite" == package-pre-reboot || "$suite" == package-post-reboot || "$suite" == package-remove-after-failed-upgrade || "$suite" == package-final ]]; then
     bash tests/vm/package-tests.sh "${suite#package-}"
     timing "package suite"
 fi

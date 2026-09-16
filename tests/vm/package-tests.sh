@@ -15,8 +15,6 @@ esac
 kernel="$(uname -r)"
 [[ "$kernel" == *-pve && "$kernel" == "$(cat /etc/uvss-test-kernel)" ]] || exit 1
 phase="${1:-}"
-[[ "$phase" == pre-reboot || "$phase" == post-reboot || "$phase" == broken-5 || "$phase" == final ]] ||
-    die "Usage: $0 [pre-reboot|post-reboot|broken-5|final]"
 package=unraid-vsock-sensors-hwmon
 debian_revision="${DEBIAN_REVISION:-1}"
 service=unraid-vsock-hwmon.service
@@ -160,8 +158,7 @@ make_failed_package() {
 first_failed_version=0.0.0-vmtest.3
 second_failed_version=0.0.0-vmtest.5
 final_version=0.0.0-vmtest.6
-start_timing
-if [[ "$phase" == pre-reboot ]]; then
+phase_pre_reboot() {
     [[ ! -d /sys/module/virt_temp && ! -e "$config" && ! -e /usr/bin/unraid-vsock-sensors ]] ||
         die "Expected a clean VM without an existing UVSS installation"
     echo "DKMS package: $(dpkg-query -W -f='${Version}' dkms)"
@@ -204,15 +201,14 @@ if [[ "$phase" == pre-reboot ]]; then
     [[ -f "$cache" ]]
     cat /proc/sys/kernel/random/boot_id > "$checkpoint"
     echo "Checkpoint written; host must reboot before the package suite continues"
-    exit 0
-fi
+}
 
 # ---------------------------------------------------------------------------
 # Post-reboot: the preserved old version must be bootable, then the
 # half-configured package is repaired by installing a valid version directly
 # (no apt remove in between).
 # ---------------------------------------------------------------------------
-if [[ "$phase" == post-reboot ]]; then
+phase_repair_after_failed_upgrade() {
     [[ -s "$checkpoint" ]] || die "Missing pre-reboot package checkpoint"
     [[ "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat "$checkpoint")" ]] ||
         die "Package suite resumed without a VM reboot"
@@ -245,18 +241,17 @@ if [[ "$phase" == post-reboot ]]; then
     timing "package: second failed upgrade"
     cat /proc/sys/kernel/random/boot_id > "$checkpoint"
     echo "Second checkpoint written; host must reboot before the removal checks"
-    exit 0
-fi
+}
 
 # ---------------------------------------------------------------------------
-# Broken-5 phase, after the second reboot: apt remove of a half-configured
+# After the second reboot, apt remove of a half-configured
 # package must remove every DKMS version and its backup sources while keeping
 # the configuration and the cache.
 # ---------------------------------------------------------------------------
-if [[ "$phase" == broken-5 ]]; then
+phase_remove_after_failed_upgrade() {
     [[ -s "$checkpoint" ]] || die "Missing pre-reboot package checkpoint"
     [[ "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat "$checkpoint")" ]] ||
-        die "Broken-5 phase resumed without a VM reboot"
+        die "Removal phase resumed without a VM reboot"
     check_failed_upgrade 0.0.0-vmtest.4 "$second_failed_version"
     echo "Checking direct removal of the half-configured package"
     apt-get remove -y "$package"
@@ -283,39 +278,49 @@ if [[ "$phase" == broken-5 ]]; then
     timing "package: remove after failed upgrade"
     cat /proc/sys/kernel/random/boot_id > "$checkpoint"
     echo "Third checkpoint written; host must reboot before the final checks"
-    exit 0
-fi
+}
 
 # ---------------------------------------------------------------------------
 # Final phase, after the third reboot.
 # ---------------------------------------------------------------------------
-[[ -s "$checkpoint" ]] || die "Missing pre-reboot package checkpoint"
-[[ "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat "$checkpoint")" ]] ||
-    die "Final phase resumed without a VM reboot"
-echo "Checking boot from the repaired module after the final reboot"
-check_installed "$final_version"
-timing "package: final reboot recovery"
+phase_final() {
+    [[ -s "$checkpoint" ]] || die "Missing pre-reboot package checkpoint"
+    [[ "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat "$checkpoint")" ]] ||
+        die "Final phase resumed without a VM reboot"
+    echo "Checking boot from the repaired module after the final reboot"
+    check_installed "$final_version"
+    timing "package: final reboot recovery"
 
-echo "Checking package removal preserves configuration and unloads the module"
-apt-get remove -y "$package"
-if systemctl is-active --quiet "$service"; then
-    echo "Service is still active after package removal" >&2; exit 1
-fi
-[[ ! -d /sys/module/virt_temp && ! -e /dev/virt-temp ]]
-[[ ! -e /usr/bin/unraid-vsock-sensors ]]
-check_unregistered "$final_version"
-cmp -- "$config" /var/tmp/uvss-expected-config
-[[ -f "$cache" ]]
-timing "package: remove"
+    echo "Checking package removal preserves configuration and unloads the module"
+    apt-get remove -y "$package"
+    if systemctl is-active --quiet "$service"; then
+        echo "Service is still active after package removal" >&2; exit 1
+    fi
+    [[ ! -d /sys/module/virt_temp && ! -e /dev/virt-temp ]]
+    [[ ! -e /usr/bin/unraid-vsock-sensors ]]
+    check_unregistered "$final_version"
+    cmp -- "$config" /var/tmp/uvss-expected-config
+    [[ -f "$cache" ]]
+    timing "package: remove"
 
-echo "Checking purge removes the preserved configuration"
-apt-get purge -y "$package"
-[[ ! -e "$config" && ! -e "$cache" && ! -d /sys/module/virt_temp ]]
-for version in 0.0.0-vmtest.1 0.0.0-vmtest.2 "$first_failed_version" \
-    0.0.0-vmtest.4 "$second_failed_version" "$final_version"; do
-    check_unregistered "$version"
-done
-[[ ! -d "$saved_sources" ]]
-rm -f -- "$checkpoint" /var/tmp/uvss-expected-module.sha256 /var/tmp/uvss-expected-config
-timing "package: purge"
-echo "Package and DKMS lifecycle checks passed on $kernel"
+    echo "Checking purge removes the preserved configuration"
+    apt-get purge -y "$package"
+    [[ ! -e "$config" && ! -e "$cache" && ! -d /sys/module/virt_temp ]]
+    for version in 0.0.0-vmtest.1 0.0.0-vmtest.2 "$first_failed_version" \
+        0.0.0-vmtest.4 "$second_failed_version" "$final_version"; do
+        check_unregistered "$version"
+    done
+    [[ ! -d "$saved_sources" ]]
+    rm -f -- "$checkpoint" /var/tmp/uvss-expected-module.sha256 /var/tmp/uvss-expected-config
+    timing "package: purge"
+    echo "Package and DKMS lifecycle checks passed on $kernel"
+}
+
+start_timing
+case "$phase" in
+    pre-reboot) phase_pre_reboot ;;
+    post-reboot) phase_repair_after_failed_upgrade ;;
+    remove-after-failed-upgrade) phase_remove_after_failed_upgrade ;;
+    final) phase_final ;;
+    *) die "Usage: $0 [pre-reboot|post-reboot|remove-after-failed-upgrade|final]" ;;
+esac
