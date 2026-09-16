@@ -67,9 +67,6 @@ func TestHistoricalUnraidDisksFixture(t *testing.T) {
 	byName := make(map[string]unraidDisk, len(disks))
 	for _, disk := range disks {
 		byName[disk.name] = disk
-		if disk.smartName != disk.name {
-			t.Errorf("%s SMART name = %q, want logical name", disk.name, disk.smartName)
-		}
 	}
 	if _, exists := byName["disk18"]; exists {
 		t.Error("empty DISK_NP slot was included")
@@ -275,7 +272,7 @@ func TestDiskInventoryDeduplicatesAssignedAndUnassignedByStableID(t *testing.T) 
 	environment.write(t, environment.paths.devsINI, "[dev1]\nid=serial\ndevice=sdb\nrotational=1\nspundown=0\ntemp=35\n")
 	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI,
 		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
-	if err != nil || len(disks) != 1 || disks[0].name != "disk1" || disks[0].smartName != "disk1" {
+	if err != nil || len(disks) != 1 || disks[0].name != "disk1" {
 		t.Fatalf("deduplicated inventory = %#v, %v", disks, err)
 	}
 }
@@ -433,9 +430,6 @@ func TestDiskInventoryExcludesUSBFromBothSourcesBeforeSMART(t *testing.T) {
 	byID := make(map[string]unraidDisk, len(disks))
 	for _, disk := range disks {
 		byID[disk.id] = disk
-	}
-	if byID["internal_hdd"].smartName != "disk1" || byID["internal_ssd"].smartName != "sdb" {
-		t.Fatalf("internal inventory = %#v", byID)
 	}
 	if _, exists := byID["USB_external_serial"]; exists {
 		t.Fatal("assigned USB disk entered the inventory")

@@ -14,13 +14,11 @@ import (
 
 const maxUnraidDiskIDSize = 79
 
-// unraidDisk is inventory, power state and temperature produced by
-// Unraid. smartName is the Unraid identifier passed to smartctl_type during
-// direct SMART fallback.
+// unraidDisk is inventory, power state and temperature produced by Unraid.
 type unraidDisk struct {
-	id, name, device, transport, temperature, smartName string
-	rotational                                          bool
-	spundown                                            bool
+	id, name, device, transport, temperature string
+	rotational                               bool
+	spundown                                 bool
 }
 
 type diskInventoryEntry struct {
@@ -139,7 +137,7 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, validateIn
 			}
 		}
 		disk, err := diskFromSection(section, unraidDisk{
-			id: id, name: name, device: device, smartName: name, transport: transport,
+			id: id, name: name, device: device, transport: transport,
 		}, included && validateIncluded)
 		if err != nil {
 			return nil, fmt.Errorf("disk %q: %w", name, err)
@@ -205,7 +203,7 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 			}
 		}
 		disk, err := diskFromSection(section, unraidDisk{
-			id: id, name: name, device: device, smartName: device, transport: transport,
+			id: id, name: name, device: device, transport: transport,
 		}, included && validateIncluded)
 		if err != nil {
 			return nil, fmt.Errorf("unassigned disk %q: %w", name, err)

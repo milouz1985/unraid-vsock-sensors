@@ -171,7 +171,7 @@ func TestReadDiagnosticsRuntimeFile(t *testing.T) {
 func TestBuildDiagnosticDisksUsesStableIDs(t *testing.T) {
 	now := time.Now()
 	disks := []unraidDisk{
-		{id: "one", name: "disk1", device: "sda", smartName: "disk1"},
+		{id: "one", name: "disk1", device: "sda"},
 		{id: "two", name: "disk2", device: "sdb", spundown: true},
 	}
 	readings := []sensors.Disk{

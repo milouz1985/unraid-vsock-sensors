@@ -184,7 +184,7 @@ func TestDiskSnapshotPreservesSuccessfulEmptyInventory(t *testing.T) {
 	}
 }
 
-func TestAssignedDiskUsesUnraidTemperatureAndLogicalSMARTName(t *testing.T) {
+func TestAssignedDiskUsesUnraidTemperatureAndStableIdentity(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI, strings.TrimSpace(`
 		["disk1"]
@@ -206,7 +206,7 @@ func TestAssignedDiskUsesUnraidTemperatureAndLogicalSMARTName(t *testing.T) {
 	}
 }
 
-func TestUnassignedDiskUsesDeviceSMARTNameAndStableIdentity(t *testing.T) {
+func TestUnassignedDiskKeepsStableIdentityAcrossDeviceChange(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	writeDevice := func(device string) {
 		environment.write(t, environment.paths.devsINI, strings.TrimSpace(`

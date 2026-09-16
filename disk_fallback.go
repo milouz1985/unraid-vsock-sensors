@@ -89,8 +89,7 @@ func (c *diskCollector) fallbackObservation(ctx context.Context, disk unraidDisk
 	}
 	// smartctl_type resolves smType, controller ports and the actual device.
 	// Its second argument is a single option string, as used by Unraid.
-	// The helper takes the section name (disk1 or dev1); unassigned SMART
-	// cache filenames instead use the device name (sda, nvme0n1).
+	// The helper takes the Unraid section name (disk1 or dev1).
 	output, err := runFallbackCommand(ctx, path, disk.name, "-n standby,3 -A -j")
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 3 {
