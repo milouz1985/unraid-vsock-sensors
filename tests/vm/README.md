@@ -150,7 +150,10 @@ Le runner :
 5. attend QEMU Guest Agent, Cloud-Init et SSH ;
 6. transfère le working tree par `rsync` ;
 7. vérifie son manifeste SHA256 ;
-8. exécute les tests ;
+8. exécute les tests ; pour la suite paquet, redémarre la VM après l'upgrade
+   échoué pour vérifier le module conservé, puis après le second upgrade cassé
+   pour vérifier la suppression directe du paquet half-configured, puis une
+   dernière fois après réparation ;
 9. récupère le journal ;
 10. supprime le clone après succès.
 
@@ -219,13 +222,31 @@ Elle construit plusieurs versions du `.deb` et vérifie :
 - mise à jour ;
 - conservation de la configuration ;
 - échec volontaire d'une compilation DKMS ;
-- récupération avec une version valide ;
+- ancienne version DKMS encore installée sur les noyaux ciblés, avec ses
+  sources et son fichier module, après cet échec ;
+- redémarrage réel depuis ce module conservé, avant toute réparation dpkg ;
+- réparation directe du paquet half-configured par l'installation d'une version
+  valide (sans `apt remove` intermédiaire) : la version conservée et la version
+  cassée sont retirées, `saved_sources` est nettoyé ;
+- second upgrade volontairement cassé, pour tester la désinstallation d'un
+  upgrade échoué ;
+- `remove` direct du paquet half-configured, qui doit retirer toutes les
+  versions DKMS et leurs sources de secours tout en conservant la configuration
+  et le cache ;
+- réinstallation d'une version valide plus récente que la version cassée
+  (un downgrade serait refusé par `apt-get`) ;
+- second redémarrage réel depuis le module réparé ;
 - `remove` ;
 - `purge`.
 
 Le package volontairement cassé contient une directive `#error`. Son échec doit
-laisser le paquet dans l'état attendu sans casser le module déjà chargé, puis
-une version valide suivante doit réparer l'installation.
+laisser le paquet half-configured sans retirer l'ancienne version DKMS. Après
+reboot, le module doit se charger depuis le disque et le service doit rester
+actif. La réparation d'un upgrade échoué est testée par l'installation directe
+d'une version valide ; la désinstallation d'un upgrade échoué est testée par un
+`remove` direct d'un second paquet cassé. Un `remove` direct d'un paquet
+half-configured doit laisser la machine sans module chargé ni version DKMS
+restante.
 
 Le démarrage du service est vérifié avec `vsock_loopback`. Ce test ne représente
 pas un vrai transport AF_VSOCK entre une VM Unraid et son hôte.

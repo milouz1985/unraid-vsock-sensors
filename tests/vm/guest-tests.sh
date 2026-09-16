@@ -8,8 +8,8 @@ source tests/vm/common.sh
 }
 verify_local_test_image
 suite="${1:-core}"
-[[ "$suite" == core || "$suite" == package || "$suite" == all ]] ||
-    die "Usage: $0 [core|package|all]"
+[[ "$suite" == core || "$suite" == package-pre-reboot || "$suite" == package-post-reboot || "$suite" == package-broken-5 || "$suite" == package-final ]] ||
+    die "Usage: $0 [core|package-pre-reboot|package-post-reboot|package-broken-5|package-final]"
 case "$(systemd-detect-virt --vm)" in
     kvm|qemu) ;;
     *) echo "Expected a QEMU/KVM VM" >&2; exit 1 ;;
@@ -18,9 +18,11 @@ kernel="$(uname -r)"
 [[ "$kernel" == *-pve && "$kernel" == "$(cat /etc/uvss-test-kernel)" ]] || {
     echo "VM must boot the Proxmox kernel recorded by the builder" >&2; exit 1;
 }
-[[ ! -d /sys/module/virt_temp ]] || {
-    echo "virt_temp is already loaded; refusing to disturb it" >&2; exit 1;
-}
+if [[ "$suite" != package-post-reboot && "$suite" != package-broken-5 && "$suite" != package-final ]]; then
+    [[ ! -d /sys/module/virt_temp ]] || {
+        echo "virt_temp is already loaded; refusing to disturb it" >&2; exit 1;
+    }
+fi
 export PATH="/usr/local/go/bin:$PATH"
 export VERSION=0.0.0-vmtest
 export UVSS_VM_TEST=1
@@ -29,7 +31,7 @@ cat /var/tmp/uvss-test-metadata
 uname -a
 go version
 start_timing
-if [[ "$suite" == core || "$suite" == all ]]; then
+if [[ "$suite" == core ]]; then
     make -C virt-temp/module
     timing "core: module build"
     go mod download
@@ -37,7 +39,7 @@ if [[ "$suite" == core || "$suite" == all ]]; then
     go test -tags=integration -count=1 -timeout=120s -v -run '^TestVM' .
     timing "core: integration tests"
 fi
-if [[ "$suite" == package || "$suite" == all ]]; then
-    bash tests/vm/package-tests.sh
+if [[ "$suite" == package-pre-reboot || "$suite" == package-post-reboot || "$suite" == package-broken-5 || "$suite" == package-final ]]; then
+    bash tests/vm/package-tests.sh "${suite#package-}"
     timing "package suite"
 fi

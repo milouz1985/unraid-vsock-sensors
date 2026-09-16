@@ -7,6 +7,7 @@ service="unraid-vsock-hwmon.service"
 kernel_release="$(uname -r)"
 config="/etc/default/unraid-vsock-hwmon"
 default_config="/usr/share/unraid-vsock-sensors-hwmon/unraid-vsock-hwmon.default"
+saved_sources="/var/lib/unraid-vsock-sensors/dkms-sources"
 
 if [ "$1" != "configure" ]; then
     exit 0
@@ -26,12 +27,23 @@ fi
 
 if ! dkms status -m "$module" -v "$version" 2>/dev/null | grep -Fq "$module/$version"; then
     dkms add -m "$module" -v "$version"
+elif [ -L "/var/lib/dkms/$module/$version/source" ]; then
+    # A previously preserved version may be reinstalled after a failed upgrade.
+    ln -sfn "/usr/src/$module-$version" "/var/lib/dkms/$module/$version/source"
 fi
+# Freeze the target kernel set, then build every target before replacing any
+# installed module.
+set --
 for kernel_build in /lib/modules/*/build; do
     [ -d "$kernel_build" ] || continue
     target_kernel="${kernel_build#/lib/modules/}"
     target_kernel="${target_kernel%/build}"
+    set -- "$@" "$target_kernel"
+done
+for target_kernel do
     dkms build --force -m "$module" -v "$version" -k "$target_kernel"
+done
+for target_kernel do
     dkms install --force -m "$module" -v "$version" -k "$target_kernel"
 done
 
@@ -58,3 +70,19 @@ if [ ! -c /dev/virt-temp ]; then
     echo "Le module est chargé, mais /dev/virt-temp reste introuvable." >&2
     exit 1
 fi
+
+# A failed cleanup must not turn a working replacement into a failed upgrade.
+for registered in /var/lib/dkms/"$module"/*; do
+    [ -L "$registered/source" ] || continue
+    old_version="${registered##*/}"
+    [ "$old_version" = "$version" ] && continue
+    if dkms remove -m "$module" -v "$old_version" --all; then
+        rm -rf -- "$saved_sources/$module-$old_version" ||
+            echo "Warning: could not remove saved DKMS source for $old_version" >&2
+    else
+        echo "Warning: could not remove old DKMS version $module/$old_version" >&2
+    fi
+done
+rm -rf -- "$saved_sources/$module-$version" ||
+    echo "Warning: could not remove saved DKMS source for $version" >&2
+rmdir "$saved_sources" 2>/dev/null || true

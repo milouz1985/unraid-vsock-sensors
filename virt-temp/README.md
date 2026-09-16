@@ -187,10 +187,18 @@ dpkg --configure -a
 apt --fix-broken install
 ```
 
-Si une mise à jour DKMS échoue, le module déjà chargé peut continuer à
-fonctionner jusqu'au redémarrage. Réparer ou terminer l'installation du paquet
-avant de redémarrer l'hôte : cet état ne garantit pas qu'un module utilisable
-sera disponible après reboot.
+Lors d'une mise à jour, l'ancienne version DKMS installée et ses sources sont
+conservées jusqu'à ce que la nouvelle version ait été construite et installée,
+que le module ait été chargé et que le service fonctionne. Si la compilation
+échoue, le paquet reste à réparer côté dpkg, mais le dernier module fonctionnel
+reste disponible sur disque pour le prochain démarrage. Cela ne restaure pas
+les fichiers userspace de l'ancien paquet. Après correction de la cause de
+l'échec, terminer l'installation avec `apt --fix-broken install`.
+
+Un `apt remove` du paquet half-configured retire toutes les versions DKMS
+`virt-temp` enregistrées (la version cassée et l'ancienne version conservée)
+ainsi que leurs sources de secours, tout en conservant la configuration
+`/etc/default/unraid-vsock-hwmon` et le cache de topologie.
 
 ## Désinstallation
 

@@ -27,6 +27,7 @@ BASH_SCRIPTS := version.sh \
 	unraid-plugin/service_test.sh \
 	virt-temp/package.sh \
 	virt-temp/prepare-dkms.sh \
+	virt-temp/debian/lifecycle_test.sh \
 	tests/vm/build-template.sh \
 	tests/vm/common.sh \
 	tests/vm/run.sh \
@@ -120,6 +121,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
 	php -l unraid-plugin/UnraidVsockSensorsDiagnostics.page >/dev/null
 	bash version_test.sh
+	bash virt-temp/debian/lifecycle_test.sh
 	bash unraid-plugin/package_test.sh
 	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/rc_test.sh

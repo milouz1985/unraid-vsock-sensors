@@ -4,13 +4,24 @@ set -e
 module="virt-temp"
 version="@VERSION@"
 service="unraid-vsock-hwmon.service"
+saved_sources="/var/lib/unraid-vsock-sensors/dkms-sources"
 
 case "$1" in
     upgrade)
-        # Remove the DKMS registration while its versioned sources still
-        # exist. dpkg removes the old /usr/src directory during unpacking.
+        # dpkg removes the old /usr/src directory during unpacking. Keep the
+        # registered DKMS version buildable until the replacement works.
         if dkms status -m "$module" -v "$version" 2>/dev/null | grep -Fq "$module/$version"; then
-            dkms remove -m "$module" -v "$version" --all
+            source="/usr/src/$module-$version"
+            saved="$saved_sources/$module-$version"
+            link="/var/lib/dkms/$module/$version/source"
+            if [ ! -d "$source" ] || [ ! -L "$link" ]; then
+                echo "Cannot preserve DKMS source for $module/$version." >&2
+                exit 1
+            fi
+            install -d -m 0755 "$saved"
+            cp -a "$source/." "$saved/"
+            test -f "$saved/dkms.conf"
+            ln -sfn "$saved" "$link"
         fi
         ;;
     remove|deconfigure)
@@ -18,8 +29,19 @@ case "$1" in
         if grep -q '^virt_temp ' /proc/modules; then
             modprobe -r virt_temp
         fi
-        if dkms status -m "$module" -v "$version" 2>/dev/null | grep -Fq "$module/$version"; then
-            dkms remove -m "$module" -v "$version" --all
-        fi
+        # Remove every DKMS version belonging to this package, not only the
+        # one being removed. After a failed upgrade the old version is kept
+        # registered together with its preserved sources and would otherwise
+        # survive an `apt remove` leaving orphaned modules and sources.
+        for registered in /var/lib/dkms/"$module"/*; do
+            [ -L "$registered/source" ] || continue
+            registered_version="${registered##*/}"
+            if dkms remove -m "$module" -v "$registered_version" --all 2>/dev/null; then
+                rm -rf -- "$saved_sources/$module-$registered_version"
+            else
+                echo "Warning: could not remove DKMS version $module/$registered_version" >&2
+            fi
+        done
+        rmdir "$saved_sources" 2>/dev/null || true
         ;;
 esac

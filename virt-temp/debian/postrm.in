@@ -2,6 +2,18 @@
 set -e
 
 if [ "$1" = "purge" ]; then
+    saved_sources="/var/lib/unraid-vsock-sensors/dkms-sources"
+    # A package can also be purged while an upgrade is half-configured.
+    for registered in /var/lib/dkms/virt-temp/*; do
+        [ -L "$registered/source" ] || continue
+        old_version="${registered##*/}"
+        if dkms remove -m virt-temp -v "$old_version" --all; then
+            rm -rf -- "$saved_sources/virt-temp-$old_version"
+        else
+            echo "Warning: could not remove DKMS version virt-temp/$old_version" >&2
+        fi
+    done
+    rmdir "$saved_sources" 2>/dev/null || true
     rm -f -- /etc/default/unraid-vsock-hwmon
     rm -f -- /var/lib/unraid-vsock-sensors/hwmon-inventory.json
     rmdir --ignore-fail-on-non-empty /var/lib/unraid-vsock-sensors 2>/dev/null || true

@@ -330,9 +330,64 @@ timing "source upload"
 
 echo "Running VM test suite: $VM_TEST_SUITE"
 require_pve_lock "guest tests"
-TEST_PASSED=0
-if guest_exec "$TEST_TIMEOUT" "cd /var/tmp/uvss-source; bash tests/vm/guest-tests.sh '$VM_TEST_SUITE' 2>&1 | tee /var/tmp/uvss-tests.log"; then
-    TEST_PASSED=1
+TEST_PASSED=1
+run_guest_suite() {
+    local phase="$1" tee_option="$2"
+    guest_exec "$TEST_TIMEOUT" "cd /var/tmp/uvss-source; bash tests/vm/guest-tests.sh '$phase' 2>&1 | tee $tee_option /var/tmp/uvss-tests.log"
+}
+if [[ "$VM_TEST_SUITE" == core || "$VM_TEST_SUITE" == all ]]; then
+    if ! run_guest_suite core ""; then
+        TEST_PASSED=0
+    fi
+fi
+reboot_vm_and_wait() {
+    local label="$1" previous_boot_id current_boot_id deadline
+    previous_boot_id="$(guest 'cat /proc/sys/kernel/random/boot_id')"
+    echo "$label"
+    require_pve_lock "VM reboot"
+    pve qm reboot "$VMID"
+    current_boot_id=""
+    deadline=$((SECONDS + BOOT_TIMEOUT))
+    while (( SECONDS < deadline )); do
+        require_pve_lock "VM reboot wait"
+        if pve qm guest cmd "$VMID" ping >/dev/null 2>&1; then
+            current_boot_id="$(pve_guest_exec 15 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)"
+            [[ -z "$current_boot_id" || "$current_boot_id" == "$previous_boot_id" ]] || break
+        fi
+        sleep 3
+    done
+    [[ -n "$current_boot_id" && "$current_boot_id" != "$previous_boot_id" ]] ||
+        die "VM $VMID did not complete a new boot"
+    echo "Waiting for guest SSH after reboot"
+    deadline=$((SECONDS + BOOT_TIMEOUT))
+    until guest true >/dev/null 2>&1; do
+        require_pve_lock "guest SSH after reboot"
+        (( SECONDS < deadline )) || die "Timed out waiting for SSH after reboot"
+        sleep 3
+    done
+}
+if (( TEST_PASSED )) && [[ "$VM_TEST_SUITE" == package || "$VM_TEST_SUITE" == all ]]; then
+    if ! run_guest_suite package-pre-reboot "-a"; then
+        TEST_PASSED=0
+    fi
+    if (( TEST_PASSED )); then
+        reboot_vm_and_wait "Rebooting VM $VMID with the failed package half-configured"
+        if ! run_guest_suite package-post-reboot "-a"; then
+            TEST_PASSED=0
+        fi
+    fi
+    if (( TEST_PASSED )); then
+        reboot_vm_and_wait "Rebooting VM $VMID with the second failed upgrade"
+        if ! run_guest_suite package-broken-5 "-a"; then
+            TEST_PASSED=0
+        fi
+    fi
+    if (( TEST_PASSED )); then
+        reboot_vm_and_wait "Rebooting VM $VMID with the repaired package"
+        if ! run_guest_suite package-final "-a"; then
+            TEST_PASSED=0
+        fi
+    fi
 fi
 timing "tests"
 
