@@ -72,7 +72,7 @@ func readDisks(disksINIPath string, selector *diskSelector) ([]unraidDisk, error
 }
 
 func readUnassignedDisks(devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
-	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil, true)
+	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil, nil, true)
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +351,7 @@ func TestWakeGraceUsesSyntheticZeroUntilFreshTemperature(t *testing.T) {
 		t.Fatalf("wake state = %#v", collector.state["serial"])
 	}
 	if source := collector.smartSource.status().source; source != diskSourceEmhttpd {
-		t.Fatalf("invalid per-disk cache changed healthy emhttpd source to %q", source)
+		t.Fatalf("invalid per-disk temperature changed healthy emhttpd source to %q", source)
 	}
 
 	environment.now = environment.now.Add(30 * time.Second)

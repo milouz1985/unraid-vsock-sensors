@@ -84,7 +84,7 @@ func discoverVMTestDisks(t *testing.T) []vmTestDisk {
 	return disks
 }
 
-func TestVMUnraidSMARTCacheCollector(t *testing.T) {
+func TestVMUnraidTemperatureCollector(t *testing.T) {
 	requireVMIntegrationTest(t)
 
 	devices := discoverVMTestDisks(t)

@@ -485,7 +485,7 @@ func TestAutoExcludedUSBEntriesSkipStrictValidation(t *testing.T) {
 		t.Fatalf("assigned USB entry = %#v, %v; want incomplete excluded disk", entries, err)
 	}
 	entries, err = readUnassignedEntries(environment.paths.devsINI,
-		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, nil, nil, true)
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, nil, nil, nil, true)
 	if err != nil || len(entries) != 1 || entries[0].included {
 		t.Fatalf("unassigned USB entry = %#v, %v; want invalid excluded disk", entries, err)
 	}
@@ -516,5 +516,43 @@ func TestReadInventorySkipsNoPhysicalDiskStatesAndKeepsDegradedDisk(t *testing.T
 	disks, err := readDisks(environment.paths.disksINI, &diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil || len(disks) != 1 || disks[0].id != "serial5" {
 		t.Fatalf("inventory = %#v, %v", disks, err)
+	}
+}
+
+func TestAssignedDiskWinsOverInvalidAndDuplicateDevscopy(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	environment.write(t, environment.paths.disksINI, strings.TrimSpace(`
+		["disk1"]
+		id="SERIAL"
+		device="sda"
+		status="DISK_OK"
+		rotational="1"
+		transport="ata"
+		spundown="0"
+		temp="35"
+	`)+"\n")
+	// Two shadowed copies of SERIAL in devs.ini: one with invalid thermal
+	// fields, one duplicate. Neither must invalidate the inventory.
+	environment.write(t, environment.paths.devsINI, strings.TrimSpace(`
+		["dev1"]
+		id="SERIAL"
+		device="sdb"
+		rotational="invalid"
+		spundown="invalid"
+
+		["dev2"]
+		id="SERIAL"
+		device="sdc"
+		rotational="1"
+		spundown="0"
+	`)+"\n")
+
+	selector := &diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}
+	disks, err := readDiskInventory(environment.paths.disksINI, environment.paths.devsINI, selector)
+	if err != nil {
+		t.Fatalf("inventory with shadowed devs.ini entries = %v; want no error", err)
+	}
+	if len(disks) != 1 || disks[0].id != "SERIAL" || disks[0].device != "sda" || disks[0].rotational != true {
+		t.Fatalf("inventory = %#v; want single assigned disk", disks)
 	}
 }

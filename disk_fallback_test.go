@@ -311,6 +311,79 @@ func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 	}
 }
 
+func TestCollectionErrorPreservedBetweenDirectPolls(t *testing.T) {
+	env := newDiskTestEnvironment(t, "30")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")
+	env.paths.smartctlType = fallbackTestCommand(t, "exit 1")
+	collector := env.collector()
+	collector.refresh()
+
+	// Trigger fallback with a failure.
+	env.now = env.now.Add(46 * time.Second)
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); !disk.unavailable {
+		t.Fatalf("disk after failed fallback = %#v; want unavailable", disk)
+	}
+	// The collection error must be present in the runtime snapshot.
+	status := collector.status()
+	if len(status.disks) != 1 || status.disks[0].collectionError == nil {
+		t.Fatalf("collection error not recorded: %+v", status.disks)
+	}
+	initialError := status.disks[0].collectionError.Error()
+
+	// Watchdog tick before the next direct poll (poll_attributes=30s, so
+	// 5s later is still within the reuse window).
+	env.now = env.now.Add(5 * time.Second)
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); !disk.unavailable {
+		t.Fatalf("disk during reuse = %#v; want still unavailable", disk)
+	}
+	// The collection error must be preserved.
+	status = collector.status()
+	if len(status.disks) != 1 || status.disks[0].collectionError == nil {
+		t.Fatalf("collection error lost during reuse: %+v", status.disks)
+	}
+	if status.disks[0].collectionError.Error() != initialError {
+		t.Fatalf("collection error changed during reuse: was %q, now %q",
+			initialError, status.disks[0].collectionError.Error())
+	}
+}
+
+func TestCollectionErrorNotPreservedAfterDeviceChange(t *testing.T) {
+	env := newDiskTestEnvironment(t, "30")
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")
+	env.paths.smartctlType = fallbackTestCommand(t, "exit 1")
+	collector := env.collector()
+	collector.refresh()
+
+	// Trigger fallback with a failure on nvme0n1.
+	env.now = env.now.Add(46 * time.Second)
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); !disk.unavailable {
+		t.Fatalf("disk after failed fallback = %#v; want unavailable", disk)
+	}
+	status := collector.status()
+	if len(status.disks) != 1 || status.disks[0].collectionError == nil {
+		t.Fatalf("collection error not recorded: %+v", status.disks)
+	}
+
+	// Device changes to nvme2n1.
+	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme2n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")
+	env.now = env.now.Add(5 * time.Second)
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); !disk.unavailable {
+		t.Fatalf("disk after device change = %#v; want unavailable", disk)
+	}
+	// The old collection error must NOT be transferred to the new device.
+	status = collector.status()
+	if len(status.disks) != 1 {
+		t.Fatalf("expected 1 disk, got %d", len(status.disks))
+	}
+	if status.disks[0].collectionError != nil {
+		t.Fatalf("old collection error transferred to new device: %v", status.disks[0].collectionError)
+	}
+}
+
 func TestFailedFallbackWaitsForNextPollInterval(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
 	env.write(t, env.paths.disksINI, "[disk1]\nid=serial\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=35\n")

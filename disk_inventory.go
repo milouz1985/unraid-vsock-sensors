@@ -15,7 +15,8 @@ import (
 const maxUnraidDiskIDSize = 79
 
 // unraidDisk is inventory, power state and temperature produced by
-// Unraid. smartName locates the matching report in /var/local/emhttp/smart.
+// Unraid. smartName is the Unraid identifier passed to smartctl_type during
+// direct SMART fallback.
 type unraidDisk struct {
 	id, name, device, transport, temperature, smartName string
 	rotational                                          bool
@@ -42,9 +43,13 @@ func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSe
 	if err != nil {
 		return nil, err
 	}
+	assignedIDs := make(map[string]struct{}, len(assigned))
 	flashIDs := make(map[string]struct{})
 	flashDevices := make(map[string]struct{})
 	for _, entry := range assigned {
+		if entry.disk.id != "" {
+			assignedIDs[entry.disk.id] = struct{}{}
+		}
 		if strings.EqualFold(entry.disk.name, "flash") {
 			if entry.disk.id != "" {
 				flashIDs[entry.disk.id] = struct{}{}
@@ -54,7 +59,7 @@ func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSe
 			}
 		}
 	}
-	unassigned, err := readUnassignedEntries(devsINIPath, selector, flashIDs, flashDevices, validateIncluded)
+	unassigned, err := readUnassignedEntries(devsINIPath, selector, assignedIDs, flashIDs, flashDevices, validateIncluded)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +156,7 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, validateIn
 	return entries, nil
 }
 
-func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs, flashDevices map[string]struct{}, validateIncluded bool) ([]diskInventoryEntry, error) {
+func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedIDs, flashIDs, flashDevices map[string]struct{}, validateIncluded bool) ([]diskInventoryEntry, error) {
 	config, err := ini.Load(devsINIPath)
 	if err != nil {
 		return nil, err
@@ -167,6 +172,14 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, flashIDs,
 		transport := diskTransport(section)
 		id := strings.TrimSpace(section.Key("id").String())
 		device := normalizeDiskDevice(section.Key("device").String())
+		// Skip copies of assigned disks before any validation. A shadowed entry
+		// must not trigger duplicate detection, policy evaluation, or thermal
+		// field validation.
+		if id != "" {
+			if _, assigned := assignedIDs[id]; assigned {
+				continue
+			}
+		}
 		if id != "" && device != "" {
 			if _, duplicate := seenIDs[id]; duplicate {
 				return nil, fmt.Errorf("duplicate disk ID %q in devs.ini", id)

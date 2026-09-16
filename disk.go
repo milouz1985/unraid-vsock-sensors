@@ -315,31 +315,43 @@ func (c *diskCollector) buildDiskRuntimeSnapshot(
 
 	// When reusing fallback readings, observations is nil. Preserve the
 	// collection error from the previous snapshot so diagnostics continue
-	// to show why a disk is unavailable between direct SMART polls.
-	var previousErrors map[string]error
+	// to show why a disk is unavailable between direct SMART polls. The error
+	// is only preserved when the hardware identity (device, transport,
+	// rotational) is unchanged, matching the criteria used by
+	// reuseFallbackReadings() to reject stale measurements.
+	var previousByDisk map[string]diskRuntimeDisk
 	if reused {
 		c.mu.RLock()
-		previousErrors = make(map[string]error, len(c.lastSuccessfulSnapshot))
+		previousByDisk = make(map[string]diskRuntimeDisk, len(c.lastSuccessfulSnapshot))
 		for _, runtime := range c.lastSuccessfulSnapshot {
-			previousErrors[runtime.disk.id] = runtime.collectionError
+			previousByDisk[runtime.disk.id] = runtime
 		}
 		c.mu.RUnlock()
-	}
-
-	collectionErrorsByID := previousErrors
-	if !reused {
-		collectionErrorsByID = make(map[string]error, len(observations))
-		for _, observation := range observations {
-			collectionErrorsByID[observation.disk.id] = observation.err
-		}
 	}
 
 	result := make([]diskRuntimeDisk, 0, len(disks))
 	for _, disk := range disks {
 		reading, hasReading := readingsByID[disk.id]
+		var collectionError error
+		if reused {
+			if previous, exists := previousByDisk[disk.id]; exists {
+				if previous.disk.device == disk.device &&
+					previous.disk.transport == disk.transport &&
+					previous.disk.rotational == disk.rotational {
+					collectionError = previous.collectionError
+				}
+			}
+		} else {
+			for _, observation := range observations {
+				if observation.disk.id == disk.id {
+					collectionError = observation.err
+					break
+				}
+			}
+		}
 		result = append(result, diskRuntimeDisk{
 			disk: disk, reading: reading, hasReading: hasReading,
-			collectionError: collectionErrorsByID[disk.id],
+			collectionError: collectionError,
 			state:           c.state[disk.id], reused: reused,
 		})
 	}
