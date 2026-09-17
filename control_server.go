@@ -35,7 +35,6 @@ import (
 // refresh.
 type controlServer struct {
 	socketPath   string
-	policyFile   string
 	policies     *diskPolicyStore
 	refresh      chan<- struct{}
 	disksINIPath string
@@ -52,7 +51,8 @@ type controlServer struct {
 
 // newControlServer wires the control API to the daemon. refresh is the
 // write-only channel through which the server requests a disk collection;
-// policyFile is the persistent policy store; the *Path fields are the read-only
+// policyFile is the persistent policy store used both for mutations and for
+// management reads; the *Path fields are the read-only
 // inputs used to build the management inventory. The emhttpd heartbeat is not
 // carried over this socket: it is delivered to the collector out of band
 // (SIGUSR2) because it is frequent and carries no data.
@@ -71,7 +71,6 @@ func newControlServer(socketPath string, refresh chan<- struct{}, policyFile str
 	}
 	return &controlServer{
 		socketPath:   socketPath,
-		policyFile:   policyFile,
 		policies:     newDiskPolicyStore(policyFile),
 		refresh:      refresh,
 		disksINIPath: disksINIPath,
@@ -359,7 +358,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 // invalid disk still appears and can be excluded, matching the pre-control
 // `disks list` behavior. It does not depend on the collector's thermal state.
 func (s *controlServer) managementInventory() ([]diskPolicyRow, error) {
-	policies, policyErr := readDiskPolicies(s.policyFile)
+	policies, policyErr := readDiskPolicies(s.policies.path)
 	if policyErr != nil {
 		return nil, policyErr
 	}
