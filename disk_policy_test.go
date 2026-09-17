@@ -3,14 +3,142 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestDiskPolicyProcessHelper(t *testing.T) {
+	action := os.Getenv("UVSS_DISK_POLICY_TEST_ACTION")
+	if action == "" {
+		return
+	}
+	fmt.Fprintln(os.Stdout, "ready")
+	path := os.Getenv("UVSS_DISK_POLICY_TEST_PATH")
+	switch action {
+	case "set":
+		if err := writeDiskPolicy(path, os.Getenv("UVSS_DISK_POLICY_TEST_ID"), diskPolicyInclude); err != nil {
+			t.Fatal(err)
+		}
+	case "reset":
+		if err := resetDiskPolicies(path); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("invalid helper action %q", action)
+	}
+}
+
+func startDiskPolicyProcess(t *testing.T, path, action, id string) <-chan error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDiskPolicyProcessHelper$")
+	command.Env = append(os.Environ(),
+		"UVSS_DISK_POLICY_TEST_ACTION="+action,
+		"UVSS_DISK_POLICY_TEST_PATH="+path,
+		"UVSS_DISK_POLICY_TEST_ID="+id)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ready := bufio.NewScanner(stdout)
+	if !ready.Scan() || ready.Text() != "ready" {
+		t.Fatalf("policy helper did not start: %q, %v; stderr: %s", ready.Text(), ready.Err(), stderr.String())
+	}
+	done := make(chan error, 1)
+	go func() {
+		for ready.Scan() {
+		}
+		scanErr := ready.Err()
+		waitErr := command.Wait()
+		if scanErr != nil {
+			done <- fmt.Errorf("read policy helper output: %w", scanErr)
+			return
+		}
+		if waitErr != nil {
+			done <- fmt.Errorf("policy helper %s %s: %w; stderr: %s", action, id, waitErr, stderr.String())
+			return
+		}
+		done <- nil
+	}()
+	return done
+}
+
+func requirePolicyProcessBlocked(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		t.Fatalf("policy command finished while another process held the lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestDiskPolicySetSerializesAcrossProcesses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disk-policies.json")
+	lock, err := lockDiskPolicies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	first := startDiskPolicyProcess(t, path, "set", "disk1")
+	second := startDiskPolicyProcess(t, path, "set", "disk2")
+	requirePolicyProcessBlocked(t, first)
+	requirePolicyProcessBlocked(t, second)
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	policies, err := readDiskPolicies(path)
+	if err != nil || len(policies) != 2 || policies["disk1"] != diskPolicyInclude || policies["disk2"] != diskPolicyInclude {
+		t.Fatalf("concurrent policies = %#v, %v", policies, err)
+	}
+}
+
+func TestDiskPolicyResetSharesSetLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disk-policies.json")
+	if err := writeDiskPolicy(path, "disk1", diskPolicyInclude); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := lockDiskPolicies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	reset := startDiskPolicyProcess(t, path, "reset", "")
+	requirePolicyProcessBlocked(t, reset)
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-reset; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("policy file after reset: %v; want absent", err)
+	}
+	if _, err := os.Stat(path + ".lock"); err != nil {
+		t.Fatalf("persistent policy lock after reset: %v", err)
+	}
+}
 
 func addFakeBlockDevice(t *testing.T, blockRoot, device string, usb bool) {
 	t.Helper()

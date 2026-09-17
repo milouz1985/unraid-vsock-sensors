@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -148,6 +150,12 @@ func writeDiskPolicy(path, id string, policy diskPolicy) error {
 	if policy != diskPolicyAuto && policy != diskPolicyInclude && policy != diskPolicyExclude {
 		return fmt.Errorf("invalid disk policy %q", policy)
 	}
+	lock, err := lockDiskPolicies(path)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
 	policies, err := readDiskPolicies(path)
 	if err != nil {
 		return err
@@ -184,6 +192,12 @@ func writeDiskPolicy(path, id string, policy diskPolicy) error {
 }
 
 func resetDiskPolicies(path string) error {
+	lock, err := lockDiskPolicies(path)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -199,4 +213,28 @@ func resetDiskPolicies(path string) error {
 		return nil
 	}
 	return err
+}
+
+func lockDiskPolicies(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, fmt.Errorf("create disk policy directory: %w", err)
+	}
+	// Keep this file across resets: removing it could let another process lock
+	// a new inode while a writer still holds the old one.
+	lockPath := path + ".lock"
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("open disk policy lock %q: %w", lockPath, err)
+	}
+	for {
+		err = unix.Flock(int(file.Fd()), unix.LOCK_EX)
+		if err != unix.EINTR {
+			break
+		}
+	}
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("lock disk policies %q: %w", lockPath, err)
+	}
+	return file, nil
 }

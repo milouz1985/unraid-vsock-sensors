@@ -211,6 +211,10 @@ Les overrides sont conservés dans :
 /boot/config/plugins/unraid-vsock-sensors/disk-policies.json
 ```
 
+Les commandes `set` et `reset` utilisent le même fichier `.lock` voisin pour
+éviter de perdre une modification simultanée. Ce fichier reste présent après
+une réinitialisation.
+
 Un fichier invalide est ignoré par le daemon : tous les disques repassent alors
 en `Auto` et l'interface propose sa réinitialisation.
 
