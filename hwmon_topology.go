@@ -82,7 +82,7 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 		id := "disk:" + disk.ID
 		diskSamples = append(diskSamples, hwmonSample{
 			sensor: hwmonSensor{
-				id: id, label: sanitizeHWMonLabel(fmt.Sprintf("%s (%s)", disk.Name, disk.Device), id),
+				id: id, label: sanitizeHWMonLabel(disk.Name, id),
 			},
 			temperature:  temperature,
 			omitOnCommit: disk.Unavailable,

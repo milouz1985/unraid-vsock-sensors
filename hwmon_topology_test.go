@@ -258,7 +258,7 @@ func TestMakeHWMonSamplesSanitizesDynamicLabels(t *testing.T) {
 	}
 
 	disks, hbas := makeHWMonSamples(state)
-	if got, want := disks[0].sensor.label, "disk one (sda)"; got != want {
+	if got, want := disks[0].sensor.label, "disk one"; got != want {
 		t.Fatalf("disk label = %q, want %q", got, want)
 	}
 	if got := hbas[0].sensor.label; len(got) != maxHWMonLabelSize || strings.ContainsAny(got, "\t\r\n\x00") {
@@ -272,5 +272,30 @@ func TestMakeHWMonSamplesSanitizesDynamicLabels(t *testing.T) {
 	encoded.Reset()
 	if err := encodeHWMonSamples(&encoded, "hba", "configure", hbas); err != nil {
 		t.Fatalf("encode sanitized HBA sample: %v", err)
+	}
+}
+
+func TestMakeHWMonSamplesKeepsDiskLabelStableAcrossDeviceChanges(t *testing.T) {
+	first, _ := makeHWMonSamples(sensors.Response{Disks: []sensors.Disk{{
+		ID:     "stable-id",
+		Name:   "disk1",
+		Device: "sdb",
+		Temp:   31,
+	}}})
+	second, _ := makeHWMonSamples(sensors.Response{Disks: []sensors.Disk{{
+		ID:     "stable-id",
+		Name:   "disk1",
+		Device: "sdc",
+		Temp:   32,
+	}}})
+
+	if got, want := first[0].sensor.label, "disk1"; got != want {
+		t.Fatalf("first label = %q, want %q", got, want)
+	}
+	if got, want := second[0].sensor.label, "disk1"; got != want {
+		t.Fatalf("second label = %q, want %q", got, want)
+	}
+	if !sameHWMonConfiguration(sensorsFromSamples(first), second) {
+		t.Fatal("a device-name change for the same stable disk must not reconfigure hwmon")
 	}
 }
