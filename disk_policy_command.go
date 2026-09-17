@@ -171,7 +171,7 @@ func diskPolicyRefreshCommand(args []string, output io.Writer) error {
 }
 
 func controlSocketFlag(fs *flag.FlagSet) *string {
-	return fs.String("control-socket", defaultControlSocketPath, "daemon control Unix socket")
+	return fs.String("control-socket", defaultControlSocketPathFromEnv(), "daemon control Unix socket")
 }
 
 func diskPolicyListCommand(args []string, output io.Writer) error {

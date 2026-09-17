@@ -144,7 +144,7 @@ func TestParseStorCLIMetadataVariants(t *testing.T) {
 	if got, want := metadata[0], (hbaMetadata{id: "sas:56c92bf0002e6705", model: "SAS3008", pciAddress: "0000:06:10.0"}); got != want {
 		t.Fatalf("Basics metadata = %#v, want %#v", got, want)
 	}
-	if got, want := metadata[4], (hbaMetadata{id: "serial:serial-4", model: "OEM HBA"}); got != want {
+	if got, want := metadata[4], (hbaMetadata{id: "serial:SERIAL-4", model: "OEM HBA"}); got != want {
 		t.Fatalf("flat metadata = %#v, want %#v", got, want)
 	}
 }

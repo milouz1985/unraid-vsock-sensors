@@ -77,7 +77,8 @@ Commands:
   version                  Print the build version
 
 The disks commands are clients of the daemon control socket; the daemon must be
-running. All commands accept --control-socket to override the socket path.
+running. UVSS_CONTROL_SOCKET overrides the default socket path; an explicit
+--control-socket flag takes precedence.
 
 Serve options:
   --port PORT               AF_VSOCK port (default: 990)
@@ -85,7 +86,7 @@ Serve options:
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
   --hba-interval DURATION   Delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)
   --syslog                  Send service logs to the system logger
-  --control-socket PATH     Local control Unix socket (default: /run/unraid-vsock-sensors/control.sock)
+  --control-socket PATH     Local control Unix socket (default: UVSS_CONTROL_SOCKET or /run/unraid-vsock-sensors/control.sock)
 
 Hwmon options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
@@ -109,7 +110,7 @@ func serve(args []string) error {
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
 	hbaIntervalValue := fs.Duration("hba-interval", 0, "delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)")
 	useSyslog := fs.Bool("syslog", false, "send service logs to syslog")
-	controlSocket := fs.String("control-socket", defaultControlSocketPath, "local control Unix socket")
+	controlSocket := fs.String("control-socket", defaultControlSocketPathFromEnv(), "local control Unix socket")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

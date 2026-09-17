@@ -19,9 +19,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// defaultControlSocketPath is the local control socket owned by the daemon.
-const defaultControlSocketPath = "/run/unraid-vsock-sensors/control.sock"
-
 // controlServer is the daemon's local control API. It listens on a Unix socket
 // and is the channel for explicit control operations: management inventory
 // (GET /v1/disks), disk policies (GET/PUT/DELETE), and manual refresh

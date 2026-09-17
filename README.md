@@ -36,7 +36,9 @@ utilisent CID `3` et port `990`.
 
 ### Socket de contrôle
 
-Le daemon `serve` écoute une API HTTP locale sur une socket Unix, par défaut :
+Le daemon `serve` écoute une API HTTP locale sur une socket Unix. Le chemin est
+résolu dans cet ordre : `--control-socket`, `UVSS_CONTROL_SOCKET`, puis la
+valeur par défaut :
 
 ```text
 /run/unraid-vsock-sensors/control.sock
@@ -263,8 +265,10 @@ Un fichier invalide est ignoré par le daemon : tous les disques repassent alors
 en `Auto` et l'interface signale l'erreur avec un bouton de réinitialisation.
 
 Les sous-commandes `disks list`, `disks set`, `disks validate`, `disks reset`
-et `disks refresh` sont des clients de la socket de contrôle ; elles acceptent
-`--control-socket` pour cibler une autre socket (tests). `disks set` prend
+et `disks refresh` sont des clients de la socket de contrôle. Le daemon, la CLI
+et la WebUI utilisent tous `UVSS_CONTROL_SOCKET` comme override commun ;
+`--control-socket` reste disponible comme override explicite, principalement
+pour les tests et le diagnostic. `disks set` prend
 `--id-base64` (ID stable encodé en base64) et `--policy`. Le heartbeat
 `poll_attributes` n'est pas une commande `disks` : il est délivré en `SIGUSR2`.
 

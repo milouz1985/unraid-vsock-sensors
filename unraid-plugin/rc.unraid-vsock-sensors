@@ -5,7 +5,6 @@ binary="${UVSS_RC_BINARY:-/usr/local/sbin/$name}"
 config="${UVSS_RC_CONFIG:-/boot/config/plugins/$name/$name.cfg}"
 pid_file="${UVSS_RC_PID_FILE:-/var/run/$name.pid}"
 lock_file="${UVSS_RC_LOCK_FILE:-/var/run/$name.lock}"
-control_socket="${UVSS_RC_CONTROL_SOCKET:-/run/unraid-vsock-sensors/control.sock}"
 # A TERM may first wait for an in-flight VSOCK write (up to 3s) and then for
 # the control server graceful shutdown (up to 7s). Keep a small margin before
 # the final SIGKILL without making normal stops any slower.
@@ -114,8 +113,7 @@ start() {
     (
         close_inherited_fds
         exec nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" \
-            --hba-backend "$HBA_BACKEND" "${interval_args[@]}" \
-            --control-socket "$control_socket" --syslog
+            --hba-backend "$HBA_BACKEND" "${interval_args[@]}" --syslog
     ) </dev/null >/dev/null 2>&1 &
     pid=$!
     if ! printf '%s\n' "$pid" > "$pid_file"; then
@@ -190,7 +188,7 @@ refresh() {
         echo "$name is not running"
         return 0
     fi
-    if ! "$binary" disks refresh --control-socket "$control_socket"; then
+    if ! "$binary" disks refresh; then
         echo "Unable to refresh $name" >&2
         return 1
     fi

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestDiskPolicyStoreSerializesConcurrentSets(t *testing.T) {
@@ -231,6 +232,29 @@ func TestFlashCannotReenterThroughUnassignedInventory(t *testing.T) {
 	disks, err = readDiskInventory(environment.paths.disksINI, environment.paths.devsINI, selector)
 	if err != nil || len(disks) != 0 {
 		t.Fatalf("flash inventory without assigned ID = %#v, %v; want no disks", disks, err)
+	}
+}
+
+func TestDiskPolicyCommandUsesSharedControlSocketOverride(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	refresh := make(chan struct{}, 1)
+	server := startControlServerForTest(t, environment, refresh)
+
+	// The shared environment override is the default for every CLI control
+	// command, so service.sh and the rc script do not need their own socket
+	// variables or to repeat --control-socket on every invocation.
+	t.Setenv(controlSocketEnvironmentVariable, server.socketPath)
+	var output bytes.Buffer
+	if err := diskPolicyCommand([]string{"list"}, &output); err != nil {
+		t.Fatalf("list via %s: %v", controlSocketEnvironmentVariable, err)
+	}
+
+	// An explicit flag remains the highest-priority escape hatch for tests and
+	// diagnostics, even when the environment points somewhere else.
+	t.Setenv(controlSocketEnvironmentVariable, filepath.Join(t.TempDir(), "wrong.sock"))
+	output.Reset()
+	if err := diskPolicyCommand([]string{"list", "--control-socket", server.socketPath}, &output); err != nil {
+		t.Fatalf("list via explicit --control-socket: %v", err)
 	}
 }
 

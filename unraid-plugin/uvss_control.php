@@ -17,6 +17,8 @@
 // bare "null") is a protocol error, never silently coerced to an empty list.
 
 function uvss_control_socket_path(): string {
+    // Shared with the daemon and CLI; --control-socket remains their explicit
+    // higher-priority override for tests and diagnostics.
     return getenv('UVSS_CONTROL_SOCKET') ?: '/run/unraid-vsock-sensors/control.sock';
 }
 

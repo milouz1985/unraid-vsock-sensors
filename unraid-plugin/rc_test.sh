@@ -20,11 +20,11 @@ daemon_pid=""
 # line shape as the real process: <binary> serve ...
 fake_daemon_path="$test_dir/serve"
 cat > "$fake_daemon_path" <<'EOF'
-if [[ -n "${UVSS_RC_TEST_CONTROL_SOCKET:-}" ]]; then
+if [[ -n "${UVSS_CONTROL_SOCKET:-}" ]]; then
     # Represent the daemon control socket in the background so the readiness
     # check does not depend on Python start time.
     (
-        python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" "$UVSS_RC_TEST_CONTROL_SOCKET" 2>/dev/null || true
+        python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" "$UVSS_CONTROL_SOCKET" 2>/dev/null || true
     ) &
 fi
 if [[ "${UVSS_RC_TEST_IGNORE_TERM:-0}" == 1 ]]; then
@@ -83,7 +83,7 @@ cleanup() {
         UVSS_RC_CONFIG="$test_dir/missing.cfg" \
         UVSS_RC_PID_FILE="$pid_file" \
         UVSS_RC_LOCK_FILE="$lock_file" \
-        UVSS_RC_CONTROL_SOCKET="$control_socket" \
+        UVSS_CONTROL_SOCKET="$control_socket" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
         "$rc_script" stop >/dev/null 2>&1 || true
     if [[ -n "$foreign_pid" ]]; then
@@ -111,13 +111,12 @@ run_rc() {
         UVSS_RC_CONFIG="$config_path" \
         UVSS_RC_PID_FILE="$pid_file" \
         UVSS_RC_LOCK_FILE="$lock_file" \
-        UVSS_RC_CONTROL_SOCKET="$control_socket" \
+        UVSS_CONTROL_SOCKET="$control_socket" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
         UVSS_RC_TEST_REFRESH_FILE="$refresh_file" \
         UVSS_RC_TEST_POLL_FILE="$poll_file" \
         UVSS_RC_TEST_STARTED_FILE="$started_file" \
         UVSS_RC_TEST_IGNORE_TERM="$ignore_term" \
-        UVSS_RC_TEST_CONTROL_SOCKET="$control_socket" \
         "$rc_script" "$action"
 }
 
@@ -189,7 +188,7 @@ if ! grep -Fxq -- "--syslog" "$args_file"; then
     exit 1
 fi
 mapfile -t daemon_args < "$args_file"
-    expected_args=(serve --port 990 --hba-mode enabled --hba-backend mpt3ctl --control-socket "$control_socket" --syslog)
+    expected_args=(serve --port 990 --hba-mode enabled --hba-backend mpt3ctl --syslog)
 if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
     echo "unexpected daemon arguments: ${daemon_args[*]}" >&2
     exit 1
@@ -241,7 +240,7 @@ for backend in mpt3ctl storcli; do
     printf 'HBA_BACKEND="%s"\n' "$backend" > "$test_dir/hba.cfg"
     run_rc start 0 "$test_dir/hba.cfg" >/dev/null
     mapfile -t daemon_args < "$args_file"
-        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --control-socket "$control_socket" --syslog)
+        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --syslog)
     if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
         echo "$backend default forced an interval: ${daemon_args[*]}" >&2
         exit 1
@@ -251,7 +250,7 @@ for backend in mpt3ctl storcli; do
     printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="1m"\n' "$backend" > "$test_dir/hba.cfg"
     run_rc start 0 "$test_dir/hba.cfg" >/dev/null
     mapfile -t daemon_args < "$args_file"
-        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval 1m --control-socket "$control_socket" --syslog)
+        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval 1m --syslog)
     if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
         echo "$backend explicit interval was lost: ${daemon_args[*]}" >&2
         exit 1
@@ -268,7 +267,7 @@ for backend in mpt3ctl storcli; do
     printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="%s"\n' "$backend" "$backend_interval" > "$test_dir/hba.cfg"
     run_rc start 0 "$test_dir/hba.cfg" >/dev/null
     mapfile -t daemon_args < "$args_file"
-        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval "$backend_interval" --control-socket "$control_socket" --syslog)
+        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval "$backend_interval" --syslog)
     if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
         echo "$backend rejected its own interval: ${daemon_args[*]}" >&2
         exit 1

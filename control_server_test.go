@@ -16,6 +16,19 @@ import (
 	"time"
 )
 
+func TestDefaultControlSocketPathFromEnvironment(t *testing.T) {
+	t.Setenv(controlSocketEnvironmentVariable, "")
+	if got := defaultControlSocketPathFromEnv(); got != defaultControlSocketPath {
+		t.Fatalf("empty %s = %q, want %q", controlSocketEnvironmentVariable, got, defaultControlSocketPath)
+	}
+
+	custom := filepath.Join(t.TempDir(), "control.sock")
+	t.Setenv(controlSocketEnvironmentVariable, custom)
+	if got := defaultControlSocketPathFromEnv(); got != custom {
+		t.Fatalf("%s override = %q, want %q", controlSocketEnvironmentVariable, got, custom)
+	}
+}
+
 // controlTestServer couples a running control server with its socket path so
 // assertions can drive the API and clean the socket up afterwards.
 type controlTestServer struct {
