@@ -154,7 +154,7 @@ func TestPublisherCachesChangedLabel(t *testing.T) {
 	if cached.Disks == nil || len(cached.Disks.Sensors) != 1 {
 		t.Fatalf("cached disks = %#v, want one sensor", cached.Disks)
 	}
-	if got, want := cached.Disks.Sensors[0].Label, "disk1 (sdb)"; got != want {
+	if got, want := cached.Disks.Sensors[0].Label, "disk1"; got != want {
 		t.Fatalf("cached label = %q, want %q", got, want)
 	}
 }

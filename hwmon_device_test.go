@@ -26,9 +26,9 @@ func TestMakeHWMonSamples(t *testing.T) {
 	disks, hbas := makeHWMonSamples(state)
 	wantDisks := []hwmonSample{
 		hwmonTestSample("disk:group:hdd", "HDD maximum", 38),
-		hwmonTestSample("disk:1", "disk1 (sda)", 34),
-		hwmonTestSample("disk:2", "disk2 (sdb)", 38),
-		hwmonTestSample("disk:3", "cache (nvme0n1)", 45),
+		hwmonTestSample("disk:1", "disk1", 34),
+		hwmonTestSample("disk:2", "disk2", 38),
+		hwmonTestSample("disk:3", "cache", 45),
 	}
 	wantHBAs := []hwmonSample{hwmonTestSample("hba:sas:1234", "SAS3008 (0000:06:10.0)", 51)}
 	if !reflect.DeepEqual(disks, wantDisks) {
@@ -51,13 +51,13 @@ func TestMakeHWMonSamplesFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 			temperature:  hwmonFailsafeTemp,
 			omitOnCommit: true,
 		},
-		hwmonTestSample("disk:1", "disk1 (sda)", 35),
+		hwmonTestSample("disk:1", "disk1", 35),
 		{
-			sensor:       hwmonSensor{id: "disk:2", label: "disk2 (sdb)"},
+			sensor:       hwmonSensor{id: "disk:2", label: "disk2"},
 			temperature:  hwmonFailsafeTemp,
 			omitOnCommit: true,
 		},
-		hwmonTestSample("disk:3", "cache (nvme0n1)", 46),
+		hwmonTestSample("disk:3", "cache", 46),
 	}
 	if got := makeDiskSamples(state); !reflect.DeepEqual(got, want) {
 		t.Fatalf("disk readings = %#v, want explicit disk and group failsafe %#v", got, want)
@@ -93,8 +93,8 @@ func TestPublisherOmitsUnavailableDiskAndItsGroupFromCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "sample\tdisk:1\t35000\tdisk1 (sda)\n" +
-		"sample\tdisk:3\t46000\tcache (nvme0n1)\n" +
+	want := "sample\tdisk:1\t35000\tdisk1\n" +
+		"sample\tdisk:3\t46000\tcache\n" +
 		"commit\tdisk\n"
 	if got := string(data); got != want {
 		t.Fatalf("update = %q, want failed disk and group omitted %q", got, want)
@@ -118,8 +118,8 @@ func TestPublisherConfiguresUnavailableDiskAndItsGroupAtFailsafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "sample\tdisk:group:hdd\t100000\tHDD maximum\n" +
-		"sample\tdisk:1\t35000\tdisk1 (sda)\n" +
-		"sample\tdisk:2\t100000\tdisk2 (sdb)\n" +
+		"sample\tdisk:1\t35000\tdisk1\n" +
+		"sample\tdisk:2\t100000\tdisk2\n" +
 		"configure\tdisk\n"
 	if got := string(data); got != want {
 		t.Fatalf("configuration = %q, want failed disk and group at failsafe %q", got, want)
