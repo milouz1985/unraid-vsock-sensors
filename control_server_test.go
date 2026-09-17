@@ -556,8 +556,24 @@ func TestControlTimeoutBudgets(t *testing.T) {
 	if controlClientMutationTimeout != 5*time.Second {
 		t.Fatalf("mutation timeout = %s; want 5s", controlClientMutationTimeout)
 	}
+	if controlServerReadTimeout != 5*time.Second {
+		t.Fatalf("server read timeout = %s; want 5s", controlServerReadTimeout)
+	}
 	if controlServerShutdownTimeout <= controlClientMutationTimeout {
 		t.Fatalf("shutdown timeout %s must exceed mutation timeout %s", controlServerShutdownTimeout, controlClientMutationTimeout)
+	}
+}
+
+func TestControlHTTPServerTimeouts(t *testing.T) {
+	server := (&controlServer{}).newHTTPServer()
+	if server.ReadTimeout != controlServerReadTimeout {
+		t.Fatalf("ReadTimeout = %s; want %s", server.ReadTimeout, controlServerReadTimeout)
+	}
+	if server.ReadHeaderTimeout != controlServerReadTimeout {
+		t.Fatalf("ReadHeaderTimeout = %s; want %s", server.ReadHeaderTimeout, controlServerReadTimeout)
+	}
+	if server.WriteTimeout != 0 {
+		t.Fatalf("WriteTimeout = %s; want 0 so policy persistence is not cut off", server.WriteTimeout)
 	}
 }
 

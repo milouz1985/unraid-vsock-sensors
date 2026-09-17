@@ -129,6 +129,13 @@ const (
 	// detect another live instance on a preexisting socket.
 	controlServerProbeTimeout = 500 * time.Millisecond
 
+	// controlServerReadTimeout bounds reading a complete local HTTP request,
+	// including its body. Bodies are tiny and additionally size-limited, so a
+	// client that cannot finish a request within this window is considered
+	// stalled. Do not set WriteTimeout here: an accepted policy mutation may
+	// legitimately spend most of its budget waiting for /boot to sync.
+	controlServerReadTimeout = 5 * time.Second
+
 	// controlServerShutdownTimeout must be longer than the client mutation
 	// budget. Shutdown waits for an accepted policy mutation to finish its
 	// fsync/rename before the daemon closes the listener and exits.
@@ -180,7 +187,8 @@ func (s *controlServer) newHTTPServer() *http.Server {
 	s.registerRoutes(mux)
 	return &http.Server{
 		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       controlServerReadTimeout,
+		ReadHeaderTimeout: controlServerReadTimeout,
 	}
 }
 
