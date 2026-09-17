@@ -185,7 +185,7 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 	}
 
 	var entries []diskInventoryEntry
-	seenIDs := make(map[string]struct{})
+	seenIDIndexes := make(map[string]int)
 	for _, section := range config.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
@@ -201,12 +201,6 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 			if _, assigned := assignedIDs[id]; assigned {
 				continue
 			}
-		}
-		if id != "" && device != "" {
-			if _, duplicate := seenIDs[id]; duplicate {
-				return nil, fmt.Errorf("duplicate disk ID %q in devs.ini", id)
-			}
-			seenIDs[id] = struct{}{}
 		}
 		if _, flash := flashIDs[id]; flash {
 			continue
@@ -236,6 +230,24 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 			disk: disk,
 			bus:  bus, policy: policy, included: included,
 		}
+		if id == "" {
+			entries = append(entries, entry)
+			continue
+		}
+		if index, duplicate := seenIDIndexes[id]; duplicate {
+			previous := entries[index]
+			switch {
+			case previous.disk.device != "" && entry.disk.device != "":
+				return nil, fmt.Errorf("duplicate disk ID %q in devs.ini", id)
+			case previous.disk.device == "" && entry.disk.device != "":
+				// devs.ini may transiently retain an incomplete copy of a disk.
+				// Prefer the entry that has a usable device instead of letting file
+				// order decide which representation of the stable ID survives.
+				entries[index] = entry
+			}
+			continue
+		}
+		seenIDIndexes[id] = len(entries)
 		entries = append(entries, entry)
 	}
 	return entries, nil

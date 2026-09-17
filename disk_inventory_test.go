@@ -316,6 +316,86 @@ func TestDiskInventoryRejectsDuplicateIDsWithinSource(t *testing.T) {
 	}
 }
 
+func TestDiskInventoryPrefersUsableUnassignedDuplicateInManagementView(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data string
+	}{
+		{
+			name: "incomplete then usable",
+			data: "[stale]\nid=serial\ndevice=../invalid\nrotational=0\nspundown=0\n" +
+				"[current]\nid=serial\ndevice=sdb\nrotational=1\nspundown=0\n",
+		},
+		{
+			name: "usable then incomplete",
+			data: "[current]\nid=serial\ndevice=sdb\nrotational=1\nspundown=0\n" +
+				"[stale]\nid=serial\ndevice=../invalid\nrotational=0\nspundown=0\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			environment := newDiskTestEnvironment(t, "30")
+			environment.write(t, environment.paths.devsINI, test.data)
+
+			entries, err := readDiskInventoryEntries(environment.paths.disksINI, environment.paths.devsINI,
+				&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 2 { // flash plus the single unassigned stable ID
+				t.Fatalf("management inventory = %#v; want flash plus one unassigned entry", entries)
+			}
+			var got *diskInventoryEntry
+			for i := range entries {
+				if entries[i].disk.id == "serial" {
+					got = &entries[i]
+					break
+				}
+			}
+			if got == nil || got.disk.name != "current" || got.disk.device != "sdb" {
+				t.Fatalf("stable ID serial = %#v; want usable current entry", got)
+			}
+		})
+	}
+}
+
+func TestDiskInventoryCollapsesIncompleteUnassignedDuplicates(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	environment.write(t, environment.paths.devsINI,
+		"[stale1]\nid=serial\ndevice=../invalid\nrotational=0\nspundown=0\n"+
+			"[stale2]\nid=serial\ndevice=../../invalid\nrotational=1\nspundown=1\n")
+
+	entries, err := readDiskInventoryEntries(environment.paths.disksINI, environment.paths.devsINI,
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.disk.id == "serial" {
+			count++
+			if entry.disk.name != "stale1" || entry.disk.device != "" {
+				t.Fatalf("collapsed incomplete entry = %#v; want first diagnostic entry", entry)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("management inventory = %#v; want one entry for stable ID serial", entries)
+	}
+}
+
+func TestDiskInventoryManagementViewRejectsTwoUsableUnassignedDuplicates(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	environment.write(t, environment.paths.devsINI,
+		"[dev1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\n"+
+			"[dev2]\nid=serial\ndevice=sdb\nrotational=1\nspundown=0\n")
+
+	entries, err := readDiskInventoryEntries(environment.paths.disksINI, environment.paths.devsINI,
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, false)
+	if entries != nil || err == nil || !strings.Contains(err.Error(), `duplicate disk ID "serial" in devs.ini`) {
+		t.Fatalf("management inventory = %#v, %v; want duplicate stable ID error", entries, err)
+	}
+}
+
 func TestDiskInventoryKeepsDistinctIDsWithinEachSource(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI,
