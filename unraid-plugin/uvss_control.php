@@ -68,7 +68,7 @@ function uvss_control_request(
         } else {
             $error = "control request failed ($error)";
         }
-        return ['ok' => false, 'kind' => $errno === CURLE_OPERATION_TIMEDOUT ? 'transport' : 'daemon',
+        return ['ok' => false, 'kind' => 'transport',
             'http_status' => $status, 'error' => $error];
     }
     if ($status < 200 || $status >= 300) {

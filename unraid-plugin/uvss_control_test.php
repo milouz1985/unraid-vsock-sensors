@@ -16,6 +16,16 @@ $expected = function_exists('curl_init')
     : (($result['ok'] ?? false) === false && ($result['kind'] ?? '') === 'transport');
 check('daemon stopped returns a structured error', $expected);
 
+if (function_exists('curl_init')) {
+    $staleSocket = sys_get_temp_dir() . '/uvss-stale-' . getmypid() . '.sock';
+    file_put_contents($staleSocket, 'not a socket');
+    putenv('UVSS_CONTROL_SOCKET=' . $staleSocket);
+    $result = uvss_control_list_disks();
+    check('existing unusable socket path is a transport error',
+        ($result['ok'] ?? true) === false && ($result['kind'] ?? '') === 'transport');
+    @unlink($staleSocket);
+}
+
 if (function_exists('curl_init') && function_exists('stream_socket_server') && function_exists('pcntl_fork')) {
     $dir = sys_get_temp_dir() . '/uvss-ctl-test-' . getmypid();
     mkdir($dir, 0700, true);

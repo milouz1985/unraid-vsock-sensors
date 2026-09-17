@@ -174,7 +174,7 @@ func TestBuildDiagnosticDisksUsesStableIDs(t *testing.T) {
 			"two": {thermalState: diskThermalStandby},
 		},
 	}
-	runtime := collector.buildDiskRuntimeSnapshot(disks, readings, observations, false)
+	runtime := collector.buildDiskRuntimeSnapshot(disks, readings, observations)
 	items := buildDiagnosticDisks(runtime)
 	if items[0].Temperature == nil || *items[0].Temperature != 30 || items[0].Source != "direct SMART fallback" {
 		t.Fatalf("disk one received the wrong reading: %+v", items[0])

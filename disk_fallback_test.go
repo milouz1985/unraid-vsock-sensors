@@ -556,17 +556,22 @@ func TestFallbackReuseUsesStableIDAcrossTransportChange(t *testing.T) {
 	}
 	collector.state = diskStateTracker{"first": {}, "second": {}}
 
-	readings := collector.reuseFallbackReadings([]unraidDisk{
+	runtime := collector.reuseFallbackSnapshot([]unraidDisk{
 		{id: "second", device: "nvme1n1", transport: "nvme"},
 		{id: "first", device: "nvme0n1", transport: "nvme"},
 	})
+	readings := diskReadingsFromRuntime(runtime)
 	if len(readings) != 2 || readings[0].ID != "second" || readings[0].Temp != 52 || readings[1].ID != "first" || readings[1].Temp != 41 {
 		t.Fatalf("readings were associated by position: %#v", readings)
 	}
+	if !runtime[0].reused || !runtime[1].reused {
+		t.Fatalf("retained snapshot not marked reused: %#v", runtime)
+	}
 
-	readings = collector.reuseFallbackReadings([]unraidDisk{{
+	runtime = collector.reuseFallbackSnapshot([]unraidDisk{{
 		id: "first", device: "nvme0n1", transport: "ata",
 	}})
+	readings = diskReadingsFromRuntime(runtime)
 	if len(readings) != 1 || readings[0].Unavailable || readings[0].Temp != 41 || readings[0].Transport != "ata" {
 		t.Fatalf("stable ID lost its retained measurement after transport change: %#v", readings)
 	}
@@ -574,9 +579,10 @@ func TestFallbackReuseUsesStableIDAcrossTransportChange(t *testing.T) {
 		t.Fatal("stable ID lost its thermal history after transport change")
 	}
 
-	readings = collector.reuseFallbackReadings([]unraidDisk{{
+	runtime = collector.reuseFallbackSnapshot([]unraidDisk{{
 		id: "replacement", device: "nvme0n1", transport: "nvme",
 	}})
+	readings = diskReadingsFromRuntime(runtime)
 	if len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
 		t.Fatalf("different ID reused an old measurement: %#v", readings)
 	}
@@ -600,9 +606,10 @@ func TestFallbackReuseDoesNotReviveSnapshotAfterCollectionFailure(t *testing.T) 
 	}
 	collector.state = diskStateTracker{"first": wantState}
 
-	readings := collector.reuseFallbackReadings([]unraidDisk{{
+	runtime := collector.reuseFallbackSnapshot([]unraidDisk{{
 		id: "first", device: "nvme0n1", transport: "nvme",
 	}})
+	readings := diskReadingsFromRuntime(runtime)
 	if len(readings) != 1 || !readings[0].Unavailable || readings[0].Temp != 0 {
 		t.Fatalf("failed collection revived the previous snapshot: %#v", readings)
 	}
