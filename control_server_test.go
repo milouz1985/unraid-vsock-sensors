@@ -470,7 +470,132 @@ func TestControlClientDaemonNotRunning(t *testing.T) {
 	}
 }
 
-func TestControlServerShutdownDuringRequest(t *testing.T) {
+func TestControlTimeoutBudgets(t *testing.T) {
+	if controlClientMutationTimeout != 5*time.Second {
+		t.Fatalf("mutation timeout = %s; want 5s", controlClientMutationTimeout)
+	}
+	if controlServerShutdownTimeout <= controlClientMutationTimeout {
+		t.Fatalf("shutdown timeout %s must exceed mutation timeout %s", controlServerShutdownTimeout, controlClientMutationTimeout)
+	}
+}
+
+// TestControlServerShutdownWaitsForMutation verifies that graceful shutdown
+// does not abort an accepted policy mutation. The wrapper deliberately blocks
+// the request before the real handler runs, then stop is called while the
+// request is in flight. Both PUT and DELETE must be allowed to complete before
+// stop returns.
+func TestControlServerShutdownWaitsForMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{
+			name:   "set policy",
+			method: http.MethodPut,
+			path:   "/v1/disk-policy",
+			body:   diskPolicySetRequest{ID: "serial", Policy: diskPolicyInclude},
+		},
+		{
+			name:   "reset policies",
+			method: http.MethodDelete,
+			path:   "/v1/disk-policies",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			environment := newDiskTestEnvironment(t, "30")
+			refresh := make(chan struct{}, 1)
+			socketPath := filepath.Join(t.TempDir(), "control.sock")
+			server := newControlServer(socketPath, refresh, environment.paths.policyFile,
+				environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
+
+			listener, err := net.Listen("unix", socketPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unixListener, ok := listener.(*net.UnixListener)
+			if !ok {
+				listener.Close()
+				t.Fatalf("listener = %T; want *net.UnixListener", listener)
+			}
+			unixListener.SetUnlinkOnClose(true)
+			server.listener = listener
+
+			mux := http.NewServeMux()
+			server.registerRoutes(mux)
+			requestStarted := make(chan struct{})
+			releaseRequest := make(chan struct{})
+			var releaseOnce sync.Once
+			var stopOnce sync.Once
+			stopServer := func() { stopOnce.Do(server.stop) }
+			server.server = &http.Server{
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == tt.method && r.URL.Path == tt.path {
+						close(requestStarted)
+						<-releaseRequest
+					}
+					mux.ServeHTTP(w, r)
+				}),
+			}
+			go func() {
+				_ = server.server.Serve(listener)
+			}()
+			t.Cleanup(func() {
+				releaseOnce.Do(func() { close(releaseRequest) })
+				stopServer()
+			})
+
+			client := controlClientForTest(t, socketPath)
+			requestDone := make(chan error, 1)
+			go func() {
+				status, _, err := client.doWithTimeout(tt.method, tt.path, tt.body, controlClientMutationTimeout)
+				if err == nil && status != http.StatusOK {
+					err = fmt.Errorf("status = %d; want 200", status)
+				}
+				requestDone <- err
+			}()
+
+			select {
+			case <-requestStarted:
+			case <-time.After(time.Second):
+				t.Fatal("mutation request did not reach the server")
+			}
+
+			stopDone := make(chan struct{})
+			go func() {
+				stopServer()
+				close(stopDone)
+			}()
+
+			select {
+			case <-stopDone:
+				t.Fatal("shutdown returned while a mutation was still in flight")
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			releaseOnce.Do(func() { close(releaseRequest) })
+			select {
+			case err := <-requestDone:
+				if err != nil {
+					t.Fatalf("mutation failed during shutdown: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("mutation did not complete after release")
+			}
+			select {
+			case <-stopDone:
+			case <-time.After(time.Second):
+				t.Fatal("shutdown did not complete after mutation finished")
+			}
+			waitForSocketGone(t, socketPath)
+		})
+	}
+}
+
+func TestControlServerRequestAfterShutdownFails(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	environment.write(t, environment.paths.disksINI,
 		"[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")

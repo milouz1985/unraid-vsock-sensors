@@ -122,9 +122,16 @@ func isUnixConnRefused(err error) bool {
 	return errors.As(err, &errno) && errno == unix.ECONNREFUSED
 }
 
-// controlServerProbeTimeout bounds the startup dial in prepareSocket used to
-// detect another live instance on a preexisting socket.
-const controlServerProbeTimeout = 500 * time.Millisecond
+const (
+	// controlServerProbeTimeout bounds the startup dial in prepareSocket used to
+	// detect another live instance on a preexisting socket.
+	controlServerProbeTimeout = 500 * time.Millisecond
+
+	// controlServerShutdownTimeout must be longer than the client mutation
+	// budget. Shutdown waits for an accepted policy mutation to finish its
+	// fsync/rename before the daemon closes the listener and exits.
+	controlServerShutdownTimeout = 7 * time.Second
+)
 
 // start begins serving on the control socket. net.Listen is the synchronous
 // startup validation: once it returns, the socket exists and is bound. Serve
@@ -188,7 +195,7 @@ func (s *controlServer) stop() {
 	if s.server == nil {
 		return
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), controlServerShutdownTimeout)
 	defer cancel()
 	_ = s.server.Shutdown(shutdownCtx)
 	if s.listener != nil {

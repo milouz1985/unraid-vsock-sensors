@@ -26,10 +26,10 @@ import (
 const controlClientRuntimeTimeout = 2 * time.Second
 
 // controlClientMutationTimeout bounds requests that persist to disk (a policy
-// set/reset performs a Sync and a Rename on /boot). It is deliberately larger
-// than the runtime timeout so the client does not report a timeout while the
-// write is still completing.
-const controlClientMutationTimeout = 15 * time.Second
+// set/reset performs a Sync and a Rename on /boot). Five seconds leaves ample
+// headroom for a normally tiny policy write while still surfacing an unusually
+// slow or wedged /boot instead of hiding it behind a long client wait.
+const controlClientMutationTimeout = 5 * time.Second
 
 var (
 	// errDaemonNotRunning is returned when the control socket is absent or its

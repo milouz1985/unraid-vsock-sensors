@@ -99,7 +99,7 @@ pipe_reader_pid=$!
 
 run_rc() {
     local action="$1" ignore_term="${2:-0}" config_path="${3:-$test_dir/missing.cfg}"
-    timeout 10 env \
+    timeout 20 env \
         UVSS_RC_BINARY="$fake_binary_path" \
         UVSS_RC_CONFIG="$config_path" \
         UVSS_RC_PID_FILE="$pid_file" \
@@ -317,7 +317,8 @@ echo "Checking SIGKILL fallback for a daemon ignoring SIGTERM"
 run_rc start 1 >/dev/null
 read -r stubborn_pid < "$pid_file"
 stop_output="$(run_rc stop 2>&1)"
-if [[ "$stop_output" != *"sending SIGKILL"* ||
+if [[ "$stop_output" != *"did not stop within 12 seconds"* ||
+      "$stop_output" != *"sending SIGKILL"* ||
       "$stop_output" != *"stopped after SIGKILL"* ]]; then
     echo "stop did not report the SIGKILL fallback: $stop_output" >&2
     exit 1

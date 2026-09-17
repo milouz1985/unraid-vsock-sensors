@@ -6,6 +6,11 @@ config="${UVSS_RC_CONFIG:-/boot/config/plugins/$name/$name.cfg}"
 pid_file="${UVSS_RC_PID_FILE:-/var/run/$name.pid}"
 lock_file="${UVSS_RC_LOCK_FILE:-/var/run/$name.lock}"
 control_socket="${UVSS_RC_CONTROL_SOCKET:-/run/unraid-vsock-sensors/control.sock}"
+# A TERM may first wait for an in-flight VSOCK write (up to 3s) and then for
+# the control server graceful shutdown (up to 7s). Keep a small margin before
+# the final SIGKILL without making normal stops any slower.
+stop_grace_polls=120
+stop_poll_interval=0.1
 
 close_inherited_fds() {
     local descriptor path
@@ -126,7 +131,7 @@ start() {
 }
 
 stop() {
-    local pid running
+    local pid running i
     if ! pid="$(running_pid)"; then
         rm -f "$pid_file"
         echo "$name is not running"
@@ -134,13 +139,13 @@ stop() {
     fi
 
     kill -TERM "$pid" 2>/dev/null || true
-    for _ in {1..50}; do
+    for ((i = 0; i < stop_grace_polls; i++)); do
         if ! running="$(running_pid)" || [[ "$running" != "$pid" ]]; then
             rm -f "$pid_file"
             echo "$name stopped"
             return 0
         fi
-        sleep 0.1
+        sleep "$stop_poll_interval"
     done
 
     # Revalidate the PID before sending an uncatchable signal: the daemon may
@@ -151,7 +156,7 @@ stop() {
         return 0
     fi
 
-    echo "$name did not stop within 5 seconds; sending SIGKILL" >&2
+    echo "$name did not stop within 12 seconds; sending SIGKILL" >&2
     kill -KILL "$pid" 2>/dev/null || true
     for _ in {1..10}; do
         if ! running="$(running_pid)" || [[ "$running" != "$pid" ]]; then
