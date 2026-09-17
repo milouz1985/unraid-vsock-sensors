@@ -470,6 +470,45 @@ func TestControlClientDaemonNotRunning(t *testing.T) {
 	}
 }
 
+func TestControlClientMutationTimeoutReportsUncertainOutcome(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "control.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})}
+	serverDone := make(chan struct{})
+	go func() {
+		_ = server.Serve(listener)
+		close(serverDone)
+	}()
+	t.Cleanup(func() {
+		_ = server.Close()
+		<-serverDone
+	})
+
+	client := newControlClient(socketPath)
+	_, _, err = client.doMutationWithTimeout(http.MethodPut, "/v1/disk-policy",
+		diskPolicySetRequest{ID: "serial", Policy: diskPolicyInclude}, 100*time.Millisecond)
+	if err == nil || !errors.Is(err, errControlTimeout) {
+		t.Fatalf("mutation error = %v; want errControlTimeout", err)
+	}
+	if !strings.Contains(err.Error(), "the mutation may still have been applied") {
+		t.Fatalf("mutation timeout = %q; missing uncertain-outcome warning", err)
+	}
+
+	_, _, err = client.doWithTimeout(http.MethodGet, "/v1/disks", nil, 100*time.Millisecond)
+	if err == nil || !errors.Is(err, errControlTimeout) {
+		t.Fatalf("runtime error = %v; want errControlTimeout", err)
+	}
+	if strings.Contains(err.Error(), "mutation may still have been applied") {
+		t.Fatalf("runtime timeout unexpectedly carries mutation warning: %q", err)
+	}
+}
+
 func TestControlTimeoutBudgets(t *testing.T) {
 	if controlClientMutationTimeout != 5*time.Second {
 		t.Fatalf("mutation timeout = %s; want 5s", controlClientMutationTimeout)

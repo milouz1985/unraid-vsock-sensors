@@ -64,6 +64,18 @@ func (c *controlClient) do(method, path string, body any) (int, []byte, error) {
 	return c.doWithTimeout(method, path, body, controlClientRuntimeTimeout)
 }
 
+func (c *controlClient) doMutation(method, path string, body any) (int, []byte, error) {
+	return c.doMutationWithTimeout(method, path, body, controlClientMutationTimeout)
+}
+
+func (c *controlClient) doMutationWithTimeout(method, path string, body any, timeout time.Duration) (int, []byte, error) {
+	status, responseBody, err := c.doWithTimeout(method, path, body, timeout)
+	if err != nil && errors.Is(err, errControlTimeout) {
+		return 0, nil, fmt.Errorf("%w; the mutation may still have been applied", err)
+	}
+	return status, responseBody, err
+}
+
 func (c *controlClient) doWithTimeout(method, path string, body any, timeout time.Duration) (int, []byte, error) {
 	var reader io.Reader
 	if body != nil {
@@ -201,7 +213,7 @@ func diskPolicySetCommand(args []string, output io.Writer) error {
 		return errors.New("invalid base64 disk ID")
 	}
 	client := newControlClient(*socketPath)
-	status, body, err := client.doWithTimeout(http.MethodPut, "/v1/disk-policy", diskPolicySetRequest{ID: string(idBytes), Policy: diskPolicy(*policy)}, controlClientMutationTimeout)
+	status, body, err := client.doMutation(http.MethodPut, "/v1/disk-policy", diskPolicySetRequest{ID: string(idBytes), Policy: diskPolicy(*policy)})
 	if err != nil {
 		return err
 	}
@@ -245,7 +257,7 @@ func diskPolicyResetCommand(args []string, output io.Writer) error {
 		return errors.New("disks reset does not accept positional arguments")
 	}
 	client := newControlClient(*socketPath)
-	status, body, err := client.doWithTimeout(http.MethodDelete, "/v1/disk-policies", nil, controlClientMutationTimeout)
+	status, body, err := client.doMutation(http.MethodDelete, "/v1/disk-policies", nil)
 	if err != nil {
 		return err
 	}
