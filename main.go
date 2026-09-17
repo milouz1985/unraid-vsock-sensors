@@ -175,18 +175,11 @@ func serve(args []string) error {
 	// disk policy mutations and manual refresh.
 	control := newControlServer(*controlSocket, refreshRequests,
 		defaultDiskPolicyFile, defaultDisksINIPath, defaultDevsINIPath, defaultSysBlockRoot)
-	// If the control plane dies unexpectedly, stop the whole daemon rather than
-	// keeping a process that claims to expose a control API it no longer has.
-	// The triggering error is retained so serve can surface it instead of
-	// exiting as if it had received a clean shutdown.
-	controlFatal := make(chan error, 1)
-	if err := control.start(func(err error) {
-		select {
-		case controlFatal <- err:
-		default:
-		}
-		stop()
-	}); err != nil {
+	// Initial control-socket setup is required for a valid daemon start. After
+	// that, the control server supervises and recreates its own listener so a
+	// local control-plane failure cannot stop thermal collection or VSOCK
+	// publication.
+	if err := control.start(); err != nil {
 		return err
 	}
 	// Shut the control plane down synchronously so the Unix socket is removed
@@ -197,11 +190,5 @@ func serve(args []string) error {
 	go disks.run(ctx, refreshRequests)
 	go hbas.run(ctx)
 	go runDiagnostics(ctx, defaultDiagnosticsPath, service, disks, hbas)
-	publishErr := publishSnapshots(ctx, uint32(*port), disks, hbas, service)
-	select {
-	case err := <-controlFatal:
-		return fmt.Errorf("control server failed: %w", err)
-	default:
-		return publishErr
-	}
+	return publishSnapshots(ctx, uint32(*port), disks, hbas, service)
 }

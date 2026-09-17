@@ -36,7 +36,7 @@ func startControlServerForTest(t *testing.T, environment *diskTestEnvironment, r
 	}
 	server := newControlServer(socketPath[0], refresh, environment.paths.policyFile,
 		environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
-	if err := server.start(nil); err != nil {
+	if err := server.start(); err != nil {
 		t.Fatalf("start control server: %v", err)
 	}
 	testServer := &controlTestServer{
@@ -120,7 +120,7 @@ func TestControlServerRefusesNonSocketPath(t *testing.T) {
 	}
 	server := newControlServer(socketPath, refresh, environment.paths.policyFile,
 		environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
-	if err := server.start(nil); err == nil || !strings.Contains(err.Error(), "not a socket") {
+	if err := server.start(); err == nil || !strings.Contains(err.Error(), "not a socket") {
 		t.Fatalf("start over a regular file = %v; want a refusal", err)
 	}
 	if _, err := os.Stat(socketPath); err != nil {
@@ -216,7 +216,7 @@ func TestControlServerRefusesActiveInstance(t *testing.T) {
 
 	server := newControlServer(socketPath, refresh, environment.paths.policyFile,
 		environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
-	if err := server.start(nil); err == nil || !strings.Contains(err.Error(), "already listening") {
+	if err := server.start(); err == nil || !strings.Contains(err.Error(), "already listening") {
 		t.Fatalf("start over an active instance = %v; want a refusal", err)
 	}
 }
@@ -705,30 +705,91 @@ func TestControlServerEarlyRefreshNotLost(t *testing.T) {
 	}
 }
 
-// TestControlServerServeErrorStopsDaemon verifies that an unexpected
-// http.Server.Serve error invokes the onFatal hook so the daemon can stop
-// itself rather than keep running with a dead control plane.
-func TestControlServerServeErrorStopsDaemon(t *testing.T) {
+// TestControlServerServeErrorRecovers verifies that losing the active listener
+// does not terminate control supervision. The socket is recreated and becomes
+// usable again without any daemon-level fatal callback.
+func TestControlServerServeErrorRecovers(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
+	environment.write(t, environment.paths.disksINI,
+		"[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 	refresh := make(chan struct{}, 1)
-	server := newControlServer(filepath.Join(t.TempDir(), "control.sock"), refresh,
-		environment.paths.policyFile, environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
+	server := startControlServerForTest(t, environment, refresh)
+	client := controlClientForTest(t, server.socketPath)
 
-	fatal := make(chan error, 1)
-	if err := server.start(func(err error) { fatal <- err }); err != nil {
-		t.Fatalf("start control server: %v", err)
+	server.server.mu.Lock()
+	listener := server.server.listener
+	done := server.server.done
+	server.server.mu.Unlock()
+	if listener == nil || done == nil {
+		t.Fatal("control server has no active listener/supervision channel")
 	}
-	// Force Serve to return an error: close the listener out from under it.
-	server.listener.Close()
-	// The supervision goroutine must invoke onFatal with the serve error.
-	select {
-	case serveErr := <-fatal:
-		if serveErr == nil {
-			t.Fatal("onFatal invoked with a nil error")
+	if err := listener.Close(); err != nil {
+		t.Fatalf("force listener failure: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		status, _, err := client.do(http.MethodGet, "/v1/disks", nil)
+		if err == nil && status == http.StatusOK {
+			select {
+			case <-done:
+				t.Fatal("control supervision stopped after listener recovery")
+			default:
+			}
+			return
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("onFatal was not invoked after a Serve error")
+		time.Sleep(25 * time.Millisecond)
 	}
+	t.Fatal("control API did not recover after its listener was closed")
+}
+
+// TestControlServerRecoverySurvivesTemporaryBindFailure verifies that a
+// recovery error is retried rather than turning a control-plane problem into a
+// daemon shutdown. A regular file temporarily occupies the socket path, then
+// removal of that obstacle lets the API recover.
+func TestControlServerRecoverySurvivesTemporaryBindFailure(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	environment.write(t, environment.paths.disksINI,
+		"[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
+	refresh := make(chan struct{}, 1)
+	server := startControlServerForTest(t, environment, refresh)
+	client := controlClientForTest(t, server.socketPath)
+
+	server.server.mu.Lock()
+	listener := server.server.listener
+	done := server.server.done
+	server.server.mu.Unlock()
+	if listener == nil || done == nil {
+		t.Fatal("control server has no active listener/supervision channel")
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("force listener failure: %v", err)
+	}
+	waitForSocketGone(t, server.socketPath)
+	if err := os.WriteFile(server.socketPath, []byte("temporary obstacle"), 0600); err != nil {
+		t.Fatalf("occupy socket path: %v", err)
+	}
+
+	// Let at least one recovery attempt hit the temporary regular file.
+	time.Sleep(controlServerRetryInitial + 100*time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("control supervision stopped after a recoverable bind failure")
+	default:
+	}
+	if err := os.Remove(server.socketPath); err != nil {
+		t.Fatalf("remove temporary obstacle: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		status, _, err := client.do(http.MethodGet, "/v1/disks", nil)
+		if err == nil && status == http.StatusOK {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("control API did not recover after the bind obstacle was removed")
 }
 
 // TestControlServerStaleSocketCrashRecovery simulates a crash leaving a socket
@@ -761,7 +822,7 @@ func TestControlServerStaleSocketCrashRecovery(t *testing.T) {
 	server := newControlServer(socketPath, refresh, environment.paths.policyFile,
 		environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
 	t.Cleanup(server.stop)
-	if err := server.start(nil); err != nil {
+	if err := server.start(); err != nil {
 		t.Fatalf("second instance start: %v", err)
 	}
 	client := controlClientForTest(t, socketPath)

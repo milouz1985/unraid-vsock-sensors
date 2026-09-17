@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -43,8 +44,12 @@ type controlServer struct {
 	devsINIPath  string
 	sysBlockRoot string
 
+	mu       sync.Mutex
 	server   *http.Server
 	listener net.Listener
+	cancel   context.CancelFunc
+	done     chan struct{}
+	stopping bool
 }
 
 // newControlServer wires the control API to the daemon. refresh is the
@@ -131,78 +136,180 @@ const (
 	// budget. Shutdown waits for an accepted policy mutation to finish its
 	// fsync/rename before the daemon closes the listener and exits.
 	controlServerShutdownTimeout = 7 * time.Second
+
+	// Unexpected listener failures are control-plane failures, not thermal
+	// data-plane failures. Retry quickly once, then back off to avoid log/bind
+	// loops if the socket path remains unavailable.
+	controlServerRetryInitial = 250 * time.Millisecond
+	controlServerRetryMax     = 5 * time.Second
 )
 
-// start begins serving on the control socket. net.Listen is the synchronous
-// startup validation: once it returns, the socket exists and is bound. Serve
-// runs in a single supervision goroutine; if it returns an unexpected error
-// other than http.ErrServerClosed, onFatal is invoked so the daemon does not
-// keep running with a dead control plane. onFatal is not invoked for a clean
-// shutdown.
-func (s *controlServer) start(onFatal func(error)) error {
+// openListener creates and configures the control socket. Startup and recovery
+// use the same path so a transient listener failure does not leave the daemon
+// without a control plane permanently.
+func (s *controlServer) openListener() (net.Listener, error) {
 	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0755); err != nil {
-		return fmt.Errorf("create control socket directory: %w", err)
+		return nil, fmt.Errorf("create control socket directory: %w", err)
 	}
 	if err := s.prepareSocket(); err != nil {
-		return err
+		return nil, err
 	}
 	listener, err := net.Listen("unix", s.socketPath)
 	if err != nil {
-		return fmt.Errorf("listen on control socket %q: %w", s.socketPath, err)
+		return nil, fmt.Errorf("listen on control socket %q: %w", s.socketPath, err)
 	}
 	// net.UnixListener removes the socket pathname when it is closed, so a
-	// clean shutdown removes the file. A hard crash may leave a stale socket,
-	// which prepareSocket detects on the next start via ECONNREFUSED.
+	// clean shutdown or a failed Serve attempt removes the path before retry.
 	unixListener, ok := listener.(*net.UnixListener)
 	if !ok {
 		listener.Close()
-		return fmt.Errorf("control socket listener is not a Unix listener: %T", listener)
+		return nil, fmt.Errorf("control socket listener is not a Unix listener: %T", listener)
 	}
 	unixListener.SetUnlinkOnClose(true)
-	s.listener = listener
 	if err := os.Chmod(s.socketPath, 0660); err != nil {
 		listener.Close()
-		return fmt.Errorf("chmod control socket %q: %w", s.socketPath, err)
+		return nil, fmt.Errorf("chmod control socket %q: %w", s.socketPath, err)
 	}
+	return listener, nil
+}
+
+func (s *controlServer) newHTTPServer() *http.Server {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
-	s.server = &http.Server{
+	return &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	go func() {
-		serveErr := s.server.Serve(listener)
-		if errors.Is(serveErr, http.ErrServerClosed) {
-			return
-		}
-		log.Printf("control server: %v", serveErr)
-		// Surface the failure to the rest of the daemon so it does not keep
-		// running while the control plane is dead.
-		if onFatal != nil {
-			onFatal(serveErr)
-		}
-	}()
+}
+
+// activate installs the listener/server pair currently owned by the serve
+// loop. stop marks the server as stopping under the same mutex, which prevents
+// a recovery attempt from publishing a new listener after shutdown has begun.
+func (s *controlServer) activate(server *http.Server, listener net.Listener) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping {
+		return false
+	}
+	s.server = server
+	s.listener = listener
+	return true
+}
+
+func (s *controlServer) deactivate(server *http.Server, listener net.Listener) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.server == server {
+		s.server = nil
+	}
+	if s.listener == listener {
+		s.listener = nil
+	}
+}
+
+// start begins serving on the control socket. The initial bind is synchronous:
+// a bad path, an active second instance or a permission error still prevents
+// daemon startup. Once startup succeeded, an unexpected Serve failure is
+// isolated to the control plane. The serve loop recreates the socket with
+// bounded backoff while disk/HBA collection and VSOCK publication keep running.
+func (s *controlServer) start() error {
+	listener, err := s.openListener()
+	if err != nil {
+		return err
+	}
+	server := s.newHTTPServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	s.mu.Lock()
+	s.server = server
+	s.listener = listener
+	s.cancel = cancel
+	s.done = done
+	s.stopping = false
+	s.mu.Unlock()
+
+	go s.serveLoop(ctx, server, listener, done)
 	log.Printf("control API listening on %s", s.socketPath)
 	return nil
 }
 
-// stop shuts the server down synchronously and closes the listener. With
-// UnlinkOnClose set, the listener's Close removes the socket file, so the
-// path is clean before stop returns. It is idempotent: a concurrent listener
-// close (for example by the supervision goroutine after a fatal Serve error)
-// is tolerated.
-func (s *controlServer) stop() {
-	if s.server == nil {
-		return
+func (s *controlServer) serveLoop(ctx context.Context, server *http.Server, listener net.Listener, done chan<- struct{}) {
+	defer close(done)
+	retryDelay := controlServerRetryInitial
+
+	for {
+		serveErr := server.Serve(listener)
+		s.deactivate(server, listener)
+		_ = listener.Close()
+		if ctx.Err() != nil {
+			return
+		}
+
+		log.Printf("control server stopped unexpectedly: %v; retrying", serveErr)
+		for {
+			timer := time.NewTimer(retryDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+
+			nextListener, err := s.openListener()
+			if err != nil {
+				log.Printf("control server recovery failed: %v; retrying in %s", err, nextControlServerRetryDelay(retryDelay))
+				retryDelay = nextControlServerRetryDelay(retryDelay)
+				continue
+			}
+			nextServer := s.newHTTPServer()
+			if !s.activate(nextServer, nextListener) {
+				_ = nextListener.Close()
+				return
+			}
+			server = nextServer
+			listener = nextListener
+			retryDelay = controlServerRetryInitial
+			log.Printf("control API recovered on %s", s.socketPath)
+			break
+		}
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), controlServerShutdownTimeout)
-	defer cancel()
-	_ = s.server.Shutdown(shutdownCtx)
-	if s.listener != nil {
-		// A concurrent close may already have closed the listener; that error
-		// is expected and safe to ignore.
-		_ = s.listener.Close()
-		s.listener = nil
+}
+
+func nextControlServerRetryDelay(current time.Duration) time.Duration {
+	next := current * 2
+	if next > controlServerRetryMax {
+		return controlServerRetryMax
+	}
+	return next
+}
+
+// stop shuts the current server down synchronously and prevents the recovery
+// loop from creating another listener. With UnlinkOnClose set, closing the
+// listener removes the socket file. Calls are idempotent and wait for the
+// supervision goroutine to exit before returning.
+func (s *controlServer) stop() {
+	s.mu.Lock()
+	s.stopping = true
+	cancel := s.cancel
+	server := s.server
+	listener := s.listener
+	done := s.done
+	s.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if server != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), controlServerShutdownTimeout)
+		_ = server.Shutdown(shutdownCtx)
+		shutdownCancel()
+	}
+	if listener != nil {
+		_ = listener.Close()
+	}
+	if done != nil {
+		<-done
 	}
 }
 
