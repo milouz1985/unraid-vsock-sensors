@@ -61,18 +61,23 @@ func usage() {
   %[1]s disks set --id-base64 ID --policy {auto|include|exclude}
   %[1]s disks validate [options]
   %[1]s disks reset [options]
+  %[1]s disks refresh
   %[1]s diagnostics
   %[1]s version
 
 Commands:
-  serve                     Push sensor data to the Proxmox host over AF_VSOCK
-  hwmon                     Publish fixed storage and HBA hwmon inventories
-  disks list                Show disk identity, physical bus and policy as JSON
-  disks set                 Save a policy by stable Unraid disk ID
-  disks validate            Check the disk policy file
-  disks reset               Remove all disk policy overrides
-  diagnostics               Print the daemon's read-only runtime state as JSON
-  version                   Print the build version
+  serve                    Push sensor data to the Proxmox host over AF_VSOCK
+  hwmon                    Publish fixed storage and HBA hwmon inventories
+  disks list               Show disk identity, physical bus and policy as JSON
+  disks set                Save a policy by stable Unraid disk ID
+  disks validate           Check the disk policy file
+  disks reset              Remove all disk policy overrides
+  disks refresh            Request a disk collection refresh from the daemon
+  diagnostics              Print the daemon's read-only runtime state as JSON
+  version                  Print the build version
+
+The disks commands are clients of the daemon control socket; the daemon must be
+running. All commands accept --control-socket to override the socket path.
 
 Serve options:
   --port PORT               AF_VSOCK port (default: 990)
@@ -80,6 +85,7 @@ Serve options:
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
   --hba-interval DURATION   Delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)
   --syslog                  Send service logs to the system logger
+  --control-socket PATH     Local control Unix socket (default: /run/unraid-vsock-sensors/control.sock)
 
 Hwmon options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
@@ -103,6 +109,7 @@ func serve(args []string) error {
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
 	hbaIntervalValue := fs.Duration("hba-interval", 0, "delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)")
 	useSyslog := fs.Bool("syslog", false, "send service logs to syslog")
+	controlSocket := fs.String("control-socket", defaultControlSocketPath, "local control Unix socket")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -143,34 +150,58 @@ func serve(args []string) error {
 	log.Printf("starting unraid-vsock-sensors v%s; pushing to host VSOCK port %d", version, *port)
 	ctx, stop := signal.NotifyContext(context.Background(), unix.SIGINT, unix.SIGTERM)
 	defer stop()
-	refreshSignals := make(chan os.Signal, 1)
-	pollSignals := make(chan os.Signal, 1)
-	signal.Notify(refreshSignals, unix.SIGUSR1)
-	signal.Notify(pollSignals, unix.SIGUSR2)
-	defer signal.Stop(refreshSignals)
-	defer signal.Stop(pollSignals)
 	refreshRequests := make(chan struct{}, 1)
-	go forwardDiskRefreshSignals(ctx, refreshSignals, pollSignals, refreshRequests, disks)
+	// The emhttpd poll_attributes heartbeat is frequent and carries no data, so
+	// it is delivered out of band (SIGUSR2) instead of spawning a process per
+	// event over the control socket. It records the heartbeat and requests a
+	// disk refresh. Manual refresh stays an explicit control-socket command.
+	pollSignals := make(chan os.Signal, 1)
+	signal.Notify(pollSignals, unix.SIGUSR2)
+	defer signal.Stop(pollSignals)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pollSignals:
+				disks.noteEmhttpPoll()
+				requestDiskRefresh(refreshRequests)
+			}
+		}
+	}()
 	hbas := newConfiguredHBACollector(hbaInterval, hbaMode, hbaBackend)
 	service := newServiceState(uint32(*port))
+	// The control socket is the entry point for explicit control operations:
+	// disk policy mutations and manual refresh.
+	control := newControlServer(*controlSocket, refreshRequests,
+		defaultDiskPolicyFile, defaultDisksINIPath, defaultDevsINIPath, defaultSysBlockRoot)
+	// If the control plane dies unexpectedly, stop the whole daemon rather than
+	// keeping a process that claims to expose a control API it no longer has.
+	// The triggering error is retained so serve can surface it instead of
+	// exiting as if it had received a clean shutdown.
+	controlFatal := make(chan error, 1)
+	if err := control.start(func(err error) {
+		select {
+		case controlFatal <- err:
+		default:
+		}
+		stop()
+	}); err != nil {
+		return err
+	}
+	// Shut the control plane down synchronously so the Unix socket is removed
+	// before serve returns, regardless of how the daemon is being stopped.
+	defer control.stop()
 	// Collection remains independent from publication so a disk or controller
 	// command can never block the VSOCK heartbeat.
 	go disks.run(ctx, refreshRequests)
 	go hbas.run(ctx)
 	go runDiagnostics(ctx, defaultDiagnosticsPath, service, disks, hbas)
-	return publishSnapshots(ctx, uint32(*port), disks, hbas, service)
-}
-
-func forwardDiskRefreshSignals(ctx context.Context, manual, poll <-chan os.Signal, refresh chan<- struct{}, disks *diskCollector) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-manual:
-			requestDiskRefresh(refresh)
-		case <-poll:
-			disks.noteEmhttpPoll()
-			requestDiskRefresh(refresh)
-		}
+	publishErr := publishSnapshots(ctx, uint32(*port), disks, hbas, service)
+	select {
+	case err := <-controlFatal:
+		return fmt.Errorf("control server failed: %w", err)
+	default:
+		return publishErr
 	}
 }

@@ -9,14 +9,46 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/sys/unix"
+	"sync"
 )
 
 const (
 	defaultSysBlockRoot   = "/sys/class/block"
 	defaultDiskPolicyFile = "/boot/config/plugins/unraid-vsock-sensors/disk-policies.json"
 )
+
+// Error sentinels shared by the policy store and the control client. Callers
+// distinguish a bad caller value from a corrupted persisted file with
+// errors.Is instead of parsing error text.
+var (
+	// ErrInvalidDiskID is returned when a policy targets an empty or oversized
+	// stable disk ID.
+	ErrInvalidDiskID = errors.New("invalid disk ID")
+	// ErrInvalidDiskPolicy is returned when a policy value is not auto,
+	// include or exclude.
+	ErrInvalidDiskPolicy = errors.New("invalid disk policy")
+	// ErrInvalidPoliciesFile is returned when the persisted disk-policies.json
+	// file cannot be parsed or holds an inconsistent policy.
+	ErrInvalidPoliciesFile = errors.New("disk policies file is invalid")
+)
+
+// errInvalidPoliciesFile wraps a specific reason so readDiskPolicies can keep
+// a detailed message while remaining matchable with errors.Is.
+type errInvalidPoliciesFile struct {
+	reason string
+}
+
+func (e *errInvalidPoliciesFile) Error() string {
+	return "disk policies file is invalid: " + e.reason
+}
+
+func (e *errInvalidPoliciesFile) Unwrap() error {
+	return ErrInvalidPoliciesFile
+}
+
+func invalidPoliciesFile(reason string) error {
+	return &errInvalidPoliciesFile{reason: reason}
+}
 
 type diskPolicy string
 
@@ -130,33 +162,46 @@ func readDiskPolicies(path string) (map[string]diskPolicy, error) {
 		return nil, err
 	}
 	if err := json.Unmarshal(data, &policies); err != nil {
-		return nil, fmt.Errorf("parse disk policies: %w", err)
+		return nil, invalidPoliciesFile("parse: " + err.Error())
 	}
 	if policies == nil {
-		return nil, errors.New("disk policies must be a JSON object")
+		return nil, invalidPoliciesFile("must be a JSON object")
 	}
 	for id, policy := range policies {
-		if id == "" || len(id) > maxUnraidDiskIDSize || (policy != diskPolicyInclude && policy != diskPolicyExclude) {
-			return nil, fmt.Errorf("invalid disk policy for ID %q", id)
+		if id == "" || len(id) > maxUnraidDiskIDSize {
+			return nil, invalidPoliciesFile(fmt.Sprintf("invalid ID %q", id))
+		}
+		if policy != diskPolicyInclude && policy != diskPolicyExclude {
+			return nil, invalidPoliciesFile(fmt.Sprintf("invalid policy %q for ID %q", policy, id))
 		}
 	}
 	return policies, nil
 }
 
-func writeDiskPolicy(path, id string, policy diskPolicy) error {
+// diskPolicyStore serializes disk policy mutations within the daemon. The
+// daemon is the single writer of the policy file, so no cross-process lock is
+// needed; the mutex only orders concurrent HTTP requests.
+type diskPolicyStore struct {
+	mu   sync.Mutex
+	path string
+}
+
+func newDiskPolicyStore(path string) *diskPolicyStore {
+	return &diskPolicyStore{path: path}
+}
+
+func (s *diskPolicyStore) Set(id string, policy diskPolicy) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if id == "" || len(id) > maxUnraidDiskIDSize {
-		return errors.New("disk ID must contain 1 to 79 bytes")
+		return fmt.Errorf("%w: must contain 1 to %d bytes", ErrInvalidDiskID, maxUnraidDiskIDSize)
 	}
 	if policy != diskPolicyAuto && policy != diskPolicyInclude && policy != diskPolicyExclude {
-		return fmt.Errorf("invalid disk policy %q", policy)
+		return fmt.Errorf("%w %q", ErrInvalidDiskPolicy, policy)
 	}
-	lock, err := lockDiskPolicies(path)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
 
-	policies, err := readDiskPolicies(path)
+	policies, err := readDiskPolicies(s.path)
 	if err != nil {
 		return err
 	}
@@ -165,6 +210,38 @@ func writeDiskPolicy(path, id string, policy diskPolicy) error {
 	} else {
 		policies[id] = policy
 	}
+	return writeDiskPoliciesAtomic(s.path, policies)
+}
+
+func (s *diskPolicyStore) Reset() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	info, err := os.Lstat(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("disk policies path %q is a directory", s.path)
+	}
+	err = os.Remove(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s *diskPolicyStore) Validate() error {
+	_, err := readDiskPolicies(s.path)
+	return err
+}
+
+// writeDiskPoliciesAtomic persists the policy file with a temporary file,
+// flush, sync and rename so a crash never leaves a truncated file.
+func writeDiskPoliciesAtomic(path string, policies map[string]diskPolicy) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -189,52 +266,4 @@ func writeDiskPolicy(path, id string, policy diskPolicy) error {
 		return err
 	}
 	return os.Rename(file.Name(), path)
-}
-
-func resetDiskPolicies(path string) error {
-	lock, err := lockDiskPolicies(path)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if info.IsDir() {
-		return fmt.Errorf("disk policies path %q is a directory", path)
-	}
-	err = os.Remove(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
-}
-
-func lockDiskPolicies(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return nil, fmt.Errorf("create disk policy directory: %w", err)
-	}
-	// Keep this file across resets: removing it could let another process lock
-	// a new inode while a writer still holds the old one.
-	lockPath := path + ".lock"
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("open disk policy lock %q: %w", lockPath, err)
-	}
-	for {
-		err = unix.Flock(int(file.Fd()), unix.LOCK_EX)
-		if err != unix.EINTR {
-			break
-		}
-	}
-	if err != nil {
-		file.Close()
-		return nil, fmt.Errorf("lock disk policies %q: %w", lockPath, err)
-	}
-	return file, nil
 }

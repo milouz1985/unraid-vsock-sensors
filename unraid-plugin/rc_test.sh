@@ -1,47 +1,82 @@
 #!/bin/bash
 set -euo pipefail
 
-# The rc script starts this file as a stand-in daemon during the test. Preserve
-# its path as argv[0] so running_pid() recognizes it after exec.
-if [[ "${1:-}" == "serve" ]]; then
-    if [[ -n "${UVSS_RC_TEST_ARGS_FILE:-}" ]]; then
-        printf '%s\n' "$@" > "$UVSS_RC_TEST_ARGS_FILE"
-    fi
-    if [[ -n "${UVSS_RC_TEST_STARTED_FILE:-}" ]]; then
-        printf '%s\n' "$$" >> "$UVSS_RC_TEST_STARTED_FILE"
-    fi
-    exec -a "$0" bash -c '
-        if [[ "${UVSS_RC_TEST_IGNORE_TERM:-0}" == 1 ]]; then
-            trap "" TERM
-        else
-            trap "exit 0" TERM
-        fi
-        trap '\''printf "refresh\n" > "$UVSS_RC_TEST_REFRESH_FILE"'\'' USR1
-        trap '\''printf "poll\n" > "$UVSS_RC_TEST_POLL_FILE"'\'' USR2
-        while :; do
-            sleep 0.1 &
-            wait "$!" || true
-        done
-    '
-fi
-
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 rc_script="$script_dir/rc.unraid-vsock-sensors"
 test_dir="$(mktemp -d)"
 pid_file="$test_dir/service.pid"
 lock_file="$test_dir/service.lock"
+control_socket="$test_dir/control.sock"
 args_file="$test_dir/service.args"
 refresh_file="$test_dir/service.refresh"
 poll_file="$test_dir/service.poll"
 started_file="$test_dir/service.started"
 pipe_reader_pid=""
 foreign_pid=""
+daemon_pid=""
+
+# The rc script matches argv[0] of the running daemon against UVSS_RC_BINARY,
+# so the fake binary must keep a stable path. It behaves like the real UVSS
+# binary for the rc script: on serve it records argv and (like the daemon)
+# creates its control socket; on the control commands it records the operation.
+fake_binary_path="$test_dir/binary"
+cat > "$fake_binary_path" <<EOF
+#!/bin/bash
+case "\${1:-}" in
+    serve)
+        # Record the arguments the rc script launched. This runs before exec -a,
+        # so $@ is the argument list (serve --port ... --syslog) without the
+        # binary path, which is what the test asserts.
+        if [[ -n "\${UVSS_RC_TEST_ARGS_FILE:-}" ]]; then
+            printf '%s\n' "\$@" > "\$UVSS_RC_TEST_ARGS_FILE"
+        fi
+        if [[ -n "\${UVSS_RC_TEST_STARTED_FILE:-}" ]]; then
+            printf '%s\n' "\$\$" >> "\$UVSS_RC_TEST_STARTED_FILE"
+        fi
+        exec -a "\$0" bash -c '
+            if [[ -n "\${UVSS_RC_TEST_CONTROL_SOCKET:-}" ]]; then
+                # Represent the daemon control socket in the background so the
+                # readiness check does not depend on Python start time.
+                (
+                    python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" "\$UVSS_RC_TEST_CONTROL_SOCKET" 2>/dev/null || true
+                ) &
+            fi
+            if [[ "\${UVSS_RC_TEST_IGNORE_TERM:-0}" == 1 ]]; then
+                trap "" TERM
+            else
+                trap "exit 0" TERM
+            fi
+            # The real daemon records the emhttpd heartbeat on SIGUSR2. The fake
+            # daemon mirrors that by writing the poll marker file when signalled.
+            if [[ -n "\${UVSS_RC_TEST_POLL_FILE:-}" ]]; then
+                trap "printf poll > \"\$UVSS_RC_TEST_POLL_FILE\"" USR2
+            fi
+            while :; do
+                sleep 0.1 &
+                wait "\$!" || true
+            done
+        '
+        ;;
+    disks)
+        shift
+        if [[ -n "\${UVSS_RC_TEST_REFRESH_FILE:-}" && "\${1:-}" == "refresh" ]]; then
+            printf 'refresh\n' > "\$UVSS_RC_TEST_REFRESH_FILE"
+        fi
+        exit "\${UVSS_RC_TEST_BINARY_STATUS:-0}"
+        ;;
+    *)
+        exit "\${UVSS_RC_TEST_BINARY_STATUS:-0}"
+        ;;
+esac
+EOF
+chmod 0755 "$fake_binary_path"
 
 cleanup() {
-    UVSS_RC_BINARY="$script_dir/rc_test.sh" \
+    UVSS_RC_BINARY="$fake_binary_path" \
         UVSS_RC_CONFIG="$test_dir/missing.cfg" \
         UVSS_RC_PID_FILE="$pid_file" \
         UVSS_RC_LOCK_FILE="$lock_file" \
+        UVSS_RC_CONTROL_SOCKET="$control_socket" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
         "$rc_script" stop >/dev/null 2>&1 || true
     if [[ -n "$foreign_pid" ]]; then
@@ -65,15 +100,17 @@ pipe_reader_pid=$!
 run_rc() {
     local action="$1" ignore_term="${2:-0}" config_path="${3:-$test_dir/missing.cfg}"
     timeout 10 env \
-        UVSS_RC_BINARY="$script_dir/rc_test.sh" \
+        UVSS_RC_BINARY="$fake_binary_path" \
         UVSS_RC_CONFIG="$config_path" \
         UVSS_RC_PID_FILE="$pid_file" \
         UVSS_RC_LOCK_FILE="$lock_file" \
+        UVSS_RC_CONTROL_SOCKET="$control_socket" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
         UVSS_RC_TEST_REFRESH_FILE="$refresh_file" \
         UVSS_RC_TEST_POLL_FILE="$poll_file" \
         UVSS_RC_TEST_STARTED_FILE="$started_file" \
         UVSS_RC_TEST_IGNORE_TERM="$ignore_term" \
+        UVSS_RC_TEST_CONTROL_SOCKET="$control_socket" \
         "$rc_script" "$action"
 }
 
@@ -115,6 +152,18 @@ if ! kill -0 "$daemon_pid" 2>/dev/null; then
     exit 1
 fi
 
+# Wait explicitly for the fake daemon's control socket to be present before
+# driving the refresh/poll control calls, so the test does not depend on the
+# fake daemon (and its socket creation) being up before the PID check.
+for _ in {1..200}; do
+    [[ -S "$control_socket" ]] && break
+    sleep 0.01
+done
+if [[ ! -S "$control_socket" ]]; then
+    echo "fake daemon did not create its control socket" >&2
+    exit 1
+fi
+
 poll_output="$(run_rc poll)"
 if [[ "$poll_output" != *"SMART poll reported"* ]]; then
     echo "poll did not report success: $poll_output" >&2
@@ -125,7 +174,7 @@ for _ in {1..100}; do
     sleep 0.01
 done
 if [[ ! -e "$poll_file" ]]; then
-    echo "active daemon did not receive SIGUSR2" >&2
+    echo "active daemon did not receive the emhttpd poll SIGUSR2" >&2
     exit 1
 fi
 if ! grep -Fxq -- "--syslog" "$args_file"; then
@@ -133,7 +182,7 @@ if ! grep -Fxq -- "--syslog" "$args_file"; then
     exit 1
 fi
 mapfile -t daemon_args < "$args_file"
-expected_args=(serve --port 990 --hba-mode enabled --hba-backend mpt3ctl --syslog)
+    expected_args=(serve --port 990 --hba-mode enabled --hba-backend mpt3ctl --control-socket "$control_socket" --syslog)
 if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
     echo "unexpected daemon arguments: ${daemon_args[*]}" >&2
     exit 1
@@ -158,7 +207,7 @@ for _ in {1..100}; do
     sleep 0.01
 done
 if [[ ! -e "$refresh_file" ]]; then
-    echo "active daemon did not receive SIGUSR1" >&2
+    echo "active daemon did not receive the refresh control call" >&2
     exit 1
 fi
 if (( refresh_elapsed >= 1000000000 )); then
@@ -171,6 +220,7 @@ if ! kill -0 "$daemon_pid" 2>/dev/null; then
 fi
 
 run_rc stop >/dev/null
+rm -f "$control_socket"
 
 run_rc start 0 "$script_dir/default.cfg" >/dev/null
 mapfile -t daemon_args < "$args_file"
@@ -184,7 +234,7 @@ for backend in mpt3ctl storcli; do
     printf 'HBA_BACKEND="%s"\n' "$backend" > "$test_dir/hba.cfg"
     run_rc start 0 "$test_dir/hba.cfg" >/dev/null
     mapfile -t daemon_args < "$args_file"
-    expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --syslog)
+        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --control-socket "$control_socket" --syslog)
     if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
         echo "$backend default forced an interval: ${daemon_args[*]}" >&2
         exit 1
@@ -194,7 +244,7 @@ for backend in mpt3ctl storcli; do
     printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="1m"\n' "$backend" > "$test_dir/hba.cfg"
     run_rc start 0 "$test_dir/hba.cfg" >/dev/null
     mapfile -t daemon_args < "$args_file"
-    expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval 1m --syslog)
+        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval 1m --control-socket "$control_socket" --syslog)
     if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
         echo "$backend explicit interval was lost: ${daemon_args[*]}" >&2
         exit 1
@@ -211,7 +261,7 @@ for backend in mpt3ctl storcli; do
     printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="%s"\n' "$backend" "$backend_interval" > "$test_dir/hba.cfg"
     run_rc start 0 "$test_dir/hba.cfg" >/dev/null
     mapfile -t daemon_args < "$args_file"
-    expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval "$backend_interval" --syslog)
+        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval "$backend_interval" --control-socket "$control_socket" --syslog)
     if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
         echo "$backend rejected its own interval: ${daemon_args[*]}" >&2
         exit 1
@@ -234,6 +284,10 @@ for backend in mpt3ctl storcli; do
         exit 1
     fi
 done
+
+# The loop above always ends with a failed start (no socket left behind); make
+# sure the control socket is absent so the next refresh check sees no daemon.
+rm -f "$control_socket"
 
 refresh_output="$(run_rc refresh)"
 if [[ "$refresh_output" != *"is not running"* ]]; then

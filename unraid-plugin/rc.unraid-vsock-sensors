@@ -5,6 +5,7 @@ binary="${UVSS_RC_BINARY:-/usr/local/sbin/$name}"
 config="${UVSS_RC_CONFIG:-/boot/config/plugins/$name/$name.cfg}"
 pid_file="${UVSS_RC_PID_FILE:-/var/run/$name.pid}"
 lock_file="${UVSS_RC_LOCK_FILE:-/var/run/$name.lock}"
+control_socket="${UVSS_RC_CONTROL_SOCKET:-/run/unraid-vsock-sensors/control.sock}"
 
 close_inherited_fds() {
     local descriptor path
@@ -105,7 +106,8 @@ start() {
     (
         close_inherited_fds
         exec nohup "$binary" serve --port "$PORT" --hba-mode "$HBA_MODE" \
-            --hba-backend "$HBA_BACKEND" "${interval_args[@]}" --syslog
+            --hba-backend "$HBA_BACKEND" "${interval_args[@]}" \
+            --control-socket "$control_socket" --syslog
     ) </dev/null >/dev/null 2>&1 &
     pid=$!
     if ! printf '%s\n' "$pid" > "$pid_file"; then
@@ -174,13 +176,14 @@ status() {
 }
 
 refresh() {
-    local pid
-    if ! pid="$(running_pid)"; then
+    # A stale Unix socket may remain after a crash without the daemon running,
+    # so check the PID (and argv[0]) rather than the socket's presence.
+    if ! running_pid >/dev/null; then
         echo "$name is not running"
         return 0
     fi
-    if ! kill -USR1 "$pid" 2>/dev/null; then
-        echo "Unable to refresh $name (PID $pid)" >&2
+    if ! "$binary" disks refresh --control-socket "$control_socket"; then
+        echo "Unable to refresh $name" >&2
         return 1
     fi
     echo "$name refresh requested"
@@ -188,12 +191,14 @@ refresh() {
 
 poll() {
     local pid
+    # The emhttpd poll_attributes heartbeat is frequent and carries no data, so
+    # it is delivered to the daemon as SIGUSR2 instead of spawning a process
+    # per event. The handler records the heartbeat and requests a refresh.
     if ! pid="$(running_pid)"; then
-        echo "$name is not running"
         return 0
     fi
     if ! kill -USR2 "$pid" 2>/dev/null; then
-        echo "Unable to notify $name of SMART polling (PID $pid)" >&2
+        echo "Unable to notify $name of SMART polling" >&2
         return 1
     fi
     echo "$name SMART poll reported"

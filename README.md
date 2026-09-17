@@ -34,6 +34,48 @@ Le même binaire fournit :
 Le récepteur vérifie le CID de la VM et la version du protocole. Les exemples
 utilisent CID `3` et port `990`.
 
+### Socket de contrôle
+
+Le daemon `serve` écoute une API HTTP locale sur une socket Unix, par défaut :
+
+```text
+/run/unraid-vsock-sensors/control.sock
+```
+
+Elle est le canal local des opérations explicites de contrôle : la WebUI et la
+CLI y accèdent pour l'inventaire de gestion, les disk policies et le refresh
+manuel. Endpoints :
+
+- `GET /v1/disks` : inventaire de gestion (ID, nom, device, transport, bus,
+  politique, inclusion). Il est lu à la demande depuis le fichier de
+  politiques et les fichiers d'inventaire Unraid, avec `validateIncluded=false`
+  : un disque incomplet ou invalide reste visible afin de pouvoir être exclu.
+  Un fichier `disk-policies.json` invalide est signalé en `422`.
+- `GET /v1/policies` : valide uniquement le fichier de politiques persisté,
+  indépendamment de l'état thermique du collecteur ;
+- `PUT /v1/disk-policy` : enregistre une politique (`auto`/`include`/`exclude`)
+  pour un ID stable, persiste puis déclenche une actualisation ;
+- `DELETE /v1/disk-policies` : supprime toutes les politiques et actualise ;
+- `POST /v1/refresh` : demande une actualisation de la collecte disque.
+
+Le heartbeat emhttpd `poll_attributes` n'est pas transporté par cette socket :
+il est fréquent et ne porte aucune donnée, il est délivré hors bande en
+`SIGUSR2` (hook Unraid → `rc … poll` → `SIGUSR2` → daemon), qui enregistre le
+heartbeat et demande une actualisation.
+
+La socket suit le cycle de vie du daemon. Au démarrage, une socket résiduelle
+n'est supprimée que si un probe `ECONNREFUSED` prouve qu'aucun processus ne
+l'écoute ; un timeout ou une erreur de permission la laisse en place. Le
+`net.UnixListener` est configuré avec `SetUnlinkOnClose` : un shutdown propre
+supprime le pathname lors de la fermeture du listener, tandis qu'un crash
+brutal peut laisser une socket stale que `prepareSocket` détecte au démarrage
+suivant via `ECONNREFUSED`. Le shutdown du control plane est synchrone avant le
+retour de `serve`, et une erreur inattendue de `http.Server.Serve` arrête le
+daemon plutôt que de laisser un processus sans control plane.
+
+La CLI `disks …` est un client de cette socket ; si le daemon n'est pas lancé,
+elle échoue avec `unraid-vsock-sensors daemon is not running`.
+
 ## Installation
 
 ### 1. Ajouter AF_VSOCK à la VM Unraid
@@ -211,12 +253,20 @@ Les overrides sont conservés dans :
 /boot/config/plugins/unraid-vsock-sensors/disk-policies.json
 ```
 
-Les commandes `set` et `reset` utilisent le même fichier `.lock` voisin pour
-éviter de perdre une modification simultanée. Ce fichier reste présent après
-une réinitialisation.
+Le daemon `unraid-vsock-sensors serve` est le seul processus autorisé à écrire
+ce fichier. La CLI et l'interface Web y accèdent via la socket de contrôle
+locale du daemon (voir « Socket de contrôle ») ; les mutations y sont
+sérialisées par un verrou intra-processus et l'écriture reste atomique
+(fichier temporaire + `rename`).
 
 Un fichier invalide est ignoré par le daemon : tous les disques repassent alors
-en `Auto` et l'interface propose sa réinitialisation.
+en `Auto` et l'interface signale l'erreur avec un bouton de réinitialisation.
+
+Les sous-commandes `disks list`, `disks set`, `disks validate`, `disks reset`
+et `disks refresh` sont des clients de la socket de contrôle ; elles acceptent
+`--control-socket` pour cibler une autre socket (tests). `disks set` prend
+`--id-base64` (ID stable encodé en base64) et `--policy`. Le heartbeat
+`poll_attributes` n'est pas une commande `disks` : il est délivré en `SIGUSR2`.
 
 ### Source de température
 
@@ -231,9 +281,12 @@ Le champ `spundown` a toujours la priorité sur `temp` :
 - `spundown=0` + `temp` indisponible/invalide → `waking` si le polling est actif
   et l'état précédent était `standby`, `unavailable` sinon.
 
-L'événement Unraid `poll_attributes` (SIGUSR2) demande une actualisation
-immédiate au daemon. Un watchdog de cinq secondes couvre les événements perdus
-et les changements d'état.
+L'événement Unraid `poll_attributes` envoie `SIGUSR2` au daemon (via
+`rc … poll`), qui enregistre le heartbeat et demande une actualisation
+immédiate. Ce signal est privilégié au passage par la socket de contrôle parce
+que le heartbeat est fréquent et ne porte aucune donnée : il évite de lancer un
+processus par événement. Un watchdog de cinq secondes couvre les événements
+perdus et les changements d'état.
 
 Si aucun événement `poll_attributes` n'arrive pendant
 `poll_attributes + 15 secondes` (45 s avec le réglage 30 s), UVSS interroge
