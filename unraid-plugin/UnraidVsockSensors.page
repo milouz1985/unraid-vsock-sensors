@@ -40,7 +40,7 @@ $pollAttributes = $pollValid
 $pollValid = $pollValid && $pollAttributes !== false;
 
 if (!$pollValid) {
-    $pollDisplay = 'Unavailable (daemon heartbeat interval: 30 seconds)';
+    $pollDisplay = 'Unavailable (daemon keeps the last valid interval, or 30 seconds until the first valid read)';
 } elseif ($pollAttributes === 0) {
     $pollDisplay = 'Disabled';
 } else {
@@ -129,7 +129,7 @@ This read-only value comes from Unraid Disk Settings. While the poll_attributes 
 
 <?php if (!$pollValid): ?>
 <p class="red">
-The Unraid <code>poll_attributes</code> value is missing or invalid. The daemon assumes a 30-second heartbeat interval for stalled-poll detection. It does not modify Unraid settings.
+The Unraid <code>poll_attributes</code> value is missing or invalid. The daemon keeps the last valid heartbeat interval; before the first valid read after startup it uses 30 seconds. It does not modify Unraid settings.
 </p>
 <?php elseif ($pollAttributes === 0): ?>
 <p class="red">

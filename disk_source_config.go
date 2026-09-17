@@ -56,6 +56,19 @@ func readPollAttributes(path string) (time.Duration, error) {
 	return interval, nil
 }
 
+func (c *diskCollector) effectivePollAttributes() (time.Duration, error) {
+	interval, err := readPollAttributes(c.paths.varINI)
+	if err == nil {
+		c.lastValidPollInterval = interval
+		c.haveValidPollInterval = true
+		return interval, nil
+	}
+	if c.haveValidPollInterval {
+		return c.lastValidPollInterval, err
+	}
+	return interval, err
+}
+
 func (c *diskCollector) logPollAttributesChange(interval time.Duration, configErr error) {
 	errorMessage := ""
 	if configErr != nil {
@@ -72,7 +85,7 @@ func (c *diskCollector) logPollAttributesChange(interval time.Duration, configEr
 
 func logPollAttributes(interval time.Duration, configErr error) {
 	if configErr != nil {
-		log.Printf("warning: %v; using %s for stalled-poll detection", configErr, defaultPollAttributes)
+		log.Printf("warning: %v; using %s for stalled-poll detection", configErr, interval)
 		return
 	}
 	if interval == 0 {

@@ -232,6 +232,60 @@ func TestReadPollAttributesAlwaysReadsCurrentContents(t *testing.T) {
 	}
 }
 
+func TestDiskCollectorKeepsLastValidPollAttributes(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "60")
+	collector := environment.collector()
+
+	collector.refresh()
+	status := collector.smartSource.status()
+	if status.pollInterval != 60*time.Second || status.configError != "" {
+		t.Fatalf("initial poll status = %+v", status)
+	}
+
+	environment.write(t, environment.paths.varINI, "poll_attributes=\"invalid\"\n")
+	environment.now = environment.now.Add(time.Second)
+	collector.refresh()
+	status = collector.smartSource.status()
+	if status.pollInterval != 60*time.Second || status.configError == "" {
+		t.Fatalf("status after invalid config = %+v; want retained 60s with error", status)
+	}
+
+	environment.write(t, environment.paths.varINI, "poll_attributes=\"0\"\n")
+	environment.now = environment.now.Add(time.Second)
+	collector.refresh()
+	status = collector.smartSource.status()
+	if status.pollInterval != 0 || status.configError != "" {
+		t.Fatalf("status after valid zero = %+v", status)
+	}
+
+	environment.write(t, environment.paths.varINI, "poll_attributes=\"invalid\"\n")
+	environment.now = environment.now.Add(time.Second)
+	collector.refresh()
+	status = collector.smartSource.status()
+	if status.pollInterval != 0 || status.configError == "" {
+		t.Fatalf("status after invalid config following zero = %+v; want retained zero with error", status)
+	}
+}
+
+func TestDiskCollectorUsesDefaultPollAttributesUntilFirstValidRead(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "invalid")
+	collector := environment.collector()
+
+	collector.refresh()
+	status := collector.smartSource.status()
+	if status.pollInterval != defaultPollAttributes || status.configError == "" {
+		t.Fatalf("cold-start poll status = %+v; want default interval with error", status)
+	}
+
+	environment.write(t, environment.paths.varINI, "poll_attributes=\"45\"\n")
+	environment.now = environment.now.Add(time.Second)
+	collector.refresh()
+	status = collector.smartSource.status()
+	if status.pollInterval != 45*time.Second || status.configError != "" {
+		t.Fatalf("status after first valid read = %+v", status)
+	}
+}
+
 func TestPollAttributesLogMessageWithoutSMARTCache(t *testing.T) {
 	var output bytes.Buffer
 	previous := log.Writer()
@@ -239,8 +293,14 @@ func TestPollAttributesLogMessageWithoutSMARTCache(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(previous) })
 
 	logPollAttributes(defaultPollAttributes, errors.New("invalid config"))
-	if message := output.String(); !strings.Contains(message, "invalid config") || !strings.Contains(message, "stalled-poll detection") {
+	if message := output.String(); !strings.Contains(message, "invalid config") || !strings.Contains(message, "30s") || !strings.Contains(message, "stalled-poll detection") {
 		t.Fatalf("fallback warning = %q", message)
+	}
+
+	output.Reset()
+	logPollAttributes(5*time.Minute, errors.New("invalid config"))
+	if message := output.String(); !strings.Contains(message, "5m0s") {
+		t.Fatalf("last-known-good warning = %q", message)
 	}
 }
 

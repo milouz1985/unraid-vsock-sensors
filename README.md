@@ -335,9 +335,13 @@ retour, aucune wake grace n'est accordée à un disque actif sans mesure valide.
 Une nouvelle mesure valide ou un nouveau standby explicitement observé rétablit
 normalement un état disponible.
 
-`poll_attributes` est lu dans `/var/local/emhttp/var.ini`. Une valeur invalide
-utilise un défaut interne de `30s` pour la détection du polling bloqué, sans
-modifier la configuration Unraid.
+`poll_attributes` est lu dans `/var/local/emhttp/var.ini`. Après une lecture
+valide, une erreur transitoire conserve le dernier intervalle connu pour la
+détection du polling bloqué tout en restant visible dans les diagnostics. Tant
+qu'aucune valeur valide n'a encore été lue depuis le démarrage, UVSS utilise un
+défaut interne de `30s`. La valeur valide `0` est conservée comme telle et ne
+peut pas être confondue avec l'absence de configuration. UVSS ne modifie pas la
+configuration Unraid.
 
 ## Contrôleurs HBA
 

@@ -60,9 +60,11 @@ type diskCollector struct {
 	lastSuccessfulSnapshot []diskRuntimeDisk
 	publishedSource        smartSourceStatus
 
-	pollLogInitialized bool
-	lastPollInterval   time.Duration
-	lastPollError      string
+	lastValidPollInterval time.Duration // guarded by refreshMu
+	haveValidPollInterval bool          // guarded by refreshMu
+	pollLogInitialized    bool
+	lastPollInterval      time.Duration
+	lastPollError         string
 }
 
 type diskRuntimeDisk struct {
@@ -130,7 +132,7 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 	defer c.refreshMu.Unlock()
 
 	decisionAt := c.now()
-	pollInterval, configErr := readPollAttributes(c.paths.varINI)
+	pollInterval, configErr := c.effectivePollAttributes()
 	c.logPollAttributesChange(pollInterval, configErr)
 	decision := c.smartSource.evaluate(decisionAt, pollInterval, configErr)
 	if decision.justEntered {
