@@ -36,8 +36,8 @@ type smartSourceStatus struct {
 }
 
 // smartSourceState owns heartbeat detection and direct-SMART scheduling. Its
-// mutex is independent from diskCollector because SIGUSR2 may arrive while a
-// disk collection is doing file or command I/O.
+// mutex is independent from diskCollector because an emhttpd poll notification
+// may arrive while a disk collection is doing file or command I/O.
 type smartSourceState struct {
 	mu sync.RWMutex
 

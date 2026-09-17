@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"unraid-vsock-sensors/internal/sensors"
 )
 
@@ -756,29 +755,29 @@ func TestFallbackConcurrencyIsBounded(t *testing.T) {
 	}
 }
 
-func TestOnlyEmhttpPollSignalAdvancesHeartbeat(t *testing.T) {
+func TestControlOperationsAdvanceHeartbeatAndRefresh(t *testing.T) {
 	env := newDiskTestEnvironment(t, "30")
 	collector := env.collector()
-	manual := make(chan os.Signal, 1)
-	poll := make(chan os.Signal, 1)
 	refresh := make(chan struct{}, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go forwardDiskRefreshSignals(ctx, manual, poll, refresh, collector)
-	manual <- unix.SIGUSR1
+
+	// A manual refresh must request a collection without touching the heartbeat.
+	requestDiskRefresh(refresh)
 	select {
 	case <-refresh:
 	case <-time.After(time.Second):
-		t.Fatal("manual refresh signal was not forwarded")
+		t.Fatal("manual refresh was not forwarded")
 	}
 	if collector.smartSource.status().heartbeatSeen {
 		t.Fatal("manual refresh advanced emhttpd heartbeat")
 	}
-	poll <- unix.SIGUSR2
+
+	// An emhttpd poll must record the heartbeat and request a collection.
+	collector.noteEmhttpPoll()
+	requestDiskRefresh(refresh)
 	select {
 	case <-refresh:
 	case <-time.After(time.Second):
-		t.Fatal("emhttpd poll signal was not forwarded")
+		t.Fatal("emhttpd poll refresh was not forwarded")
 	}
 	if got := collector.smartSource.status().lastHeartbeat; !got.Equal(env.now) {
 		t.Fatalf("emhttpd heartbeat = %v, want %v", got, env.now)

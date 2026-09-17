@@ -36,6 +36,30 @@ func readDiskInventory(disksINIPath, devsINIPath string, selector *diskSelector)
 	return includedDisks(entries), nil
 }
 
+// diskPolicyRow is the stable disk policy inventory exposed by the control API
+// and by `disks list`.
+type diskPolicyRow struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Device    string     `json:"device"`
+	Transport string     `json:"transport"`
+	Bus       diskBus    `json:"bus"`
+	Policy    diskPolicy `json:"policy"`
+	Included  bool       `json:"included"`
+}
+
+func inventoryRowsFromEntries(entries []diskInventoryEntry) []diskPolicyRow {
+	rows := make([]diskPolicyRow, 0, len(entries))
+	for _, entry := range entries {
+		rows = append(rows, diskPolicyRow{
+			ID: entry.disk.id, Name: entry.disk.name, Device: entry.disk.device,
+			Transport: entry.disk.transport, Bus: entry.bus, Policy: entry.policy,
+			Included: entry.included,
+		})
+	}
+	return rows
+}
+
 func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSelector, validateIncluded bool) ([]diskInventoryEntry, error) {
 	assigned, err := readAssignedEntries(disksINIPath, selector, validateIncluded)
 	if err != nil {

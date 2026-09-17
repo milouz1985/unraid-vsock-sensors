@@ -120,12 +120,14 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	done
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
 	php -l unraid-plugin/UnraidVsockSensorsDiagnostics.page >/dev/null
+	php -l unraid-plugin/uvss_control.php >/dev/null
 	bash version_test.sh
 	bash virt-temp/debian/lifecycle_test.sh
 	bash unraid-plugin/package_test.sh
 	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/rc_test.sh
 	bash unraid-plugin/service_test.sh
+	php unraid-plugin/uvss_control_test.php >/dev/null
 
 check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
 
