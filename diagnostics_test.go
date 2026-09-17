@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -132,12 +131,11 @@ func TestDiagnosticsVSOCKAndHBAError(t *testing.T) {
 	}
 }
 
-func TestReadDiagnosticsRuntimeFile(t *testing.T) {
+func TestWriteDiagnosticsRuntimeFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runtime", "diagnostics.json")
 	now := time.Now()
-	service := newServiceState(990)
 	snapshot := buildDiagnosticsSnapshot(
-		service.status(), newDiskCollector(diskDataPaths{}).status(),
+		newServiceState(990).status(), newDiskCollector(diskDataPaths{}).status(),
 		newConfiguredHBACollector(15*time.Second, hbaModeDisabled, hbaBackendMPT3CTL).status(), now,
 	)
 	if err := writeDiagnosticsAtomic(path, snapshot); err != nil {
@@ -146,28 +144,13 @@ func TestReadDiagnosticsRuntimeFile(t *testing.T) {
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0644 {
 		t.Fatalf("unexpected file mode: %v, %v", info, err)
 	}
-	read, err := readDiagnostics(path, now)
-	if err != nil || read.PID != os.Getpid() {
-		t.Fatalf("read valid snapshot: %+v, %v", read, err)
-	}
-	if _, err := readDiagnostics(path, now.Add(diagnosticsMaxAge+time.Second)); err == nil || !strings.Contains(err.Error(), "stale") {
-		t.Fatalf("expected stale, got %v", err)
-	}
-	snapshot.PID = 99999999
-	if err := writeDiagnosticsAtomic(path, snapshot); err != nil {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readDiagnostics(path, now); err == nil || !strings.Contains(err.Error(), "stopped") {
-		t.Fatalf("expected stopped, got %v", err)
-	}
-	if err := os.WriteFile(path, []byte("{"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readDiagnostics(path, now); err == nil || !strings.Contains(err.Error(), "invalid") {
-		t.Fatalf("expected invalid, got %v", err)
-	}
-	if _, err := readDiagnostics(path+".absent", now); err == nil || !strings.Contains(err.Error(), "absent") {
-		t.Fatalf("expected absent, got %v", err)
+	var decoded diagnosticsSnapshot
+	if err := json.Unmarshal(data, &decoded); err != nil || decoded.PID != os.Getpid() || decoded.SchemaVersion != 1 {
+		t.Fatalf("written snapshot = %+v, %v", decoded, err)
 	}
 }
 

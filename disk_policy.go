@@ -234,11 +234,6 @@ func (s *diskPolicyStore) Reset() error {
 	return err
 }
 
-func (s *diskPolicyStore) Validate() error {
-	_, err := readDiskPolicies(s.path)
-	return err
-}
-
 // writeDiskPoliciesAtomic persists the policy file with a temporary file,
 // flush, sync and rename so a crash never leaves a truncated file.
 func writeDiskPoliciesAtomic(path string, policies map[string]diskPolicy) error {

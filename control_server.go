@@ -13,16 +13,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-// controlServer is the daemon's local control API. It listens on a Unix socket
-// and is the channel for explicit control operations: management inventory
-// (GET /v1/disks), disk policies (GET/PUT/DELETE), and manual refresh
-// (POST /v1/refresh).
+// controlServer is the daemon's local WebUI API. It listens on a Unix socket
+// and exposes only disk inventory plus disk-policy mutations.
 //
 // The emhttpd poll_attributes heartbeat is not carried over this socket: it is
 // frequent and carries no data, so it is delivered out of band (SIGUSR2) to the
@@ -41,19 +38,16 @@ type controlServer struct {
 	devsINIPath  string
 	sysBlockRoot string
 
-	mu       sync.Mutex
 	server   *http.Server
 	listener net.Listener
-	cancel   context.CancelFunc
 	done     chan struct{}
-	stopping bool
 }
 
 // newControlServer wires the control API to the daemon. refresh is the
 // write-only channel through which the server requests a disk collection;
 // policyFile is the persistent policy store used both for mutations and for
-// management reads; the *Path fields are the read-only
-// inputs used to build the management inventory. The emhttpd heartbeat is not
+// management reads. The *Path fields are the read-only inputs used to build
+// the management inventory. The emhttpd heartbeat is not
 // carried over this socket: it is delivered to the collector out of band
 // (SIGUSR2) because it is frequent and carries no data.
 func newControlServer(socketPath string, refresh chan<- struct{}, policyFile string, disksINIPath, devsINIPath, sysBlockRoot string) *controlServer {
@@ -125,37 +119,25 @@ func isUnixConnRefused(err error) bool {
 }
 
 const (
-	// controlServerProbeTimeout bounds the startup dial in prepareSocket used to
-	// detect another live instance on a preexisting socket.
+	defaultControlSocketPath = "/run/unraid-vsock-sensors/control.sock"
+
+	// controlServerProbeTimeout bounds the startup probe used to distinguish a
+	// stale Unix socket from another live daemon instance.
 	controlServerProbeTimeout = 500 * time.Millisecond
 
-	// controlServerReadTimeout bounds reading a complete local HTTP request,
-	// including its body. Bodies are tiny and additionally size-limited, so a
-	// client that cannot finish a request within this window is considered
-	// stalled. Do not set WriteTimeout here: an accepted policy mutation may
-	// legitimately spend most of its budget waiting for /boot to sync.
+	// Requests are local and tiny. Bound reads so a broken client cannot keep a
+	// handler occupied forever. Writes are intentionally unbounded because a
+	// policy mutation may spend several seconds syncing /boot.
 	controlServerReadTimeout = 5 * time.Second
 
-	// controlServerShutdownTimeout must be longer than the client mutation
-	// budget. Shutdown waits for an accepted policy mutation to finish its
-	// fsync/rename before the daemon closes the listener and exits.
+	// Give an accepted policy write enough time to complete during daemon stop.
 	controlServerShutdownTimeout = 7 * time.Second
 
-	// Unexpected listener failures are control-plane failures, not thermal
-	// data-plane failures. Retry quickly once, then back off to avoid log/bind
-	// loops if the socket path remains unavailable.
-	controlServerRetryInitial = 250 * time.Millisecond
-	controlServerRetryMax     = 5 * time.Second
-
-	// controlRequestBodyLimit bounds the only JSON mutation body accepted by
-	// the local API. The payload is normally below a few hundred bytes; 4 KiB
-	// leaves ample room for future fields without allowing an unbounded read.
+	// The only request body is a small disk-policy mutation.
 	controlRequestBodyLimit int64 = 4 << 10
 )
 
-// openListener creates and configures the control socket. Startup and recovery
-// use the same path so a transient listener failure does not leave the daemon
-// without a control plane permanently.
+// openListener creates and configures the control socket.
 func (s *controlServer) openListener() (net.Listener, error) {
 	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0755); err != nil {
 		return nil, fmt.Errorf("create control socket directory: %w", err)
@@ -167,14 +149,6 @@ func (s *controlServer) openListener() (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen on control socket %q: %w", s.socketPath, err)
 	}
-	// net.UnixListener removes the socket pathname when it is closed, so a
-	// clean shutdown or a failed Serve attempt removes the path before retry.
-	unixListener, ok := listener.(*net.UnixListener)
-	if !ok {
-		listener.Close()
-		return nil, fmt.Errorf("control socket listener is not a Unix listener: %T", listener)
-	}
-	unixListener.SetUnlinkOnClose(true)
 	if err := os.Chmod(s.socketPath, 0660); err != nil {
 		listener.Close()
 		return nil, fmt.Errorf("chmod control socket %q: %w", s.socketPath, err)
@@ -186,149 +160,56 @@ func (s *controlServer) newHTTPServer() *http.Server {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 	return &http.Server{
-		Handler:           mux,
-		ReadTimeout:       controlServerReadTimeout,
-		ReadHeaderTimeout: controlServerReadTimeout,
+		Handler:     mux,
+		ReadTimeout: controlServerReadTimeout,
 	}
 }
 
-// activate installs the listener/server pair currently owned by the serve
-// loop. stop marks the server as stopping under the same mutex, which prevents
-// a recovery attempt from publishing a new listener after shutdown has begun.
-func (s *controlServer) activate(server *http.Server, listener net.Listener) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.stopping {
-		return false
-	}
-	s.server = server
-	s.listener = listener
-	return true
-}
-
-func (s *controlServer) deactivate(server *http.Server, listener net.Listener) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.server == server {
-		s.server = nil
-	}
-	if s.listener == listener {
-		s.listener = nil
-	}
-}
-
-// start begins serving on the control socket. The initial bind is synchronous:
-// a bad path, an active second instance or a permission error still prevents
-// daemon startup. Once startup succeeded, an unexpected Serve failure is
-// isolated to the control plane. The serve loop recreates the socket with
-// bounded backoff while disk/HBA collection and VSOCK publication keep running.
+// start binds the Unix socket synchronously, then serves it in its own
+// goroutine. Failure to create the initial socket prevents daemon startup. A
+// later Serve failure is logged but deliberately does not stop the thermal
+// data plane; restarting the service recreates the control socket.
 func (s *controlServer) start() error {
 	listener, err := s.openListener()
 	if err != nil {
 		return err
 	}
 	server := s.newHTTPServer()
-	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-
-	s.mu.Lock()
 	s.server = server
 	s.listener = listener
-	s.cancel = cancel
 	s.done = done
-	s.stopping = false
-	s.mu.Unlock()
 
-	go s.serveLoop(ctx, server, listener, done)
+	go func() {
+		defer close(done)
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("control server stopped unexpectedly: %v; restart the service to restore the WebUI control plane", err)
+		}
+	}()
 	log.Printf("control API listening on %s", s.socketPath)
 	return nil
 }
 
-func (s *controlServer) serveLoop(ctx context.Context, server *http.Server, listener net.Listener, done chan<- struct{}) {
-	defer close(done)
-	retryDelay := controlServerRetryInitial
-
-	for {
-		serveErr := server.Serve(listener)
-		s.deactivate(server, listener)
-		_ = listener.Close()
-		if ctx.Err() != nil {
-			return
-		}
-
-		log.Printf("control server stopped unexpectedly: %v; retrying", serveErr)
-		for {
-			timer := time.NewTimer(retryDelay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			}
-
-			nextListener, err := s.openListener()
-			if err != nil {
-				log.Printf("control server recovery failed: %v; retrying in %s", err, nextControlServerRetryDelay(retryDelay))
-				retryDelay = nextControlServerRetryDelay(retryDelay)
-				continue
-			}
-			nextServer := s.newHTTPServer()
-			if !s.activate(nextServer, nextListener) {
-				_ = nextListener.Close()
-				return
-			}
-			server = nextServer
-			listener = nextListener
-			retryDelay = controlServerRetryInitial
-			log.Printf("control API recovered on %s", s.socketPath)
-			break
-		}
-	}
-}
-
-func nextControlServerRetryDelay(current time.Duration) time.Duration {
-	next := current * 2
-	if next > controlServerRetryMax {
-		return controlServerRetryMax
-	}
-	return next
-}
-
-// stop shuts the current server down synchronously and prevents the recovery
-// loop from creating another listener. With UnlinkOnClose set, closing the
-// listener removes the socket file. Calls are idempotent and wait for the
-// supervision goroutine to exit before returning.
+// stop drains accepted requests before closing the local control socket.
 func (s *controlServer) stop() {
-	s.mu.Lock()
-	s.stopping = true
-	cancel := s.cancel
-	server := s.server
-	listener := s.listener
-	done := s.done
-	s.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
+	if s.server == nil {
+		return
 	}
-	if server != nil {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), controlServerShutdownTimeout)
-		_ = server.Shutdown(shutdownCtx)
-		shutdownCancel()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), controlServerShutdownTimeout)
+	err := s.server.Shutdown(shutdownCtx)
+	cancel()
+	if err != nil && s.listener != nil {
+		_ = s.listener.Close()
 	}
-	if listener != nil {
-		_ = listener.Close()
-	}
-	if done != nil {
-		<-done
+	if s.done != nil {
+		<-s.done
 	}
 }
 
 func (s *controlServer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/disks", s.handleListDisks)
-	mux.HandleFunc("GET /v1/policies", s.handleValidatePolicies)
 	mux.HandleFunc("PUT /v1/disk-policy", s.handleSetDiskPolicy)
 	mux.HandleFunc("DELETE /v1/disk-policies", s.handleResetDiskPolicies)
-	mux.HandleFunc("POST /v1/refresh", s.handleRefresh)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -360,11 +241,11 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	return nil
 }
 
-// managementInventory builds the disk policy view served to the WebUI and to
-// `disks list`. It is read on demand from the current policy file and the
-// Unraid inventory files with validateIncluded=false so that an incomplete or
-// invalid disk still appears and can be excluded, matching the pre-control
-// `disks list` behavior. It does not depend on the collector's thermal state.
+// managementInventory builds the disk policy view served to the WebUI. It is
+// read on demand from the current policy file and the Unraid inventory files
+// with validateIncluded=false so that an incomplete or invalid disk still
+// appears and can be excluded. It does not depend on the collector's thermal
+// state.
 func (s *controlServer) managementInventory() ([]diskPolicyRow, error) {
 	policies, policyErr := readDiskPolicies(s.policies.path)
 	if policyErr != nil {
@@ -391,19 +272,9 @@ func (s *controlServer) handleListDisks(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, rows)
 }
 
-// handleValidatePolicies checks only the persisted policy file. Unlike
-// /v1/disks it does not build the inventory and does not depend on the
-// collector's thermal state, so it succeeds even when no disk is readable.
-func (s *controlServer) handleValidatePolicies(w http.ResponseWriter, r *http.Request) {
-	if err := s.policies.Validate(); err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, ErrInvalidPoliciesFile) {
-			status = http.StatusUnprocessableEntity
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+type diskPolicySetRequest struct {
+	ID     string     `json:"id"`
+	Policy diskPolicy `json:"policy"`
 }
 
 func (s *controlServer) handleSetDiskPolicy(w http.ResponseWriter, r *http.Request) {
@@ -434,11 +305,6 @@ func (s *controlServer) handleResetDiskPolicies(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	requestDiskRefresh(s.refresh)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *controlServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	requestDiskRefresh(s.refresh)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

@@ -6,8 +6,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -121,25 +119,6 @@ func TestResolveHBAIntervalRejectsInvalidBackendWithExplicitInterval(t *testing.
 	interval, err := resolveHBAInterval("unknown", 45*time.Second, true)
 	if interval != 0 || err == nil || !strings.Contains(err.Error(), "invalid HBA backend") {
 		t.Fatalf("resolveHBAInterval() = %s, %v; want invalid backend error", interval, err)
-	}
-}
-
-func TestServeUsesSharedControlSocketOverride(t *testing.T) {
-	environmentPath := filepath.Join(t.TempDir(), "environment.sock")
-	if err := os.WriteFile(environmentPath, []byte("not a socket"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(controlSocketEnvironmentVariable, environmentPath)
-	if err := serve([]string{"--hba-mode", "disabled"}); err == nil || !strings.Contains(err.Error(), environmentPath) {
-		t.Fatalf("serve with %s = %v; want error for %q", controlSocketEnvironmentVariable, err, environmentPath)
-	}
-
-	flagPath := filepath.Join(t.TempDir(), "flag.sock")
-	if err := os.WriteFile(flagPath, []byte("not a socket"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := serve([]string{"--hba-mode", "disabled", "--control-socket", flagPath}); err == nil || !strings.Contains(err.Error(), flagPath) {
-		t.Fatalf("serve with explicit --control-socket = %v; want error for %q", err, flagPath)
 	}
 }
 

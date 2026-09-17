@@ -36,49 +36,32 @@ utilisent CID `3` et port `990`.
 
 ### Socket de contrôle
 
-Le daemon `serve` écoute une API HTTP locale sur une socket Unix. Le chemin est
-résolu dans cet ordre : `--control-socket`, `UVSS_CONTROL_SOCKET`, puis la
-valeur par défaut :
+Le daemon `serve` expose à la WebUI une petite API HTTP locale sur :
 
 ```text
 /run/unraid-vsock-sensors/control.sock
 ```
 
-Elle est le canal local des opérations explicites de contrôle : la WebUI et la
-CLI y accèdent pour l'inventaire de gestion, les disk policies et le refresh
-manuel. Endpoints :
+PHP parle directement à cette socket : aucun processus CLI intermédiaire n'est
+lancé pour afficher ou modifier les politiques disque. L'API est volontairement
+limitée à trois routes :
 
 - `GET /v1/disks` : inventaire de gestion (ID, nom, device, transport, bus,
   politique, sélection et éligibilité). `selected` représente le résultat des
-  règles de sélection (policy, bus USB et exclusion de la clé flash), tandis
-  que `eligible` indique si les champs d'inventaire requis par le collecteur
-  thermique sont actuellement valides. Une ligne non éligible reste visible et
-  expose `validation_error` afin de pouvoir être diagnostiquée ou exclue. Un
-  fichier `disk-policies.json` invalide est signalé en `422`.
-- `GET /v1/policies` : valide uniquement le fichier de politiques persisté,
-  indépendamment de l'état thermique du collecteur ;
+  règles de sélection, `eligible` la validité des champs nécessaires au
+  collecteur thermique, et `validation_error` explique une entrée non éligible ;
 - `PUT /v1/disk-policy` : enregistre une politique (`auto`/`include`/`exclude`)
-  pour un ID stable, persiste puis déclenche une actualisation ;
-- `DELETE /v1/disk-policies` : supprime toutes les politiques et actualise ;
-- `POST /v1/refresh` : demande une actualisation de la collecte disque.
+  pour un ID stable puis demande une actualisation de la collecte ;
+- `DELETE /v1/disk-policies` : supprime tous les overrides puis actualise.
 
-Le heartbeat emhttpd `poll_attributes` n'est pas transporté par cette socket :
-il est fréquent et ne porte aucune donnée, il est délivré hors bande en
-`SIGUSR2` (hook Unraid → `rc … poll` → `SIGUSR2` → daemon), qui enregistre le
-heartbeat et demande une actualisation.
+Le heartbeat emhttpd `poll_attributes` reste hors bande : le hook Unraid appelle
+`rc … poll`, qui envoie `SIGUSR2` au daemon sans passer par HTTP.
 
-La socket suit le cycle de vie du daemon. Au démarrage, une socket résiduelle
-n'est supprimée que si un probe `ECONNREFUSED` prouve qu'aucun processus ne
-l'écoute ; un timeout ou une erreur de permission la laisse en place. Le
-`net.UnixListener` est configuré avec `SetUnlinkOnClose` : un shutdown propre
-supprime le pathname lors de la fermeture du listener, tandis qu'un crash
-brutal peut laisser une socket stale que `prepareSocket` détecte au démarrage
-suivant via `ECONNREFUSED`. Le shutdown du control plane est synchrone avant le
-retour de `serve`, et une erreur inattendue de `http.Server.Serve` arrête le
-daemon plutôt que de laisser un processus sans control plane.
-
-La CLI `disks …` est un client de cette socket ; si le daemon n'est pas lancé,
-elle échoue avec `unraid-vsock-sensors daemon is not running`.
+Au démarrage, une socket résiduelle n'est supprimée que si `ECONNREFUSED`
+prouve qu'aucun processus ne l'écoute. Un shutdown propre ferme le serveur de
+façon synchrone. Une erreur ultérieure du listener est journalisée sans arrêter
+la collecte thermique ni la publication VSOCK ; un restart du service recrée
+alors le control plane.
 
 ## Installation
 
@@ -121,10 +104,9 @@ Le plugin propose :
 StorCLI utilise volontairement un intervalle plus long car sa collecte est plus
 coûteuse que l'accès ioctl natif MPT3.
 
-La page **Diagnostics**, accessible depuis la page du plugin, affiche en lecture
-seule l'état réel du daemon. La commande `unraid-vsock-sensors diagnostics`
-renvoie le même instantané JSON local. Elle ne déclenche aucune collecte SMART.
-Un heartbeat emhttpd stale active temporairement le fallback SMART direct ; cela
+La page **Diagnostics**, accessible depuis la page du plugin, lit en lecture
+seule l'instantané JSON publié par le daemon. Elle ne déclenche aucune collecte
+SMART. Un heartbeat emhttpd stale active temporairement le fallback SMART direct ; cela
 n'indique pas nécessairement une panne de disque. Un lien VSOCK déconnecté
 signifie que le récepteur Proxmox n'est pas joignable. Les températures des
 disques en veille peuvent naturellement être indisponibles. Les IDs disque du
@@ -258,21 +240,17 @@ Les overrides sont conservés dans :
 ```
 
 Le daemon `unraid-vsock-sensors serve` est le seul processus autorisé à écrire
-ce fichier. La CLI et l'interface Web y accèdent via la socket de contrôle
-locale du daemon (voir « Socket de contrôle ») ; les mutations y sont
-sérialisées par un verrou intra-processus et l'écriture reste atomique
-(fichier temporaire + `rename`).
+ce fichier. La WebUI lui envoie les mutations directement via la socket de
+contrôle ; elles sont sérialisées par le store en mémoire et l'écriture reste
+atomique (fichier temporaire + `rename`).
 
-Un fichier invalide est ignoré par le daemon : tous les disques repassent alors
-en `Auto` et l'interface signale l'erreur avec un bouton de réinitialisation.
+Si le fichier devient invalide après une lecture valide, le collecteur conserve
+les dernières politiques valides et expose l'erreur dans les diagnostics. Au
+premier démarrage, tant qu'aucune configuration valide n'a été lue, le fallback
+reste `Auto`. La WebUI permet de réinitialiser le fichier invalide.
 
-Les sous-commandes `disks list`, `disks set`, `disks validate`, `disks reset`
-et `disks refresh` sont des clients de la socket de contrôle. Le daemon, la CLI
-et la WebUI utilisent tous `UVSS_CONTROL_SOCKET` comme override commun ;
-`--control-socket` reste disponible comme override explicite, principalement
-pour les tests et le diagnostic. `disks set` prend
-`--id-base64` (ID stable encodé en base64) et `--policy`. Le heartbeat
-`poll_attributes` n'est pas une commande `disks` : il est délivré en `SIGUSR2`.
+Le heartbeat `poll_attributes` est indépendant de cette API et reste délivré en
+`SIGUSR2`.
 
 ### Source de température
 

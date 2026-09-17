@@ -38,9 +38,9 @@ func readDiskInventory(disksINIPath, devsINIPath string, selector *diskSelector)
 	return selectedDisks(entries), nil
 }
 
-// diskPolicyRow is the stable disk policy inventory exposed by the control API
-// and by `disks list`. Selected is the policy/bus decision; Eligible is the
-// independent structural validity required by the thermal collector.
+// diskPolicyRow is the stable disk policy inventory exposed by the WebUI
+// control API. Selected is the policy/bus decision; Eligible is the independent
+// structural validity required by the thermal collector.
 type diskPolicyRow struct {
 	ID              string     `json:"id"`
 	Name            string     `json:"name"`

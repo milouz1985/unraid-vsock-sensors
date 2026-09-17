@@ -6,9 +6,7 @@ rc_script="$script_dir/rc.unraid-vsock-sensors"
 test_dir="$(mktemp -d)"
 pid_file="$test_dir/service.pid"
 lock_file="$test_dir/service.lock"
-control_socket="$test_dir/control.sock"
 args_file="$test_dir/service.args"
-refresh_file="$test_dir/service.refresh"
 poll_file="$test_dir/service.poll"
 started_file="$test_dir/service.started"
 pipe_reader_pid=""
@@ -20,13 +18,6 @@ daemon_pid=""
 # line shape as the real process: <binary> serve ...
 fake_daemon_path="$test_dir/serve"
 cat > "$fake_daemon_path" <<'EOF'
-if [[ -n "${UVSS_CONTROL_SOCKET:-}" ]]; then
-    # Represent the daemon control socket in the background so the readiness
-    # check does not depend on Python start time.
-    (
-        python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" "$UVSS_CONTROL_SOCKET" 2>/dev/null || true
-    ) &
-fi
 if [[ "${UVSS_RC_TEST_IGNORE_TERM:-0}" == 1 ]]; then
     trap "" TERM
 else
@@ -45,8 +36,7 @@ EOF
 chmod 0755 "$fake_daemon_path"
 
 # The fake binary behaves like UVSS for the rc script: on serve it records argv
-# before replacing itself with the long-lived helper; on control commands it
-# records the requested operation.
+# before replacing itself with the long-lived helper.
 fake_binary_path="$test_dir/binary"
 cat > "$fake_binary_path" <<EOF
 #!/bin/bash
@@ -64,13 +54,6 @@ case "\${1:-}" in
         cd -- "\$(dirname -- "\$0")"
         exec -a "\$0" bash serve
         ;;
-    disks)
-        shift
-        if [[ -n "\${UVSS_RC_TEST_REFRESH_FILE:-}" && "\${1:-}" == "refresh" ]]; then
-            printf 'refresh\n' > "\$UVSS_RC_TEST_REFRESH_FILE"
-        fi
-        exit "\${UVSS_RC_TEST_BINARY_STATUS:-0}"
-        ;;
     *)
         exit "\${UVSS_RC_TEST_BINARY_STATUS:-0}"
         ;;
@@ -83,7 +66,6 @@ cleanup() {
         UVSS_RC_CONFIG="$test_dir/missing.cfg" \
         UVSS_RC_PID_FILE="$pid_file" \
         UVSS_RC_LOCK_FILE="$lock_file" \
-        UVSS_CONTROL_SOCKET="$control_socket" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
         "$rc_script" stop >/dev/null 2>&1 || true
     if [[ -n "$foreign_pid" ]]; then
@@ -111,9 +93,7 @@ run_rc() {
         UVSS_RC_CONFIG="$config_path" \
         UVSS_RC_PID_FILE="$pid_file" \
         UVSS_RC_LOCK_FILE="$lock_file" \
-        UVSS_CONTROL_SOCKET="$control_socket" \
         UVSS_RC_TEST_ARGS_FILE="$args_file" \
-        UVSS_RC_TEST_REFRESH_FILE="$refresh_file" \
         UVSS_RC_TEST_POLL_FILE="$poll_file" \
         UVSS_RC_TEST_STARTED_FILE="$started_file" \
         UVSS_RC_TEST_IGNORE_TERM="$ignore_term" \
@@ -158,18 +138,6 @@ if ! kill -0 "$daemon_pid" 2>/dev/null; then
     exit 1
 fi
 
-# Wait explicitly for the fake daemon's control socket to be present before
-# driving the refresh/poll control calls, so the test does not depend on the
-# fake daemon (and its socket creation) being up before the PID check.
-for _ in {1..200}; do
-    [[ -S "$control_socket" ]] && break
-    sleep 0.01
-done
-if [[ ! -S "$control_socket" ]]; then
-    echo "fake daemon did not create its control socket" >&2
-    exit 1
-fi
-
 poll_output="$(run_rc poll)"
 if [[ "$poll_output" != *"SMART poll reported"* ]]; then
     echo "poll did not report success: $poll_output" >&2
@@ -201,32 +169,7 @@ for descriptor in "/proc/$daemon_pid/fd/"*; do
     fi
 done
 
-refresh_started="$(date +%s%N)"
-refresh_output="$(run_rc refresh)"
-refresh_elapsed=$(( $(date +%s%N) - refresh_started ))
-if [[ "$refresh_output" != *"refresh requested"* ]]; then
-    echo "refresh did not report success: $refresh_output" >&2
-    exit 1
-fi
-for _ in {1..100}; do
-    [[ -e "$refresh_file" ]] && break
-    sleep 0.01
-done
-if [[ ! -e "$refresh_file" ]]; then
-    echo "active daemon did not receive the refresh control call" >&2
-    exit 1
-fi
-if (( refresh_elapsed >= 1000000000 )); then
-    echo "refresh waited too long: ${refresh_elapsed}ns" >&2
-    exit 1
-fi
-if ! kill -0 "$daemon_pid" 2>/dev/null; then
-    echo "daemon exited after refresh" >&2
-    exit 1
-fi
-
 run_rc stop >/dev/null
-rm -f "$control_socket"
 
 run_rc start 0 "$script_dir/default.cfg" >/dev/null
 mapfile -t daemon_args < "$args_file"
@@ -291,33 +234,10 @@ for backend in mpt3ctl storcli; do
     fi
 done
 
-# The loop above always ends with a failed start (no socket left behind); make
-# sure the control socket is absent so the next refresh check sees no daemon.
-rm -f "$control_socket"
-
-refresh_output="$(run_rc refresh)"
-if [[ "$refresh_output" != *"is not running"* ]]; then
-    echo "refresh without daemon failed unexpectedly: $refresh_output" >&2
-    exit 1
-fi
-
-sleep 30 &
-foreign_pid=$!
-printf '%s\n' "$foreign_pid" > "$pid_file"
-refresh_output="$(run_rc refresh)"
-if [[ "$refresh_output" != *"is not running"* ]] || ! kill -0 "$foreign_pid" 2>/dev/null; then
-    echo "stale PID file caused an unrelated process to be signalled: $refresh_output" >&2
-    exit 1
-fi
-rm -f "$pid_file"
-kill "$foreign_pid" 2>/dev/null || true
-wait "$foreign_pid" 2>/dev/null || true
-foreign_pid=""
-
 # PID reuse may also point at another invocation of the UVSS binary. Matching
 # argv[0] alone is insufficient: only the long-lived `serve` subcommand is the
 # daemon and may be signalled by this service script.
-(exec -a "$fake_binary_path" yes disks >/dev/null) &
+(exec -a "$fake_binary_path" yes hwmon >/dev/null) &
 foreign_pid=$!
 printf '%s\n' "$foreign_pid" > "$pid_file"
 stop_output="$(run_rc stop)"

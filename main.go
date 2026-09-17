@@ -38,10 +38,6 @@ func main() {
 		err = serve(os.Args[2:])
 	case "hwmon":
 		err = hwmon(os.Args[2:])
-	case "disks":
-		err = diskPolicyCommand(os.Args[2:], os.Stdout)
-	case "diagnostics":
-		err = diagnosticsCommand(os.Args[2:], os.Stdout)
 	case "version", "--version":
 		fmt.Fprintln(os.Stdout, version)
 		return
@@ -57,28 +53,12 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
   %[1]s serve [options]
   %[1]s hwmon [options]
-  %[1]s disks list [options]
-  %[1]s disks set --id-base64 ID --policy {auto|include|exclude}
-  %[1]s disks validate [options]
-  %[1]s disks reset [options]
-  %[1]s disks refresh
-  %[1]s diagnostics
   %[1]s version
 
 Commands:
   serve                    Push sensor data to the Proxmox host over AF_VSOCK
   hwmon                    Publish fixed storage and HBA hwmon inventories
-  disks list               Show disk identity, physical bus and policy as JSON
-  disks set                Save a policy by stable Unraid disk ID
-  disks validate           Check the disk policy file
-  disks reset              Remove all disk policy overrides
-  disks refresh            Request a disk collection refresh from the daemon
-  diagnostics              Print the daemon's read-only runtime state as JSON
   version                  Print the build version
-
-The disks commands are clients of the daemon control socket; the daemon must be
-running. UVSS_CONTROL_SOCKET overrides the default socket path; an explicit
---control-socket flag takes precedence.
 
 Serve options:
   --port PORT               AF_VSOCK port (default: 990)
@@ -86,7 +66,6 @@ Serve options:
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
   --hba-interval DURATION   Delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)
   --syslog                  Send service logs to the system logger
-  --control-socket PATH     Local control Unix socket (default: UVSS_CONTROL_SOCKET or /run/unraid-vsock-sensors/control.sock)
 
 Hwmon options:
   --cid CID                 Guest AF_VSOCK CID (default: 3)
@@ -110,7 +89,6 @@ func serve(args []string) error {
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
 	hbaIntervalValue := fs.Duration("hba-interval", 0, "delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)")
 	useSyslog := fs.Bool("syslog", false, "send service logs to syslog")
-	controlSocket := fs.String("control-socket", defaultControlSocketPathFromEnv(), "local control Unix socket")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -153,9 +131,8 @@ func serve(args []string) error {
 	defer stop()
 	refreshRequests := make(chan struct{}, 1)
 	// The emhttpd poll_attributes heartbeat is frequent and carries no data, so
-	// it is delivered out of band (SIGUSR2) instead of spawning a process per
-	// event over the control socket. It records the heartbeat and requests a
-	// disk refresh. Manual refresh stays an explicit control-socket command.
+	// it is delivered out of band (SIGUSR2) instead of making an HTTP request.
+	// It records the heartbeat and requests a disk refresh.
 	pollSignals := make(chan os.Signal, 1)
 	signal.Notify(pollSignals, unix.SIGUSR2)
 	defer signal.Stop(pollSignals)
@@ -172,14 +149,13 @@ func serve(args []string) error {
 	}()
 	hbas := newConfiguredHBACollector(hbaInterval, hbaMode, hbaBackend)
 	service := newServiceState(uint32(*port))
-	// The control socket is the entry point for explicit control operations:
-	// disk policy mutations and manual refresh.
-	control := newControlServer(*controlSocket, refreshRequests,
+	// The control socket is the WebUI entry point for disk inventory and policy
+	// mutations.
+	control := newControlServer(defaultControlSocketPath, refreshRequests,
 		defaultDiskPolicyFile, defaultDisksINIPath, defaultDevsINIPath, defaultSysBlockRoot)
-	// Initial control-socket setup is required for a valid daemon start. After
-	// that, the control server supervises and recreates its own listener so a
-	// local control-plane failure cannot stop thermal collection or VSOCK
-	// publication.
+	// Initial control-socket setup is required for a valid daemon start. A later
+	// listener failure is logged by the control goroutine but does not stop the
+	// thermal collection or VSOCK publication paths.
 	if err := control.start(); err != nil {
 		return err
 	}

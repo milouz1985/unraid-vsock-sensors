@@ -1,154 +1,113 @@
 <?php
-// Test for the UVSS control socket helper. Run with: php uvss_control_test.php
-// It does not require a real daemon: it checks the daemon-stopped error path
-// and, when cURL and pcntl are available, exercises the nominal request/response
-// path against a fake Unix HTTP server that runs concurrently with the cURL
-// client, verifying the homogeneous ok/data envelope.
-
+// Standalone test for the PHP WebUI control client.
 require __DIR__ . '/uvss_control.php';
 
 $failures = 0;
 function check(string $label, bool $ok): void {
     global $failures;
-    if ($ok) {
-        echo "PASS $label\n";
-    } else {
-        echo "FAIL $label\n";
-        $failures++;
-    }
+    echo ($ok ? 'PASS ' : 'FAIL ') . $label . "\n";
+    if (!$ok) $failures++;
 }
 
-// 1. No socket file present -> structured daemon error (ok=false, kind=daemon).
 putenv('UVSS_CONTROL_SOCKET=' . sys_get_temp_dir() . '/uvss-nope.sock');
-$result = uvss_control_request('GET', '/v1/disks');
+$result = uvss_control_list_disks();
 $expected = function_exists('curl_init')
     ? (($result['ok'] ?? false) === false && ($result['kind'] ?? '') === 'daemon')
     : (($result['ok'] ?? false) === false && ($result['kind'] ?? '') === 'transport');
-check('daemon stopped returns a structured daemon/transport error', $expected);
+check('daemon stopped returns a structured error', $expected);
 
-// 2. list_disks wraps the daemon-stopped error (ok=false), never a list.
-$rows = uvss_control_list_disks();
-check('list_disks reports a structured error when daemon is stopped', ($rows['ok'] ?? false) === false);
-
-// 3. Nominal path against a fake concurrent Unix HTTP server, checking the
-// ok/data envelope for every response shape.
 if (function_exists('curl_init') && function_exists('stream_socket_server') && function_exists('pcntl_fork')) {
     $dir = sys_get_temp_dir() . '/uvss-ctl-test-' . getmypid();
     mkdir($dir, 0700, true);
     $socket = $dir . '/control.sock';
     putenv('UVSS_CONTROL_SOCKET=' . $socket);
 
-    // $serverBody is the raw HTTP response the fake server sends for one
-    // request. Each case below (re)creates the socket, forks a one-shot server,
-    // issues the cURL request from the parent, and reaps the child.
     $cases = [
-        'list with one disk' => [
-            'body' => json_encode([
-                ['id' => 'serial1', 'name' => 'disk1', 'device' => 'sda',
-                    'transport' => 'ata', 'bus' => 'non-USB', 'policy' => 'auto',
-                    'selected' => true, 'eligible' => true],
-            ]),
+        'list disks' => [
             'status' => 200,
-            'assert' => function (array $r): bool {
-                return ($r['ok'] ?? false) === true
-                    && ($r['http_status'] ?? 0) === 200
-                    && is_array($r['data'] ?? null) && count($r['data']) === 1
-                    && ($r['data'][0]['id'] ?? '') === 'serial1';
-            },
+            'body' => json_encode([['id' => 'serial1', 'policy' => 'auto', 'selected' => true, 'eligible' => true]]),
+            'method' => 'GET', 'path' => '/v1/disks',
+            'call' => fn() => uvss_control_list_disks(),
+            'assert' => fn(array $r): bool => ($r['ok'] ?? false) === true && ($r['data'][0]['id'] ?? '') === 'serial1',
         ],
-        'empty list' => [
-            'body' => '[]',
-            'status' => 200,
-            'assert' => function (array $r): bool {
-                return ($r['ok'] ?? false) === true
-                    && ($r['http_status'] ?? 0) === 200
-                    && ($r['data'] ?? null) === [];
-            },
+        'set policy' => [
+            'status' => 200, 'body' => json_encode(['status' => 'ok']),
+            'method' => 'PUT', 'path' => '/v1/disk-policy',
+            'call' => fn() => uvss_control_set_disk_policy('serial1', 'exclude'),
+            'assert' => fn(array $r): bool => ($r['ok'] ?? false) === true,
+            'json' => ['id' => 'serial1', 'policy' => 'exclude'],
         ],
-        'status ok' => [
-            'body' => json_encode(['status' => 'ok']),
-            'status' => 200,
-            'assert' => function (array $r): bool {
-                return ($r['ok'] ?? false) === true
-                    && ($r['http_status'] ?? 0) === 200
-                    && ($r['data'] ?? null) === ['status' => 'ok'];
-            },
+        'reset policies' => [
+            'status' => 200, 'body' => json_encode(['status' => 'ok']),
+            'method' => 'DELETE', 'path' => '/v1/disk-policies',
+            'call' => fn() => uvss_control_reset_disk_policies(),
+            'assert' => fn(array $r): bool => ($r['ok'] ?? false) === true,
         ],
-        'http 422' => [
-            'body' => json_encode(['error' => 'disk policies file is invalid']),
-            'status' => 422,
-            'assert' => function (array $r): bool {
-                return ($r['ok'] ?? false) === false
-                    && ($r['kind'] ?? '') === 'api'
-                    && ($r['http_status'] ?? 0) === 422
-                    && ($r['error'] ?? '') === 'disk policies file is invalid';
-            },
+        'api error' => [
+            'status' => 422, 'body' => json_encode(['error' => 'disk policies file is invalid']),
+            'method' => 'GET', 'path' => '/v1/disks',
+            'call' => fn() => uvss_control_list_disks(),
+            'assert' => fn(array $r): bool => ($r['ok'] ?? true) === false
+                && ($r['kind'] ?? '') === 'api' && ($r['http_status'] ?? 0) === 422,
         ],
-        'http 500' => [
-            'body' => json_encode(['error' => 'open disks.ini: no such file']),
-            'status' => 500,
-            'assert' => function (array $r): bool {
-                return ($r['ok'] ?? false) === false
-                    && ($r['kind'] ?? '') === 'api'
-                    && ($r['http_status'] ?? 0) === 500
-                    && ($r['error'] ?? '') === 'open disks.ini: no such file';
-            },
-        ],
-        'invalid json 200' => [
-            'body' => 'not-json{',
-            'status' => 200,
-            'assert' => function (array $r): bool {
-                return ($r['ok'] ?? false) === false
-                    && ($r['kind'] ?? '') === 'protocol'
-                    && ($r['http_status'] ?? 0) === 200;
-            },
-        ],
-        'null body 200' => [
-            'body' => 'null',
-            'status' => 200,
-            'assert' => function (array $r): bool {
-                return ($r['ok'] ?? false) === false
-                    && ($r['kind'] ?? '') === 'protocol'
-                    && ($r['http_status'] ?? 0) === 200;
-            },
+        'invalid response' => [
+            'status' => 200, 'body' => 'not-json',
+            'method' => 'GET', 'path' => '/v1/disks',
+            'call' => fn() => uvss_control_list_disks(),
+            'assert' => fn(array $r): bool => ($r['ok'] ?? true) === false && ($r['kind'] ?? '') === 'protocol',
         ],
     ];
 
     foreach ($cases as $label => $case) {
         @unlink($socket);
+        $capture = $dir . '/request-' . str_replace(' ', '-', $label);
         $server = stream_socket_server('unix://' . $socket, $errno, $errstr);
         if ($server === false) {
-            check("$label: fake socket created", false);
+            check("$label server", false);
             continue;
         }
-        $body = $case['body'];
-        $status = $case['status'];
         $pid = pcntl_fork();
         if ($pid === 0) {
-            // Child: answer one request then exit.
-            stream_set_blocking($server, true);
             $conn = @stream_socket_accept($server, 5);
             if ($conn !== false) {
                 $request = '';
-                while (($chunk = fread($conn, 8192)) !== false && strpos($request, "\r\n\r\n") === false) {
+                while (strpos($request, "\r\n\r\n") === false && !feof($conn)) {
+                    $chunk = fread($conn, 8192);
+                    if ($chunk === false || $chunk === '') break;
                     $request .= $chunk;
                 }
-                $reason = $status === 200 ? 'OK' : ($status === 422 ? 'Unprocessable Entity' : 'Internal Server Error');
-                fwrite($conn, "HTTP/1.1 $status $reason\r\n" .
-                    "Content-Type: application/json\r\n" .
-                    "Content-Length: " . strlen($body) . "\r\n" .
-                    "Connection: close\r\n\r\n" . $body);
+                [$headers, $requestBody] = array_pad(explode("\r\n\r\n", $request, 2), 2, '');
+                $length = 0;
+                if (preg_match('/\r\nContent-Length:\s*(\d+)/i', "\r\n" . $headers, $match)) {
+                    $length = (int)$match[1];
+                }
+                while (strlen($requestBody) < $length && !feof($conn)) {
+                    $chunk = fread($conn, $length - strlen($requestBody));
+                    if ($chunk === false || $chunk === '') break;
+                    $requestBody .= $chunk;
+                }
+                file_put_contents($capture, $headers . "\r\n\r\n" . $requestBody);
+                $body = $case['body'];
+                $status = $case['status'];
+                fwrite($conn, "HTTP/1.1 $status Test\r\nContent-Type: application/json\r\nContent-Length: " . strlen($body) . "\r\nConnection: close\r\n\r\n" . $body);
                 fclose($conn);
             }
             fclose($server);
-            @unlink($socket);
             exit(0);
-        } elseif ($pid > 0) {
-            // Parent: issue the request while the child serves it.
-            $result = uvss_control_request('GET', '/v1/disks');
-            check("$label", ($case['assert'])($result));
-            pcntl_waitpid($pid, $status2);
         }
+        fclose($server);
+        $result = ($case['call'])();
+        pcntl_waitpid($pid, $childStatus);
+        $rawRequest = @file_get_contents($capture) ?: '';
+        $firstLine = strtok($rawRequest, "\r\n") ?: '';
+        check("$label response", ($case['assert'])($result));
+        check("$label request line", $firstLine === $case['method'] . ' ' . $case['path'] . ' HTTP/1.1');
+        if (isset($case['json'])) {
+            $parts = explode("\r\n\r\n", $rawRequest, 2);
+            $decoded = json_decode($parts[1] ?? '', true);
+            check("$label request body", $decoded === $case['json']);
+        }
+        @unlink($capture);
         @unlink($socket);
     }
     rmdir($dir);

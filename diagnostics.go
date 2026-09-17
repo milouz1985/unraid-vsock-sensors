@@ -5,21 +5,15 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
 	defaultDiagnosticsPath    = "/run/unraid-vsock-sensors/diagnostics.json"
-	diagnosticsMaxAge         = 5 * time.Second
 	diagnosticStatusHealthy   = "healthy"
 	diagnosticStatusStale     = "stale"
 	diagnosticStatusError     = "error"
@@ -352,43 +346,4 @@ func writeDiagnosticsAtomic(path string, snapshot diagnosticsSnapshot) error {
 		return err
 	}
 	return os.Rename(file.Name(), path)
-}
-
-func diagnosticsCommand(args []string, output io.Writer) error {
-	if len(args) != 0 {
-		return errors.New("diagnostics does not accept arguments")
-	}
-	snapshot, err := readDiagnostics(defaultDiagnosticsPath, time.Now())
-	if err != nil {
-		return err
-	}
-	return json.NewEncoder(output).Encode(snapshot)
-}
-
-func readDiagnostics(path string, now time.Time) (diagnosticsSnapshot, error) {
-	var snapshot diagnosticsSnapshot
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return snapshot, errors.New("daemon stopped: diagnostics state is absent")
-	}
-	if err != nil {
-		return snapshot, fmt.Errorf("read diagnostics: %w", err)
-	}
-	if err := json.Unmarshal(data, &snapshot); err != nil {
-		return snapshot, fmt.Errorf("invalid diagnostics state: %w", err)
-	}
-	if snapshot.SchemaVersion != 1 || snapshot.PID <= 0 || snapshot.GeneratedAt.IsZero() || snapshot.StartedAt.IsZero() || snapshot.Version == "" {
-		return snapshot, errors.New("invalid diagnostics state: required fields are missing")
-	}
-	err = unix.Kill(snapshot.PID, 0)
-	if errors.Is(err, unix.ESRCH) {
-		return snapshot, errors.New("daemon stopped: diagnostics state belongs to a process that no longer exists")
-	}
-	if err != nil && !errors.Is(err, unix.EPERM) {
-		return snapshot, fmt.Errorf("check daemon process: %w", err)
-	}
-	if now.Sub(snapshot.GeneratedAt) > diagnosticsMaxAge || snapshot.GeneratedAt.After(now.Add(time.Second)) {
-		return snapshot, errors.New("diagnostic state stale: daemon has not updated its runtime snapshot")
-	}
-	return snapshot, nil
 }

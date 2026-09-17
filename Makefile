@@ -24,7 +24,6 @@ BASH_SCRIPTS := version.sh \
 	unraid-plugin/rc.unraid-vsock-sensors \
 	unraid-plugin/rc_test.sh \
 	unraid-plugin/service.sh \
-	unraid-plugin/service_test.sh \
 	virt-temp/package.sh \
 	virt-temp/prepare-dkms.sh \
 	virt-temp/debian/lifecycle_test.sh \
@@ -121,12 +120,12 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
 	php -l unraid-plugin/UnraidVsockSensorsDiagnostics.page >/dev/null
 	php -l unraid-plugin/uvss_control.php >/dev/null
+	php -l unraid-plugin/uvss_action.php >/dev/null
 	bash version_test.sh
 	bash virt-temp/debian/lifecycle_test.sh
 	bash unraid-plugin/package_test.sh
 	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/rc_test.sh
-	bash unraid-plugin/service_test.sh
 	php unraid-plugin/uvss_control_test.php >/dev/null
 
 check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts

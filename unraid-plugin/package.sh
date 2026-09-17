@@ -35,6 +35,8 @@ install -m 0644 "$plugin_dir/UnraidVsockSensorsDiagnostics.page" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/UnraidVsockSensorsDiagnostics.page"
 install -m 0644 "$plugin_dir/uvss_control.php" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/uvss_control.php"
+install -m 0644 "$plugin_dir/uvss_action.php" \
+    "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/uvss_action.php"
 install -m 0644 "$plugin_dir/images/icon.png" \
     "$stage_dir/usr/local/emhttp/plugins/unraid-vsock-sensors/icon.png"
 install -m 0644 "$plugin_dir/default.cfg" \

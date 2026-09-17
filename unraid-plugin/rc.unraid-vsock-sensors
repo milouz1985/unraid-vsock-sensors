@@ -181,19 +181,6 @@ status() {
     return 3
 }
 
-refresh() {
-    # A stale Unix socket may remain after a crash without the daemon running,
-    # so validate the PID command line rather than the socket's presence.
-    if ! running_pid >/dev/null; then
-        echo "$name is not running"
-        return 0
-    fi
-    if ! "$binary" disks refresh; then
-        echo "Unable to refresh $name" >&2
-        return 1
-    fi
-    echo "$name refresh requested"
-}
 
 poll() {
     local pid
@@ -232,7 +219,6 @@ run_mutating_action() {
 case "${1:-}" in
     start|stop|restart) run_mutating_action "$1" ;;
     status) status ;;
-    refresh) refresh ;;
     poll) poll ;;
-    *) echo "Usage: $0 {start|stop|restart|status|refresh|poll}" >&2; exit 2 ;;
+    *) echo "Usage: $0 {start|stop|restart|status|poll}" >&2; exit 2 ;;
 esac

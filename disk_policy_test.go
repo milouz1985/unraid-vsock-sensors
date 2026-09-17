@@ -3,9 +3,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -235,74 +232,6 @@ func TestFlashCannotReenterThroughUnassignedInventory(t *testing.T) {
 	}
 }
 
-func TestDiskPolicyCommandUsesSharedControlSocketOverride(t *testing.T) {
-	environment := newDiskTestEnvironment(t, "30")
-	refresh := make(chan struct{}, 1)
-	server := startControlServerForTest(t, environment, refresh)
-
-	// The shared environment override is the default for every CLI control
-	// command, so service.sh and the rc script do not need their own socket
-	// variables or to repeat --control-socket on every invocation.
-	t.Setenv(controlSocketEnvironmentVariable, server.socketPath)
-	var output bytes.Buffer
-	if err := diskPolicyCommand([]string{"list"}, &output); err != nil {
-		t.Fatalf("list via %s: %v", controlSocketEnvironmentVariable, err)
-	}
-
-	// An explicit flag remains the highest-priority escape hatch for tests and
-	// diagnostics, even when the environment points somewhere else.
-	t.Setenv(controlSocketEnvironmentVariable, filepath.Join(t.TempDir(), "wrong.sock"))
-	output.Reset()
-	if err := diskPolicyCommand([]string{"list", "--control-socket", server.socketPath}, &output); err != nil {
-		t.Fatalf("list via explicit --control-socket: %v", err)
-	}
-}
-
-func TestDiskPolicyPersistenceAndCommand(t *testing.T) {
-	environment := newDiskTestEnvironment(t, "30")
-	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", true)
-	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdb", false)
-	id := "WDC_ID=with,comma and spaces"
-	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=\""+id+"\"\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
-	refresh := make(chan struct{}, 1)
-	server := startControlServerForTest(t, environment, refresh)
-	encodedID := base64.StdEncoding.EncodeToString([]byte(id))
-	var output bytes.Buffer
-	if err := diskPolicyCommand([]string{"set", "--id-base64", encodedID, "--policy", "include",
-		"--control-socket", server.socketPath}, &output); err != nil {
-		t.Fatal(err)
-	}
-	policies, err := readDiskPolicies(environment.paths.policyFile)
-	if err != nil || policies[id] != diskPolicyInclude {
-		t.Fatalf("saved policies = %#v, %v", policies, err)
-	}
-	// A device name change leaves the stable-ID policy intact. The management
-	// inventory is read on demand by the control server, so no thermal refresh
-	// is needed to observe the new device name.
-	environment.write(t, environment.paths.disksINI,
-		"[disk1]\nid=\""+id+"\"\ndevice=sdb\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
-	output.Reset()
-	if err := diskPolicyCommand([]string{"list", "--control-socket", server.socketPath}, &output); err != nil {
-		t.Fatal(err)
-	}
-	var rows []diskPolicyRow
-	if err := json.Unmarshal(output.Bytes(), &rows); err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].ID != id || rows[0].Device != "sdb" || rows[0].Policy != diskPolicyInclude || !rows[0].Selected || !rows[0].Eligible {
-		t.Fatalf("disk-policy list = %#v", rows)
-	}
-	if err := diskPolicyCommand([]string{"set", "--id-base64", encodedID, "--policy", "auto",
-		"--control-socket", server.socketPath}, &output); err != nil {
-		t.Fatal(err)
-	}
-	policies, err = readDiskPolicies(environment.paths.policyFile)
-	if err != nil || len(policies) != 0 {
-		t.Fatalf("auto policies = %#v, %v; want no override", policies, err)
-	}
-}
-
 func TestDiskListCanExposeIncompleteEntryForExclusion(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	// An active disk whose device cannot be resolved is exposed with an empty
@@ -382,63 +311,23 @@ func TestInvalidDiskPolicyFileDoesNotBlockCollector(t *testing.T) {
 	environment.write(t, environment.paths.disksINI,
 		"[disk1]\nid=internal\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n[disk2]\nid=external\ndevice=sdi\ntransport=ata\nrotational=1\nspundown=0\ntemp=36\n")
 	environment.write(t, environment.paths.policyFile, `{ "internal": "invalid" }`)
-	refresh := make(chan struct{}, 1)
 	collector := environment.collector()
 	collector.refresh()
 	if disk := requireSingleDisk(t, collector); disk.id != "internal" || disk.unavailable {
 		t.Fatalf("collector with invalid policies = %#v", disk)
 	}
-	if len(collector.state) != 1 {
-		t.Fatalf("collector state with invalid policies = %#v; want internal disk only", collector.state)
-	}
 	if status := collector.status(); !strings.Contains(status.policyError, "disk policies file is invalid") {
 		t.Fatalf("collector policy error = %q", status.policyError)
 	}
-	server := startControlServerForTest(t, environment, refresh)
-	listArgs := []string{"list", "--control-socket", server.socketPath}
-	var output bytes.Buffer
-	if err := diskPolicyCommand(listArgs, &output); err == nil || !strings.Contains(err.Error(), "disk policies file is invalid") {
-		t.Fatalf("disks list with invalid policies error = %v", err)
-	}
-	if output.Len() != 0 {
-		t.Fatalf("disks list wrote output despite invalid policies: %q", output.String())
-	}
-	if err := diskPolicyCommand([]string{"validate", "--control-socket", server.socketPath}, &output); err == nil {
-		t.Fatal("disks validate accepted invalid policies")
-	}
-	if err := newDiskPolicyStore(environment.paths.policyFile).Set("internal", diskPolicyExclude); err == nil || !strings.Contains(err.Error(), "disk policies file is invalid") {
+	store := newDiskPolicyStore(environment.paths.policyFile)
+	if err := store.Set("internal", diskPolicyExclude); err == nil || !strings.Contains(err.Error(), "disk policies file is invalid") {
 		t.Fatalf("overwriting invalid policy file error = %v", err)
 	}
-	encodedID := base64.StdEncoding.EncodeToString([]byte("internal"))
-	if err := diskPolicyCommand([]string{"set", "--id-base64", encodedID, "--policy", "exclude",
-		"--control-socket", server.socketPath}, &output); err == nil {
-		t.Fatal("disks set overwrote invalid policies")
-	}
-	if err := diskPolicyCommand([]string{"reset", "--control-socket", server.socketPath}, &output); err != nil {
-		t.Fatalf("disks reset: %v", err)
+	if err := store.Reset(); err != nil {
+		t.Fatalf("reset invalid policies: %v", err)
 	}
 	if _, err := os.Stat(environment.paths.policyFile); !os.IsNotExist(err) {
 		t.Fatalf("policy file after reset: %v; want absent", err)
-	}
-	if err := diskPolicyCommand([]string{"reset", "--control-socket", server.socketPath}, &output); err != nil {
-		t.Fatalf("disks reset with absent file: %v", err)
-	}
-	// A successful reset clears the policy file. The control server reads the
-	// policy file on demand, so validate and list succeed immediately without
-	// a thermal refresh.
-	if err := diskPolicyCommand([]string{"validate", "--control-socket", server.socketPath}, &output); err != nil {
-		t.Fatalf("disks validate after reset: %v", err)
-	}
-	output.Reset()
-	if err := diskPolicyCommand(listArgs, &output); err != nil {
-		t.Fatalf("disks list after reset: %v", err)
-	}
-	var rows []diskPolicyRow
-	if err := json.Unmarshal(output.Bytes(), &rows); err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 2 || rows[0].Policy != diskPolicyAuto || rows[1].Policy != diskPolicyAuto {
-		t.Fatalf("disks list after reset = %#v; want Auto for all disks", rows)
 	}
 }
 
