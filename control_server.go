@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -142,6 +143,11 @@ const (
 	// loops if the socket path remains unavailable.
 	controlServerRetryInitial = 250 * time.Millisecond
 	controlServerRetryMax     = 5 * time.Second
+
+	// controlRequestBodyLimit bounds the only JSON mutation body accepted by
+	// the local API. The payload is normally below a few hundred bytes; 4 KiB
+	// leaves ample room for future fields without allowing an unbounded read.
+	controlRequestBodyLimit int64 = 4 << 10
 )
 
 // openListener creates and configures the control socket. Startup and recovery
@@ -331,6 +337,25 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
+// decodeJSONBody decodes exactly one bounded JSON value. Control requests are
+// local and small, so accepting unknown fields, trailing values or an unbounded
+// body would only hide client mistakes and make the API harder to reason about.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, controlRequestBodyLimit)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values are not allowed")
+		}
+		return err
+	}
+	return nil
+}
+
 // managementInventory builds the disk policy view served to the WebUI and to
 // `disks list`. It is read on demand from the current policy file and the
 // Unraid inventory files with validateIncluded=false so that an incomplete or
@@ -379,7 +404,7 @@ func (s *controlServer) handleValidatePolicies(w http.ResponseWriter, r *http.Re
 
 func (s *controlServer) handleSetDiskPolicy(w http.ResponseWriter, r *http.Request) {
 	var request diskPolicySetRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := decodeJSONBody(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}

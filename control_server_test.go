@@ -366,14 +366,18 @@ func TestControlServerSetPolicyValidation(t *testing.T) {
 	client := controlClientForTest(t, server.socketPath)
 
 	tests := []struct {
-		name   string
-		body   string
-		status int
+		name             string
+		body             string
+		status           int
+		wantErrorContain string
 	}{
 		{name: "invalid policy", body: `{"id":"serial","policy":"bogus"}`, status: http.StatusBadRequest},
-		{name: "invalid JSON", body: `{"id":"serial",`, status: http.StatusBadRequest},
+		{name: "truncated JSON", body: `{"id":"serial",`, status: http.StatusBadRequest, wantErrorContain: "invalid JSON body"},
 		{name: "missing id", body: `{"policy":"include"}`, status: http.StatusBadRequest},
-		{name: "empty body", body: ``, status: http.StatusBadRequest},
+		{name: "empty body", body: ``, status: http.StatusBadRequest, wantErrorContain: "invalid JSON body"},
+		{name: "unknown field", body: `{"id":"serial","policy":"include","extra":true}`, status: http.StatusBadRequest, wantErrorContain: `unknown field "extra"`},
+		{name: "multiple JSON values", body: `{"id":"serial","policy":"include"} {}`, status: http.StatusBadRequest, wantErrorContain: "multiple JSON values are not allowed"},
+		{name: "body too large", body: `{"id":"` + strings.Repeat("a", int(controlRequestBodyLimit)) + `","policy":"include"}`, status: http.StatusBadRequest, wantErrorContain: "request body too large"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -389,8 +393,16 @@ func TestControlServerSetPolicyValidation(t *testing.T) {
 			if response.StatusCode != test.status {
 				t.Fatalf("status = %d, want %d", response.StatusCode, test.status)
 			}
-			if test.body == `{"id":"serial",` || test.body == `` {
-				return
+			if test.wantErrorContain != "" {
+				var payload struct {
+					Error string `json:"error"`
+				}
+				if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode error response: %v", err)
+				}
+				if !strings.Contains(payload.Error, test.wantErrorContain) {
+					t.Fatalf("error = %q; want substring %q", payload.Error, test.wantErrorContain)
+				}
 			}
 			// No refresh must be requested for a rejected mutation.
 			select {
