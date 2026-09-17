@@ -53,8 +53,10 @@ const (
 	maxHBAStableIDSize          = max(maxSASHBAStableIDSize, maxPCIHBAStableIDSize, maxSerialHBAStableIDSize)
 )
 
-// hbaStableID gives every backend the same controller identity. Prefer the SAS
+// hbaStableID gives every backend the same stable sensor key. Prefer the SAS
 // address shared by mpt3ctl and StorCLI, then progressively weaker fallbacks.
+// A pci: fallback identifies the current PCI location, not necessarily the same
+// physical controller after hardware replacement.
 func hbaStableID(sasAddress, pciAddress, serial string) string {
 	if sasAddress = hbaIdentityValue(sasAddress); sasAddress != "" {
 		if sasAddress = normalizeSASAddress(sasAddress); sasAddress != "" {

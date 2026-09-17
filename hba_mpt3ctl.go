@@ -112,6 +112,18 @@ func (r *mpt3Reader) stableID(pci, sasAddress string, page5Failed bool) string {
 	return hbaStableID("", pci, "")
 }
 
+// retainSASAddressesFor drops cached identities for PCI controllers that were
+// absent from a complete IOC discovery pass. A controller later appearing at
+// the same PCI address must not inherit the SAS identity of hardware that was
+// observed to have disappeared.
+func (r *mpt3Reader) retainSASAddressesFor(presentPCI map[string]struct{}) {
+	for pci := range r.sasAddressByPCI {
+		if _, present := presentPCI[pci]; !present {
+			delete(r.sasAddressByPCI, pci)
+		}
+	}
+}
+
 func openMPT3() (*mpt3Device, error) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return nil, fmt.Errorf("%w: mpt3ctl requires linux/amd64", errHBABackendUnavailable)
@@ -262,6 +274,7 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	}
 	defer device.file.Close()
 	readings, identities := make([]sensors.HBA, 0), make(map[string]int)
+	presentPCI := make(map[string]struct{})
 	// IOC IDs may contain holes, so scan the configured range. Missing IOCINFO
 	// calls do not query firmware; only discovered controllers trigger CONFIG reads.
 	for ioc := 0; ioc <= mpt3MaxIOC; ioc++ {
@@ -276,6 +289,9 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 			return nil, fmt.Errorf("mpt3ctl IOC %d discovery: %w", ioc, err)
 		}
 		pci, model, sasAddress := parseMPT3PCIAddress(info), "", ""
+		if pci != "" {
+			presentPCI[pci] = struct{}{}
+		}
 		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version); pageErr == nil {
 			model = parseMPT3Model(page)
 		}
@@ -303,6 +319,9 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 		}
 		readings = append(readings, sensors.HBA{ID: id, Model: model, PCIAddress: pci, Temp: temperature})
 	}
+	// Only prune after the complete IOC range was scanned successfully. An
+	// aborted collection cannot prove that a cached controller disappeared.
+	r.retainSASAddressesFor(presentPCI)
 	if len(readings) == 0 {
 		return nil, errNoHBA
 	}

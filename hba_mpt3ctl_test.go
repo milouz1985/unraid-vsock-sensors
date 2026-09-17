@@ -134,6 +134,38 @@ func TestMPT3ReaderKeepsSASIdentityAfterTransientPageFailure(t *testing.T) {
 	}
 }
 
+func TestMPT3ReaderDropsSASIdentityAfterPCIDisappears(t *testing.T) {
+	reader := newMPT3Reader()
+	pci := "0000:06:10.0"
+
+	if got, want := reader.stableID(pci, "56c92bf0002e6705", false), "sas:56c92bf0002e6705"; got != want {
+		t.Fatalf("initial ID = %q, want %q", got, want)
+	}
+	reader.retainSASAddressesFor(map[string]struct{}{})
+
+	if got, want := reader.stableID(pci, "", true), "pci:0000:06:10.0"; got != want {
+		t.Fatalf("ID after PCI disappearance = %q, want %q", got, want)
+	}
+	if got, want := reader.stableID(pci, "500605b00abc1234", false), "sas:500605b00abc1234"; got != want {
+		t.Fatalf("replacement ID = %q, want %q", got, want)
+	}
+	if got, want := reader.stableID(pci, "", true), "sas:500605b00abc1234"; got != want {
+		t.Fatalf("replacement cached ID = %q, want %q", got, want)
+	}
+}
+
+func TestMPT3ReaderKeepsSASIdentityForPresentPCI(t *testing.T) {
+	reader := newMPT3Reader()
+	pci := "0000:06:10.0"
+
+	reader.stableID(pci, "56c92bf0002e6705", false)
+	reader.retainSASAddressesFor(map[string]struct{}{pci: {}})
+
+	if got, want := reader.stableID(pci, "", true), "sas:56c92bf0002e6705"; got != want {
+		t.Fatalf("ID after complete scan = %q, want %q", got, want)
+	}
+}
+
 func TestMPT3ReaderUsesPCIUntilSASIdentityIsKnown(t *testing.T) {
 	reader := newMPT3Reader()
 	if got, want := reader.stableID("0000:06:10.0", "", true), "pci:0000:06:10.0"; got != want {
