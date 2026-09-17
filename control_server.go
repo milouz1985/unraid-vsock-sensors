@@ -350,10 +350,6 @@ func (s *controlServer) managementInventory() ([]diskPolicyRow, error) {
 }
 
 func (s *controlServer) handleListDisks(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
 	rows, err := s.managementInventory()
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -370,10 +366,6 @@ func (s *controlServer) handleListDisks(w http.ResponseWriter, r *http.Request) 
 // /v1/disks it does not build the inventory and does not depend on the
 // collector's thermal state, so it succeeds even when no disk is readable.
 func (s *controlServer) handleValidatePolicies(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
 	if err := s.policies.Validate(); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrInvalidPoliciesFile) {
@@ -386,10 +378,6 @@ func (s *controlServer) handleValidatePolicies(w http.ResponseWriter, r *http.Re
 }
 
 func (s *controlServer) handleSetDiskPolicy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
 	var request diskPolicySetRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
@@ -413,10 +401,6 @@ func (s *controlServer) handleSetDiskPolicy(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *controlServer) handleResetDiskPolicies(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
 	if err := s.policies.Reset(); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -426,10 +410,6 @@ func (s *controlServer) handleResetDiskPolicies(w http.ResponseWriter, r *http.R
 }
 
 func (s *controlServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
 	requestDiskRefresh(s.refresh)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

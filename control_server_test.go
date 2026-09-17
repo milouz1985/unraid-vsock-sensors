@@ -423,8 +423,24 @@ func TestControlServerMethodNotAllowed(t *testing.T) {
 	server := startControlServerForTest(t, environment, refresh)
 	client := controlClientForTest(t, server.socketPath)
 
-	if status, _, err := client.do(http.MethodPost, "/v1/disks", nil); err != nil || status != http.StatusMethodNotAllowed {
-		t.Fatalf("POST /v1/disks = %d, %v; want 405", status, err)
+	tests := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodPost, path: "/v1/disks"},
+		{method: http.MethodPost, path: "/v1/policies"},
+		{method: http.MethodPost, path: "/v1/disk-policy"},
+		{method: http.MethodGet, path: "/v1/disk-policies"},
+		{method: http.MethodGet, path: "/v1/refresh"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			status, _, err := client.do(tt.method, tt.path, nil)
+			if err != nil || status != http.StatusMethodNotAllowed {
+				t.Fatalf("%s %s = %d, %v; want 405", tt.method, tt.path, status, err)
+			}
+		})
 	}
 }
 
