@@ -75,15 +75,18 @@ load_config() {
 
 running_pid() {
     [[ -r "$pid_file" ]] || return 1
-    local pid executable
+    local pid
+    local -a cmdline=()
     read -r pid < "$pid_file"
     [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
 
-    # A stale PID file may refer to an unrelated process after PID reuse. Check
-    # argv[0] rather than /proc/PID/exe because package upgrades may replace the
-    # executable while the old service is still running.
-    IFS= read -r -d '' executable < "/proc/$pid/cmdline" || return 1
-    [[ "$executable" == "$binary" ]] || return 1
+    # A stale PID file may refer to another invocation of the same binary after
+    # PID reuse. Check both argv[0] and the serve subcommand rather than
+    # /proc/PID/exe because package upgrades may replace the executable while
+    # the old service is still running.
+    mapfile -d '' -t cmdline < "/proc/$pid/cmdline" 2>/dev/null || return 1
+    (( ${#cmdline[@]} >= 2 )) || return 1
+    [[ "${cmdline[0]}" == "$binary" && "${cmdline[1]}" == "serve" ]] || return 1
     printf '%s\n' "$pid"
 }
 
@@ -182,7 +185,7 @@ status() {
 
 refresh() {
     # A stale Unix socket may remain after a crash without the daemon running,
-    # so check the PID (and argv[0]) rather than the socket's presence.
+    # so validate the PID command line rather than the socket's presence.
     if ! running_pid >/dev/null; then
         echo "$name is not running"
         return 0

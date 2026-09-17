@@ -15,10 +15,38 @@ pipe_reader_pid=""
 foreign_pid=""
 daemon_pid=""
 
-# The rc script matches argv[0] of the running daemon against UVSS_RC_BINARY,
-# so the fake binary must keep a stable path. It behaves like the real UVSS
-# binary for the rc script: on serve it records argv and (like the daemon)
-# creates its control socket; on the control commands it records the operation.
+# The rc script validates both argv[0] and argv[1] of the running daemon. Use a
+# small helper named exactly `serve` so the fake daemon has the same command
+# line shape as the real process: <binary> serve ...
+fake_daemon_path="$test_dir/serve"
+cat > "$fake_daemon_path" <<'EOF'
+if [[ -n "${UVSS_RC_TEST_CONTROL_SOCKET:-}" ]]; then
+    # Represent the daemon control socket in the background so the readiness
+    # check does not depend on Python start time.
+    (
+        python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" "$UVSS_RC_TEST_CONTROL_SOCKET" 2>/dev/null || true
+    ) &
+fi
+if [[ "${UVSS_RC_TEST_IGNORE_TERM:-0}" == 1 ]]; then
+    trap "" TERM
+else
+    trap "exit 0" TERM
+fi
+# The real daemon records the emhttpd heartbeat on SIGUSR2. The fake daemon
+# mirrors that by writing the poll marker file when signalled.
+if [[ -n "${UVSS_RC_TEST_POLL_FILE:-}" ]]; then
+    trap 'printf poll > "$UVSS_RC_TEST_POLL_FILE"' USR2
+fi
+while :; do
+    sleep 0.1 &
+    wait "$!" || true
+done
+EOF
+chmod 0755 "$fake_daemon_path"
+
+# The fake binary behaves like UVSS for the rc script: on serve it records argv
+# before replacing itself with the long-lived helper; on control commands it
+# records the requested operation.
 fake_binary_path="$test_dir/binary"
 cat > "$fake_binary_path" <<EOF
 #!/bin/bash
@@ -33,29 +61,8 @@ case "\${1:-}" in
         if [[ -n "\${UVSS_RC_TEST_STARTED_FILE:-}" ]]; then
             printf '%s\n' "\$\$" >> "\$UVSS_RC_TEST_STARTED_FILE"
         fi
-        exec -a "\$0" bash -c '
-            if [[ -n "\${UVSS_RC_TEST_CONTROL_SOCKET:-}" ]]; then
-                # Represent the daemon control socket in the background so the
-                # readiness check does not depend on Python start time.
-                (
-                    python3 -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" "\$UVSS_RC_TEST_CONTROL_SOCKET" 2>/dev/null || true
-                ) &
-            fi
-            if [[ "\${UVSS_RC_TEST_IGNORE_TERM:-0}" == 1 ]]; then
-                trap "" TERM
-            else
-                trap "exit 0" TERM
-            fi
-            # The real daemon records the emhttpd heartbeat on SIGUSR2. The fake
-            # daemon mirrors that by writing the poll marker file when signalled.
-            if [[ -n "\${UVSS_RC_TEST_POLL_FILE:-}" ]]; then
-                trap "printf poll > \"\$UVSS_RC_TEST_POLL_FILE\"" USR2
-            fi
-            while :; do
-                sleep 0.1 &
-                wait "\$!" || true
-            done
-        '
+        cd -- "\$(dirname -- "\$0")"
+        exec -a "\$0" bash serve
         ;;
     disks)
         shift
@@ -304,6 +311,25 @@ if [[ "$refresh_output" != *"is not running"* ]] || ! kill -0 "$foreign_pid" 2>/
     exit 1
 fi
 rm -f "$pid_file"
+kill "$foreign_pid" 2>/dev/null || true
+wait "$foreign_pid" 2>/dev/null || true
+foreign_pid=""
+
+# PID reuse may also point at another invocation of the UVSS binary. Matching
+# argv[0] alone is insufficient: only the long-lived `serve` subcommand is the
+# daemon and may be signalled by this service script.
+(exec -a "$fake_binary_path" yes disks >/dev/null) &
+foreign_pid=$!
+printf '%s\n' "$foreign_pid" > "$pid_file"
+stop_output="$(run_rc stop)"
+if [[ "$stop_output" != *"is not running"* ]] || ! kill -0 "$foreign_pid" 2>/dev/null; then
+    echo "stale PID file caused another UVSS command to be signalled: $stop_output" >&2
+    exit 1
+fi
+rm -f "$pid_file"
+kill "$foreign_pid" 2>/dev/null || true
+wait "$foreign_pid" 2>/dev/null || true
+foreign_pid=""
 
 process_is_alive() {
     local pid="$1" state
