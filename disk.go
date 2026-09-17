@@ -53,6 +53,8 @@ type diskCollector struct {
 	state                  diskStateTracker
 	policyLog              stickyErrorLog
 	policyError            string
+	lastValidPolicies      map[string]diskPolicy // guarded by refreshMu
+	haveValidPolicies      bool                  // guarded by refreshMu
 	smartSource            smartSourceState
 	fallbackLog            stickyErrorLog
 	lastSuccessfulSnapshot []diskRuntimeDisk
@@ -170,6 +172,15 @@ func (c *diskCollector) readInventory() ([]unraidDisk, error) {
 		policyFile = defaultDiskPolicyFile
 	}
 	policies, policyErr := readDiskPolicies(policyFile)
+	if policyErr == nil {
+		c.lastValidPolicies = policies
+		c.haveValidPolicies = true
+	} else if c.haveValidPolicies {
+		// A transient read or parse failure must not change the effective disk
+		// selection. Keep using the last configuration that was known to be
+		// valid while exposing the current file error through diagnostics.
+		policies = c.lastValidPolicies
+	}
 	c.policyLog.update(policyErr)
 	c.mu.Lock()
 	c.policyError = errorText(policyErr)

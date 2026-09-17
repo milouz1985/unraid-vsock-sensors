@@ -309,6 +309,48 @@ func TestDiskListCanExposeIncompleteEntryForExclusion(t *testing.T) {
 	}
 }
 
+func TestDiskCollectorKeepsLastValidPoliciesOnFileError(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", false)
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdi", true)
+	environment.write(t, environment.paths.disksINI,
+		"[disk1]\nid=internal\ndevice=sda\nrotational=1\nspundown=0\ntemp=35\n[disk2]\nid=external\ndevice=sdi\ntransport=ata\nrotational=1\nspundown=0\ntemp=36\n")
+	environment.write(t, environment.paths.policyFile, `{"internal":"exclude","external":"include"}`)
+
+	collector := environment.collector()
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); disk.id != "external" || disk.unavailable {
+		t.Fatalf("collector with valid policies = %#v; want external disk", disk)
+	}
+
+	// A malformed update must be reported without changing the effective disk
+	// selection. Falling back to Auto here would drop the USB disk and include
+	// the internal disk instead.
+	environment.write(t, environment.paths.policyFile, `{"internal":"invalid"}`)
+	environment.now = environment.now.Add(time.Second)
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); disk.id != "external" || disk.unavailable {
+		t.Fatalf("collector after invalid policies = %#v; want last-known-good external disk", disk)
+	}
+	if status := collector.status(); !strings.Contains(status.policyError, "disk policies file is invalid") {
+		t.Fatalf("collector policy error = %q", status.policyError)
+	}
+
+	// An absent policy file is a valid empty configuration, not another read
+	// failure. A reset must therefore replace the cached policies with Auto.
+	if err := os.Remove(environment.paths.policyFile); err != nil {
+		t.Fatal(err)
+	}
+	environment.now = environment.now.Add(time.Second)
+	collector.refresh()
+	if disk := requireSingleDisk(t, collector); disk.id != "internal" || disk.unavailable {
+		t.Fatalf("collector after policy reset = %#v; want Auto-selected internal disk", disk)
+	}
+	if status := collector.status(); status.policyError != "" {
+		t.Fatalf("collector policy error after reset = %q; want empty", status.policyError)
+	}
+}
+
 func TestInvalidDiskPolicyFileDoesNotBlockCollector(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sda", false)
