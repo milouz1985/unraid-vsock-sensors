@@ -199,3 +199,78 @@ func TestPublisherPublishesEmptyHBAInventory(t *testing.T) {
 		t.Fatalf("cleared configuration = %q, want %q", got, want)
 	}
 }
+
+func TestSanitizeHWMonLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		label    string
+		fallback string
+		want     string
+	}{
+		{
+			name:     "control characters",
+			label:    " Mega\tRAID\n\x00 ",
+			fallback: "hba:sas:1234",
+			want:     "Mega RAID",
+		},
+		{
+			name:     "empty after sanitizing",
+			label:    "\t\r\n\x00",
+			fallback: "hba:sas:1234",
+			want:     "hba:sas:1234",
+		},
+		{
+			name:     "ASCII truncation",
+			label:    strings.Repeat("a", maxHWMonLabelSize+1),
+			fallback: "fallback",
+			want:     strings.Repeat("a", maxHWMonLabelSize),
+		},
+		{
+			name:     "UTF-8 truncation keeps rune boundary",
+			label:    strings.Repeat("é", 48),
+			fallback: "fallback",
+			want:     strings.Repeat("é", 47),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := sanitizeHWMonLabel(test.label, test.fallback); got != test.want {
+				t.Fatalf("sanitizeHWMonLabel(%q) = %q, want %q", test.label, got, test.want)
+			}
+		})
+	}
+}
+
+func TestMakeHWMonSamplesSanitizesDynamicLabels(t *testing.T) {
+	state := sensors.Response{
+		Disks: []sensors.Disk{{
+			ID:     "disk-id",
+			Name:   "disk\none",
+			Device: "sda",
+			Temp:   32,
+		}},
+		HBAs: []sensors.HBA{{
+			ID:         "sas:1234",
+			Model:      strings.Repeat("M", maxHWMonLabelSize+20) + "\tmodel",
+			PCIAddress: "0000:03:00.0",
+			Temp:       51,
+		}},
+	}
+
+	disks, hbas := makeHWMonSamples(state)
+	if got, want := disks[0].sensor.label, "disk one (sda)"; got != want {
+		t.Fatalf("disk label = %q, want %q", got, want)
+	}
+	if got := hbas[0].sensor.label; len(got) != maxHWMonLabelSize || strings.ContainsAny(got, "\t\r\n\x00") {
+		t.Fatalf("sanitized HBA label = %q (%d bytes)", got, len(got))
+	}
+
+	var encoded strings.Builder
+	if err := encodeHWMonSamples(&encoded, "disk", "configure", disks); err != nil {
+		t.Fatalf("encode sanitized disk sample: %v", err)
+	}
+	encoded.Reset()
+	if err := encodeHWMonSamples(&encoded, "hba", "configure", hbas); err != nil {
+		t.Fatalf("encode sanitized HBA sample: %v", err)
+	}
+}

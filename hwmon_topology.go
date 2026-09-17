@@ -4,6 +4,9 @@ package main
 
 import (
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
@@ -76,15 +79,17 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 		if disk.Unavailable {
 			temperature = hwmonFailsafeTemp
 		}
+		id := "disk:" + disk.ID
 		diskSamples = append(diskSamples, hwmonSample{
 			sensor: hwmonSensor{
-				id: "disk:" + disk.ID, label: fmt.Sprintf("%s (%s)", disk.Name, disk.Device),
+				id: id, label: sanitizeHWMonLabel(fmt.Sprintf("%s (%s)", disk.Name, disk.Device), id),
 			},
 			temperature:  temperature,
 			omitOnCommit: disk.Unavailable,
 		})
 	}
 	for _, hba := range state.HBAs {
+		id := "hba:" + hba.ID
 		label := hba.ID
 		if hba.Model != "" && hba.PCIAddress != "" {
 			label = fmt.Sprintf("%s (%s)", hba.Model, hba.PCIAddress)
@@ -94,11 +99,38 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 			label = hba.PCIAddress
 		}
 		hbaSamples = append(hbaSamples, hwmonSample{
-			sensor:      hwmonSensor{id: "hba:" + hba.ID, label: label},
+			sensor:      hwmonSensor{id: id, label: sanitizeHWMonLabel(label, id)},
 			temperature: hba.Temp,
 		})
 	}
 	return diskSamples, hbaSamples
+}
+
+// sanitizeHWMonLabel keeps presentation metadata from invalidating an otherwise
+// usable temperature sample. The virt_temp text protocol reserves control
+// characters and limits labels to maxHWMonLabelSize bytes. Keep the encoder's
+// strict validation as a final guard, but normalize dynamic labels before they
+// reach it.
+func sanitizeHWMonLabel(label, fallback string) string {
+	label = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, label)
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = fallback
+	}
+	if len(label) <= maxHWMonLabelSize {
+		return label
+	}
+
+	limit := maxHWMonLabelSize
+	for limit > 0 && !utf8.RuneStart(label[limit]) {
+		limit--
+	}
+	return label[:limit]
 }
 
 // Labels are configuration data: virt_temp commit updates temperatures only,
