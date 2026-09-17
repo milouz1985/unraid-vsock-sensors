@@ -67,7 +67,8 @@ func hbaStableID(sasAddress, pciAddress, serial string) string {
 		return "pci:" + pciAddress
 	}
 	if serial = hbaIdentityValue(serial); serial != "" {
-		return "serial:" + strings.ToLower(serial)
+		// Serial numbers are opaque identifiers; preserve their case.
+		return "serial:" + serial
 	}
 	return ""
 }
