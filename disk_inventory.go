@@ -22,10 +22,12 @@ type unraidDisk struct {
 }
 
 type diskInventoryEntry struct {
-	disk     unraidDisk
-	bus      diskBus
-	policy   diskPolicy
-	included bool
+	disk            unraidDisk
+	bus             diskBus
+	policy          diskPolicy
+	selected        bool
+	eligible        bool
+	validationError string
 }
 
 func readDiskInventory(disksINIPath, devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
@@ -33,19 +35,22 @@ func readDiskInventory(disksINIPath, devsINIPath string, selector *diskSelector)
 	if err != nil {
 		return nil, err
 	}
-	return includedDisks(entries), nil
+	return selectedDisks(entries), nil
 }
 
 // diskPolicyRow is the stable disk policy inventory exposed by the control API
-// and by `disks list`.
+// and by `disks list`. Selected is the policy/bus decision; Eligible is the
+// independent structural validity required by the thermal collector.
 type diskPolicyRow struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Device    string     `json:"device"`
-	Transport string     `json:"transport"`
-	Bus       diskBus    `json:"bus"`
-	Policy    diskPolicy `json:"policy"`
-	Included  bool       `json:"included"`
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	Device          string     `json:"device"`
+	Transport       string     `json:"transport"`
+	Bus             diskBus    `json:"bus"`
+	Policy          diskPolicy `json:"policy"`
+	Selected        bool       `json:"selected"`
+	Eligible        bool       `json:"eligible"`
+	ValidationError string     `json:"validation_error,omitempty"`
 }
 
 func inventoryRowsFromEntries(entries []diskInventoryEntry) []diskPolicyRow {
@@ -54,7 +59,7 @@ func inventoryRowsFromEntries(entries []diskInventoryEntry) []diskPolicyRow {
 		rows = append(rows, diskPolicyRow{
 			ID: entry.disk.id, Name: entry.disk.name, Device: entry.disk.device,
 			Transport: entry.disk.transport, Bus: entry.bus, Policy: entry.policy,
-			Included: entry.included,
+			Selected: entry.selected, Eligible: entry.eligible, ValidationError: entry.validationError,
 		})
 	}
 	return rows
@@ -108,10 +113,10 @@ func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSe
 	return merged, nil
 }
 
-func includedDisks(entries []diskInventoryEntry) []unraidDisk {
+func selectedDisks(entries []diskInventoryEntry) []unraidDisk {
 	var disks []unraidDisk
 	for _, entry := range entries {
-		if entry.included {
+		if entry.selected {
 			disks = append(disks, entry.disk)
 		}
 	}
@@ -148,8 +153,8 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, validateIn
 			}
 			seenIDs[id] = struct{}{}
 		}
-		bus, policy, included := selector.evaluate(id, name, device)
-		if included && validateIncluded {
+		bus, policy, selected := selector.evaluate(id, name, device)
+		if selected && validateIncluded {
 			if id == "" {
 				return nil, fmt.Errorf("active disk %q has no stable ID", name)
 			}
@@ -162,13 +167,16 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector, validateIn
 		}
 		disk, err := diskFromSection(section, unraidDisk{
 			id: id, name: name, device: device, transport: transport,
-		}, included && validateIncluded)
+		}, selected && validateIncluded)
 		if err != nil {
 			return nil, fmt.Errorf("disk %q: %w", name, err)
 		}
 		entry := diskInventoryEntry{
 			disk: disk,
-			bus:  bus, policy: policy, included: included,
+			bus:  bus, policy: policy, selected: selected,
+		}
+		if !validateIncluded {
+			entry.eligible, entry.validationError = diskManagementEligibility(section, disk)
 		}
 		entries = append(entries, entry)
 	}
@@ -208,8 +216,8 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 		if _, flash := flashDevices[device]; flash {
 			continue
 		}
-		bus, policy, included := selector.evaluate(id, name, device)
-		if included && validateIncluded {
+		bus, policy, selected := selector.evaluate(id, name, device)
+		if selected && validateIncluded {
 			if device == "" {
 				continue
 			}
@@ -222,13 +230,16 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 		}
 		disk, err := diskFromSection(section, unraidDisk{
 			id: id, name: name, device: device, transport: transport,
-		}, included && validateIncluded)
+		}, selected && validateIncluded)
 		if err != nil {
 			return nil, fmt.Errorf("unassigned disk %q: %w", name, err)
 		}
 		entry := diskInventoryEntry{
 			disk: disk,
-			bus:  bus, policy: policy, included: included,
+			bus:  bus, policy: policy, selected: selected,
+		}
+		if !validateIncluded {
+			entry.eligible, entry.validationError = diskManagementEligibility(section, disk)
 		}
 		if id == "" {
 			entries = append(entries, entry)
@@ -251,6 +262,29 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// diskManagementEligibility reports whether an inventory row currently has
+// the fields required by the strict thermal collector. Management inventory
+// keeps invalid rows visible so the user can still change their policy; this
+// check therefore records the reason instead of rejecting the whole listing.
+func diskManagementEligibility(section *ini.Section, disk unraidDisk) (bool, string) {
+	if disk.id == "" {
+		return false, "missing stable ID"
+	}
+	if len(disk.id) > maxUnraidDiskIDSize {
+		return false, fmt.Sprintf("stable ID is %d bytes; observed emhttpd limit is %d", len(disk.id), maxUnraidDiskIDSize)
+	}
+	if disk.device == "" {
+		return false, "missing or invalid device"
+	}
+	if _, err := parseBinaryDiskField(section, "rotational", true); err != nil {
+		return false, err.Error()
+	}
+	if _, err := parseBinaryDiskField(section, "spundown", true); err != nil {
+		return false, err.Error()
+	}
+	return true, ""
 }
 
 func diskTransport(section *ini.Section) string {

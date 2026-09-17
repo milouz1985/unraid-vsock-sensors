@@ -86,17 +86,17 @@ func TestPhysicalDiskBusAndPolicy(t *testing.T) {
 		usb, missing, broken, invalidDevice bool
 		policy                              diskPolicy
 		wantBus                             diskBus
-		wantIncluded                        bool
+		wantSelected                        bool
 	}{
 		{name: "USB transport behind USB", transport: "usb", usb: true, wantBus: diskBusUSB},
 		{name: "ATA passthrough behind USB", transport: "ata", usb: true, wantBus: diskBusUSB},
 		{name: "SCSI SATA behind USB", transport: "scsi-SATA", usb: true, wantBus: diskBusUSB},
-		{name: "internal ATA", transport: "ata", wantBus: diskBusNonUSB, wantIncluded: true},
-		{name: "internal NVMe", transport: "nvme", wantBus: diskBusNonUSB, wantIncluded: true},
-		{name: "USB label on non-USB hardware", transport: "usb", wantBus: diskBusNonUSB, wantIncluded: true},
-		{name: "missing sysfs", transport: "usb", missing: true, wantBus: diskBusUnknown, wantIncluded: true},
-		{name: "broken sysfs link", transport: "ata", broken: true, wantBus: diskBusUnknown, wantIncluded: true},
-		{name: "forced USB inclusion", transport: "ata", usb: true, policy: diskPolicyInclude, wantBus: diskBusUSB, wantIncluded: true},
+		{name: "internal ATA", transport: "ata", wantBus: diskBusNonUSB, wantSelected: true},
+		{name: "internal NVMe", transport: "nvme", wantBus: diskBusNonUSB, wantSelected: true},
+		{name: "USB label on non-USB hardware", transport: "usb", wantBus: diskBusNonUSB, wantSelected: true},
+		{name: "missing sysfs", transport: "usb", missing: true, wantBus: diskBusUnknown, wantSelected: true},
+		{name: "broken sysfs link", transport: "ata", broken: true, wantBus: diskBusUnknown, wantSelected: true},
+		{name: "forced USB inclusion", transport: "ata", usb: true, policy: diskPolicyInclude, wantBus: diskBusUSB, wantSelected: true},
 		{name: "forced internal exclusion", transport: "ata", policy: diskPolicyExclude, wantBus: diskBusNonUSB},
 		{name: "forced exclusion before device validation", transport: "ata", missing: true, invalidDevice: true, policy: diskPolicyExclude, wantBus: diskBusUnknown},
 		{name: "flash cannot be included", transport: "usb", logicalName: "flash", usb: true, policy: diskPolicyInclude, wantBus: diskBusUSB},
@@ -134,8 +134,8 @@ func TestPhysicalDiskBusAndPolicy(t *testing.T) {
 			if err != nil || len(entries) != 1 {
 				t.Fatalf("inventory entries = %#v, %v", entries, err)
 			}
-			if entries[0].bus != test.wantBus || entries[0].included != test.wantIncluded {
-				t.Fatalf("selection = %#v; want bus %s, included %t", entries[0], test.wantBus, test.wantIncluded)
+			if entries[0].bus != test.wantBus || entries[0].selected != test.wantSelected {
+				t.Fatalf("selection = %#v; want bus %s, selected %t", entries[0], test.wantBus, test.wantSelected)
 			}
 		})
 	}
@@ -187,18 +187,18 @@ func TestDiskBusFollowsSysfsTopologyWithSameIDAndDevice(t *testing.T) {
 			environment.write(t, environment.paths.disksINI,
 				"[disk1]\nid=stable_serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 			collector := environment.collector()
-			check := func(wantIncluded bool) {
+			check := func(wantSelected bool) {
 				t.Helper()
 				collector.refresh()
 				readings, err := collector.snapshot()
 				wantCount := 0
-				if wantIncluded {
+				if wantSelected {
 					wantCount = 1
 				}
 				if err != nil || len(readings) != wantCount || len(collector.state) != wantCount {
 					t.Fatalf("snapshot = %#v, %v; state = %#v; want %d disks", readings, err, collector.state, wantCount)
 				}
-				if wantIncluded && (readings[0].ID != "stable_serial" || readings[0].Temp != 35 || readings[0].Unavailable) {
+				if wantSelected && (readings[0].ID != "stable_serial" || readings[0].Temp != 35 || readings[0].Unavailable) {
 					t.Fatalf("included disk = %#v", readings[0])
 				}
 			}
@@ -290,7 +290,7 @@ func TestDiskPolicyPersistenceAndCommand(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &rows); err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].ID != id || rows[0].Device != "sdb" || rows[0].Policy != diskPolicyInclude || !rows[0].Included {
+	if len(rows) != 1 || rows[0].ID != id || rows[0].Device != "sdb" || rows[0].Policy != diskPolicyInclude || !rows[0].Selected || !rows[0].Eligible {
 		t.Fatalf("disk-policy list = %#v", rows)
 	}
 	if err := diskPolicyCommand([]string{"set", "--id-base64", encodedID, "--policy", "auto",
@@ -315,7 +315,7 @@ func TestDiskListCanExposeIncompleteEntryForExclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].disk.id != "stable_id" || entries[0].disk.device != "" || !entries[0].included {
+	if len(entries) != 1 || entries[0].disk.id != "stable_id" || entries[0].disk.device != "" || !entries[0].selected {
 		t.Fatalf("incomplete entry = %#v", entries)
 	}
 	// Excluding the disk makes the strict inventory accept it again.

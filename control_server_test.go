@@ -113,7 +113,7 @@ func TestControlServerLifecycleAndSocketCleanup(t *testing.T) {
 	if err := json.Unmarshal(body, &rows); err != nil {
 		t.Fatalf("decode inventory: %v", err)
 	}
-	if len(rows) != 1 || rows[0].ID != "serial" || rows[0].Device != "sda" || !rows[0].Included {
+	if len(rows) != 1 || rows[0].ID != "serial" || rows[0].Device != "sda" || !rows[0].Selected || !rows[0].Eligible || rows[0].ValidationError != "" {
 		t.Fatalf("inventory = %#v", rows)
 	}
 
@@ -273,7 +273,9 @@ func TestControlServerIncompleteDiskVisibleAndExcludable(t *testing.T) {
 	server := startControlServerForTest(t, environment, refresh)
 	client := controlClientForTest(t, server.socketPath)
 
-	// The incomplete disk is visible with an empty device and is includable.
+	// The incomplete disk is visible and selected by the policy rules, but it
+	// is explicitly marked ineligible instead of being presented as effectively
+	// collectable.
 	status, body, err := client.do(http.MethodGet, "/v1/disks", nil)
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("GET /v1/disks (incomplete) = %d, %v; body %q", status, err, body)
@@ -282,8 +284,8 @@ func TestControlServerIncompleteDiskVisibleAndExcludable(t *testing.T) {
 	if err := json.Unmarshal(body, &rows); err != nil {
 		t.Fatalf("decode incomplete inventory: %v", err)
 	}
-	if len(rows) != 1 || rows[0].ID != "stable_id" || rows[0].Device != "" || !rows[0].Included {
-		t.Fatalf("incomplete row = %#v; want stable_id, empty device, included", rows)
+	if len(rows) != 1 || rows[0].ID != "stable_id" || rows[0].Device != "" || !rows[0].Selected || rows[0].Eligible || !strings.Contains(rows[0].ValidationError, "device") {
+		t.Fatalf("incomplete row = %#v; want stable_id, selected, ineligible with device error", rows)
 	}
 
 	// Excluding the disk through the control API must succeed and persist. The
@@ -306,8 +308,8 @@ func TestControlServerIncompleteDiskVisibleAndExcludable(t *testing.T) {
 	if err := json.Unmarshal(body, &rowsAfter); err != nil {
 		t.Fatalf("decode inventory after exclude: %v", err)
 	}
-	if len(rowsAfter) != 1 || rowsAfter[0].ID != "stable_id" || rowsAfter[0].Policy != diskPolicyExclude || rowsAfter[0].Included {
-		t.Fatalf("row after exclude = %#v; want stable_id, exclude, not included", rowsAfter)
+	if len(rowsAfter) != 1 || rowsAfter[0].ID != "stable_id" || rowsAfter[0].Policy != diskPolicyExclude || rowsAfter[0].Selected || rowsAfter[0].Eligible || !strings.Contains(rowsAfter[0].ValidationError, "device") {
+		t.Fatalf("row after exclude = %#v; want stable_id, exclude, unselected and still ineligible", rowsAfter)
 	}
 }
 

@@ -615,13 +615,51 @@ func TestAutoExcludedUSBEntriesSkipStrictValidation(t *testing.T) {
 	environment.write(t, environment.paths.devsINI, "[external]\ntransport=\" USB \"\ndevice=sdj\nrotational=invalid\nspundown=invalid\n")
 	entries, err := readAssignedEntries(environment.paths.disksINI,
 		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, true)
-	if err != nil || len(entries) != 1 || entries[0].included {
+	if err != nil || len(entries) != 1 || entries[0].selected {
 		t.Fatalf("assigned USB entry = %#v, %v; want incomplete excluded disk", entries, err)
 	}
 	entries, err = readUnassignedEntries(environment.paths.devsINI,
 		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, nil, nil, nil, true)
-	if err != nil || len(entries) != 1 || entries[0].included {
+	if err != nil || len(entries) != 1 || entries[0].selected {
 		t.Fatalf("unassigned USB entry = %#v, %v; want invalid excluded disk", entries, err)
+	}
+}
+
+func TestManagementInventorySeparatesSelectionFromEligibility(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	addFakeBlockDevice(t, environment.paths.sysBlockRoot, "sdu", true)
+	environment.write(t, environment.paths.disksINI, strings.TrimSpace(`
+		[invalid]
+		id=invalid_internal
+		device=sda
+		transport=ata
+		rotational=invalid
+		spundown=0
+
+		[usb]
+		id=valid_usb
+		device=sdu
+		transport=ata
+		rotational=1
+		spundown=0
+	`)+"\n")
+
+	entries, err := readAssignedEntries(environment.paths.disksINI,
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, false)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("management inventory = %#v, %v", entries, err)
+	}
+	byID := make(map[string]diskInventoryEntry, len(entries))
+	for _, entry := range entries {
+		byID[entry.disk.id] = entry
+	}
+	invalid := byID["invalid_internal"]
+	if !invalid.selected || invalid.eligible || !strings.Contains(invalid.validationError, "rotational") {
+		t.Fatalf("invalid internal entry = %#v; want selected but ineligible", invalid)
+	}
+	usb := byID["valid_usb"]
+	if usb.selected || !usb.eligible || usb.validationError != "" {
+		t.Fatalf("valid USB entry = %#v; want unselected but eligible", usb)
 	}
 }
 

@@ -49,10 +49,12 @@ CLI y accèdent pour l'inventaire de gestion, les disk policies et le refresh
 manuel. Endpoints :
 
 - `GET /v1/disks` : inventaire de gestion (ID, nom, device, transport, bus,
-  politique, inclusion). Il est lu à la demande depuis le fichier de
-  politiques et les fichiers d'inventaire Unraid, avec `validateIncluded=false`
-  : un disque incomplet ou invalide reste visible afin de pouvoir être exclu.
-  Un fichier `disk-policies.json` invalide est signalé en `422`.
+  politique, sélection et éligibilité). `selected` représente le résultat des
+  règles de sélection (policy, bus USB et exclusion de la clé flash), tandis
+  que `eligible` indique si les champs d'inventaire requis par le collecteur
+  thermique sont actuellement valides. Une ligne non éligible reste visible et
+  expose `validation_error` afin de pouvoir être diagnostiquée ou exclue. Un
+  fichier `disk-policies.json` invalide est signalé en `422`.
 - `GET /v1/policies` : valide uniquement le fichier de politiques persisté,
   indépendamment de l'état thermique du collecteur ;
 - `PUT /v1/disk-policy` : enregistre une politique (`auto`/`include`/`exclude`)

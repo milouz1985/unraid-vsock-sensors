@@ -45,7 +45,8 @@ if (function_exists('curl_init') && function_exists('stream_socket_server') && f
         'list with one disk' => [
             'body' => json_encode([
                 ['id' => 'serial1', 'name' => 'disk1', 'device' => 'sda',
-                    'transport' => 'ata', 'bus' => 'non-USB', 'policy' => 'auto', 'included' => true],
+                    'transport' => 'ata', 'bus' => 'non-USB', 'policy' => 'auto',
+                    'selected' => true, 'eligible' => true],
             ]),
             'status' => 200,
             'assert' => function (array $r): bool {
