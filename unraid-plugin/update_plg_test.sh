@@ -50,6 +50,8 @@ if [[ "$output" != "$plugin_output" ]]; then
 fi
 grep -Fq '<!ENTITY version "2.0.0">' "$plugin_output"
 grep -Fq '<!ENTITY pluginURL "https://raw.githubusercontent.com/milouz1985/unraid-vsock-sensors/main/unraid-plugin/unraid-vsock-sensors.plg">' "$plugin_output"
+grep -Fq 'support="https://github.com/milouz1985/unraid-vsock-sensors/issues"' "$plugin_output"
+grep -Fq 'project="https://github.com/milouz1985/unraid-vsock-sensors"' "$plugin_output"
 grep -Fq "<!ENTITY package \"$package_name\">" "$plugin_output"
 grep -Fq "<!ENTITY packageURL \"https://github.com/milouz1985/unraid-vsock-sensors/releases/download/v2.0.0/$package_name\">" "$plugin_output"
 grep -Fq "<!ENTITY packageMD5 \"$package_md5\">" "$plugin_output"

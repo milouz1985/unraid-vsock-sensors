@@ -13,6 +13,8 @@
 
 <PLUGIN name="&name;" author="&author;" version="&version;"
         pluginURL="&pluginURL;" launch="Settings/UnraidVsockSensors"
+        support="https://github.com/milouz1985/unraid-vsock-sensors/issues"
+        project="https://github.com/milouz1985/unraid-vsock-sensors"
         min="6.12.0" icon="icon.png">
 <DESCRIPTION>
 Pushes disk temperatures from Unraid's disks.ini and devs.ini, and HBA
