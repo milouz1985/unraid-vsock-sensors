@@ -34,7 +34,6 @@ type diskInventoryEntry struct {
 	policy          diskPolicy
 	source          diskInventorySource
 	selected        bool
-	eligible        bool
 	validationError string
 }
 
@@ -67,7 +66,7 @@ func inventoryRowsFromEntries(entries []diskInventoryEntry) []diskPolicyRow {
 		rows = append(rows, diskPolicyRow{
 			ID: entry.disk.id, Name: entry.disk.name, Device: entry.disk.device,
 			Transport: entry.disk.transport, Bus: entry.bus, Policy: entry.policy,
-			Selected: entry.selected, Eligible: entry.eligible, ValidationError: entry.validationError,
+			Selected: entry.selected, Eligible: entry.validationError == "", ValidationError: entry.validationError,
 		})
 	}
 	return rows
@@ -133,36 +132,16 @@ func selectedDisks(entries []diskInventoryEntry) ([]unraidDisk, error) {
 		if entry.source == diskInventoryUnassigned && entry.disk.device == "" {
 			continue
 		}
-		if !entry.eligible {
-			return nil, selectedDiskValidationError(entry)
+		if entry.validationError != "" {
+			prefix := "active disk"
+			if entry.source == diskInventoryUnassigned {
+				prefix = "unassigned disk"
+			}
+			return nil, fmt.Errorf("%s %q: %s", prefix, entry.disk.name, entry.validationError)
 		}
 		disks = append(disks, entry.disk)
 	}
 	return disks, nil
-}
-
-func selectedDiskValidationError(entry diskInventoryEntry) error {
-	disk := entry.disk
-	prefix := "disk"
-	if entry.source == diskInventoryUnassigned {
-		prefix = "unassigned disk"
-	}
-	if disk.id == "" {
-		if entry.source == diskInventoryAssigned {
-			return fmt.Errorf("active disk %q has no stable ID", disk.name)
-		}
-		return fmt.Errorf("unassigned disk %q has no stable ID", disk.name)
-	}
-	if len(disk.id) > maxUnraidDiskIDSize {
-		if entry.source == diskInventoryAssigned {
-			return fmt.Errorf("active disk %q has a %d-byte stable ID; observed emhttpd limit is %d", disk.name, len(disk.id), maxUnraidDiskIDSize)
-		}
-		return fmt.Errorf("unassigned disk %q has a %d-byte stable ID; observed emhttpd limit is %d", disk.name, len(disk.id), maxUnraidDiskIDSize)
-	}
-	if disk.device == "" {
-		return fmt.Errorf("active disk %q has no device", disk.name)
-	}
-	return fmt.Errorf("%s %q: %s", prefix, disk.name, entry.validationError)
 }
 
 func readAssignedEntries(disksINIPath string, selector *diskSelector) ([]diskInventoryEntry, error) {
@@ -199,10 +178,9 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector) ([]diskInv
 		disk, thermalError := diskFromSection(section, unraidDisk{
 			id: id, name: name, device: device, transport: transport,
 		})
-		eligible, validationError := diskEligibility(disk, thermalError)
 		entries = append(entries, diskInventoryEntry{
 			disk: disk, bus: bus, policy: policy, source: diskInventoryAssigned,
-			selected: selected, eligible: eligible, validationError: validationError,
+			selected: selected, validationError: diskValidationError(disk, thermalError),
 		})
 	}
 	if sections == 0 {
@@ -245,10 +223,9 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 		disk, thermalError := diskFromSection(section, unraidDisk{
 			id: id, name: name, device: device, transport: transport,
 		})
-		eligible, validationError := diskEligibility(disk, thermalError)
 		entry := diskInventoryEntry{
 			disk: disk, bus: bus, policy: policy, source: diskInventoryUnassigned,
-			selected: selected, eligible: eligible, validationError: validationError,
+			selected: selected, validationError: diskValidationError(disk, thermalError),
 		}
 		if id == "" {
 			entries = append(entries, entry)
@@ -273,23 +250,20 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 	return entries, nil
 }
 
-// diskEligibility reports whether an inventory row currently has the fields
-// required by the thermal collector. Invalid rows remain representable so the
-// WebUI can expose and exclude them without reparsing the source section.
-func diskEligibility(disk unraidDisk, thermalError string) (bool, string) {
+// diskValidationError reports why an inventory row cannot be used by the
+// thermal collector. Invalid rows remain representable so the WebUI can expose
+// and exclude them without reparsing the source section.
+func diskValidationError(disk unraidDisk, thermalError string) string {
 	if disk.id == "" {
-		return false, "missing stable ID"
+		return "missing stable ID"
 	}
 	if len(disk.id) > maxUnraidDiskIDSize {
-		return false, fmt.Sprintf("stable ID is %d bytes; observed emhttpd limit is %d", len(disk.id), maxUnraidDiskIDSize)
+		return fmt.Sprintf("stable ID is %d bytes; observed emhttpd limit is %d", len(disk.id), maxUnraidDiskIDSize)
 	}
 	if disk.device == "" {
-		return false, "missing or invalid device"
+		return "missing or invalid device"
 	}
-	if thermalError != "" {
-		return false, thermalError
-	}
-	return true, ""
+	return thermalError
 }
 
 func diskTransport(section *ini.Section) string {

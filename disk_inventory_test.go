@@ -172,7 +172,7 @@ func TestUnraid72PresentAssignmentWithoutIdentityIsInvalid(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readDisks(path, unknownBusSelector(t)); err == nil || !strings.Contains(err.Error(), "has no stable ID") {
+	if _, err := readDisks(path, unknownBusSelector(t)); err == nil || !strings.Contains(err.Error(), "missing stable ID") {
 		t.Fatalf("read present disk without identity error = %v", err)
 	}
 }
@@ -654,11 +654,11 @@ func TestManagementInventorySeparatesSelectionFromEligibility(t *testing.T) {
 		byID[entry.disk.id] = entry
 	}
 	invalid := byID["invalid_internal"]
-	if !invalid.selected || invalid.eligible || !strings.Contains(invalid.validationError, "rotational") {
+	if !invalid.selected || invalid.validationError == "" || !strings.Contains(invalid.validationError, "rotational") {
 		t.Fatalf("invalid internal entry = %#v; want selected but ineligible", invalid)
 	}
 	usb := byID["valid_usb"]
-	if usb.selected || !usb.eligible || usb.validationError != "" {
+	if usb.selected || usb.validationError != "" {
 		t.Fatalf("valid USB entry = %#v; want unselected but eligible", usb)
 	}
 }
