@@ -248,10 +248,8 @@ func buildDiagnosticDisks(disks []diskRuntimeDisk) []diagnosticDisk {
 			if runtime.reused {
 				item.Status = diagnosticDiskRetained
 			}
-			if runtime.hasReading {
-				value := runtime.reading.Temp
-				item.Temperature = &value
-			}
+			value := runtime.reading.Temp
+			item.Temperature = &value
 		case diskThermalStandby:
 			item.Status = diagnosticDiskStandby
 		case diskThermalWaking:

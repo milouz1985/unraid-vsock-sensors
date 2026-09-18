@@ -69,7 +69,6 @@ type diskCollector struct {
 type diskRuntimeDisk struct {
 	disk            unraidDisk
 	reading         sensors.Disk
-	hasReading      bool
 	collectionError error
 	state           diskState
 	reused          bool
@@ -167,7 +166,7 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 		c.smartSource.recordFallbackResult(finishedAt, fallbackErr)
 		c.fallbackLog.update(fallbackErr)
 	}
-	runtimeDisks := c.buildDiskRuntimeSnapshot(disks, readings, observations)
+	runtimeDisks := c.buildDiskRuntimeSnapshot(readings, observations)
 	c.publishDiskSuccess(runtimeDisks, finishedAt, c.smartSource.status())
 }
 
@@ -244,9 +243,9 @@ func (c *diskCollector) reuseFallbackSnapshot(disks []unraidDisk) []diskRuntimeD
 	present := make(map[string]struct{}, len(disks))
 	for _, disk := range disks {
 		present[disk.id] = struct{}{}
-		previousRuntime := previous[disk.id]
+		previousRuntime, found := previous[disk.id]
 		reading := previousRuntime.reading
-		if !canReuse || !previousRuntime.hasReading {
+		if !canReuse || !found {
 			reading.Temp = 0
 			reading.Unavailable = true
 		}
@@ -255,7 +254,6 @@ func (c *diskCollector) reuseFallbackSnapshot(disks []unraidDisk) []diskRuntimeD
 		result = append(result, diskRuntimeDisk{
 			disk:            disk,
 			reading:         reading,
-			hasReading:      true,
 			collectionError: previousRuntime.collectionError,
 			state:           c.state[disk.id],
 			reused:          true,
@@ -285,11 +283,9 @@ func diskReadingsFromRuntime(runtimeDisks []diskRuntimeDisk) []sensors.Disk {
 	if runtimeDisks == nil {
 		return nil
 	}
-	readings := make([]sensors.Disk, 0, len(runtimeDisks))
-	for _, runtime := range runtimeDisks {
-		if runtime.hasReading {
-			readings = append(readings, runtime.reading)
-		}
+	readings := make([]sensors.Disk, len(runtimeDisks))
+	for i, runtime := range runtimeDisks {
+		readings[i] = runtime.reading
 	}
 	return readings
 }
@@ -316,27 +312,17 @@ func (c *diskCollector) status() diskCollectorStatus {
 }
 
 func (c *diskCollector) buildDiskRuntimeSnapshot(
-	disks []unraidDisk,
 	readings []sensors.Disk,
 	observations []diskObservation,
 ) []diskRuntimeDisk {
-	readingsByID := make(map[string]sensors.Disk, len(readings))
-	for _, reading := range readings {
-		readingsByID[reading.ID] = reading
-	}
-	errorsByID := make(map[string]error, len(observations))
-	for _, observation := range observations {
-		errorsByID[observation.disk.id] = observation.err
-	}
-
-	result := make([]diskRuntimeDisk, 0, len(disks))
-	for _, disk := range disks {
-		reading, hasReading := readingsByID[disk.id]
-		result = append(result, diskRuntimeDisk{
-			disk: disk, reading: reading, hasReading: hasReading,
-			collectionError: errorsByID[disk.id],
+	result := make([]diskRuntimeDisk, len(observations))
+	for i, observation := range observations {
+		disk := observation.disk
+		result[i] = diskRuntimeDisk{
+			disk: disk, reading: readings[i],
+			collectionError: observation.err,
 			state:           c.state[disk.id],
-		})
+		}
 	}
 	return result
 }

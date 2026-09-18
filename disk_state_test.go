@@ -156,8 +156,8 @@ func TestDiskSnapshotUsesRuntimeOrderAndReturnsCopy(t *testing.T) {
 	collector.err = nil
 	collector.updatedAt = now
 	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{
-		{reading: sensors.Disk{ID: "second", Temp: 52}, hasReading: true},
-		{reading: sensors.Disk{ID: "first", Temp: 41}, hasReading: true},
+		{reading: sensors.Disk{ID: "second", Temp: 52}},
+		{reading: sensors.Disk{ID: "first", Temp: 41}},
 	}
 
 	readings, err := collector.snapshot()

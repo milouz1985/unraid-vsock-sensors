@@ -26,8 +26,8 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 		},
 		disks: []diskRuntimeDisk{{
 			disk:    unraidDisk{id: "serial", name: "disk1"},
-			reading: sensors.Disk{ID: "serial", Name: "disk1", Temp: 35}, hasReading: true,
-			state: diskState{thermalState: diskThermalValid, lastValidAt: now.Add(-12 * time.Second), lastSource: diskSourceEmhttpd},
+			reading: sensors.Disk{ID: "serial", Name: "disk1", Temp: 35},
+			state:   diskState{thermalState: diskThermalValid, lastValidAt: now.Add(-12 * time.Second), lastSource: diskSourceEmhttpd},
 		}},
 	}
 	hbas := hbaCollectorStatus{interval: 15 * time.Second, mode: hbaModeDisabled, backend: hbaBackendMPT3CTL}
@@ -164,56 +164,45 @@ func TestWriteDiagnosticsRuntimeFile(t *testing.T) {
 	}
 }
 
-func TestBuildDiagnosticDisksUsesStableIDs(t *testing.T) {
+func TestBuildDiagnosticDisksPreservesObservationOrder(t *testing.T) {
 	now := time.Now()
 	disks := []unraidDisk{
 		{id: "one", name: "disk1", device: "sda"},
 		{id: "two", name: "disk2", device: "sdb", spundown: true},
 	}
-	readings := []sensors.Disk{
-		{ID: "two", Temp: 99}, // Deliberately reversed: must not leak to disk one.
-		{ID: "one", Temp: 30},
-	}
 	observations := []diskObservation{
 		{disk: disks[1], standby: true, source: diskSourceDirect},
-		{disk: disks[0], source: diskSourceDirect},
+		{disk: disks[0], temperature: 30, source: diskSourceDirect},
 	}
-	collector := &diskCollector{
-		state: diskStateTracker{
-			"one": {thermalState: diskThermalValid, lastValidAt: now.Add(-30 * time.Second), lastSource: diskSourceDirect},
-			"two": {thermalState: diskThermalStandby},
-		},
-	}
-	runtime := collector.buildDiskRuntimeSnapshot(disks, readings, observations)
+	collector := &diskCollector{state: make(diskStateTracker)}
+	readings := collector.state.apply(observations, now, 0)
+	runtime := collector.buildDiskRuntimeSnapshot(readings, observations)
 	items := buildDiagnosticDisks(runtime)
-	if items[0].Temperature == nil || *items[0].Temperature != 30 || items[0].Source != "direct SMART fallback" {
-		t.Fatalf("disk one received the wrong reading: %+v", items[0])
+	if items[0].ID != "two" || items[0].Status != "standby" || items[0].Temperature != nil {
+		t.Fatalf("standby sample: %+v", items[0])
 	}
-	if items[1].Status != "standby" || items[1].Temperature != nil {
-		t.Fatalf("standby sample: %+v", items[1])
+	if items[1].ID != "one" || items[1].Temperature == nil || *items[1].Temperature != 30 || items[1].Source != "direct SMART fallback" {
+		t.Fatalf("disk one received the wrong reading: %+v", items[1])
 	}
 }
 
 func TestBuildDiagnosticDisksHidesSyntheticTemperatures(t *testing.T) {
 	disks := []diskRuntimeDisk{
 		{
-			disk:       unraidDisk{id: "standby", name: "disk1"},
-			reading:    sensors.Disk{ID: "standby", Temp: 0},
-			hasReading: true,
-			state:      diskState{thermalState: diskThermalStandby},
+			disk:    unraidDisk{id: "standby", name: "disk1"},
+			reading: sensors.Disk{ID: "standby", Temp: 0},
+			state:   diskState{thermalState: diskThermalStandby},
 		},
 		{
 			disk:            unraidDisk{id: "waking", name: "disk2"},
 			reading:         sensors.Disk{ID: "waking", Temp: 0},
-			hasReading:      true,
 			collectionError: errors.New("temperature pending"),
 			state:           diskState{thermalState: diskThermalWaking},
 		},
 		{
-			disk:       unraidDisk{id: "zero", name: "disk3"},
-			reading:    sensors.Disk{ID: "zero", Temp: 0},
-			hasReading: true,
-			state:      diskState{thermalState: diskThermalValid},
+			disk:    unraidDisk{id: "zero", name: "disk3"},
+			reading: sensors.Disk{ID: "zero", Temp: 0},
+			state:   diskState{thermalState: diskThermalValid},
 		},
 	}
 	items := buildDiagnosticDisks(disks)

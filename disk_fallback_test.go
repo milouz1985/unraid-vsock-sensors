@@ -551,8 +551,8 @@ func TestFallbackReuseUsesStableIDAcrossTransportChange(t *testing.T) {
 	collector := newDiskCollector(diskDataPaths{})
 	collector.err = nil
 	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{
-		{disk: unraidDisk{id: "first", device: "nvme0n1", transport: "nvme"}, reading: sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41}, hasReading: true},
-		{disk: unraidDisk{id: "second", device: "nvme1n1", transport: "nvme"}, reading: sensors.Disk{ID: "second", Device: "nvme1n1", Transport: "nvme", Temp: 52}, hasReading: true},
+		{disk: unraidDisk{id: "first", device: "nvme0n1", transport: "nvme"}, reading: sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41}},
+		{disk: unraidDisk{id: "second", device: "nvme1n1", transport: "nvme"}, reading: sensors.Disk{ID: "second", Device: "nvme1n1", Transport: "nvme", Temp: 52}},
 	}
 	collector.state = diskStateTracker{"first": {}, "second": {}}
 
@@ -594,9 +594,8 @@ func TestFallbackReuseUsesStableIDAcrossTransportChange(t *testing.T) {
 func TestFallbackReuseDoesNotReviveSnapshotAfterCollectionFailure(t *testing.T) {
 	collector := newDiskCollector(diskDataPaths{})
 	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{{
-		disk:       unraidDisk{id: "first", device: "nvme0n1", transport: "nvme"},
-		reading:    sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41},
-		hasReading: true,
+		disk:    unraidDisk{id: "first", device: "nvme0n1", transport: "nvme"},
+		reading: sensors.Disk{ID: "first", Device: "nvme0n1", Transport: "nvme", Temp: 41},
 	}}
 	collector.err = errors.New("inventory failed")
 	wantState := diskState{
