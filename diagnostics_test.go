@@ -104,7 +104,7 @@ func TestCollectorStatusReturnsIndependentCopies(t *testing.T) {
 		t.Fatalf("disk status mutated collector: %q", got)
 	}
 
-	hbas := newConfiguredHBACollector(time.Minute, hbaModeEnabled, hbaBackendMPT3CTL)
+	hbas := newTestHBACollector(time.Minute, hbaModeEnabled)
 	hbas.lastSuccessfulSnapshot = []sensors.HBA{{ID: "sas:1", Temp: 45}}
 	hbaStatus := hbas.status()
 	hbaStatus.lastSuccessfulSnapshot[0].Temp = 99
@@ -146,7 +146,7 @@ func TestWriteDiagnosticsRuntimeFile(t *testing.T) {
 	now := time.Now()
 	snapshot := buildDiagnosticsSnapshot(
 		newServiceState(990).status(), newDiskCollector(diskDataPaths{}).status(),
-		newConfiguredHBACollector(15*time.Second, hbaModeDisabled, hbaBackendMPT3CTL).status(), now,
+		newTestHBACollector(15*time.Second, hbaModeDisabled).status(), now,
 	)
 	if err := writeDiagnosticsAtomic(path, snapshot); err != nil {
 		t.Fatal(err)

@@ -39,8 +39,8 @@ load_config() {
                 key="${BASH_REMATCH[1]}"
                 value="${BASH_REMATCH[2]}"
                 # HBA_INTERVAL existed before refresh rates became fixed per
-                # backend. Accept and ignore it so persisted pre-upgrade
-                # configurations keep starting until the UI rewrites the file.
+                # backend. update.php preserves existing keys that are absent
+                # from the form, so accept and ignore it for compatibility.
                 if [[ "$key" != "HBA_INTERVAL" ]]; then
                     printf -v "$key" '%s' "$value"
                 fi

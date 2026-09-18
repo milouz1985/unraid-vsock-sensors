@@ -98,11 +98,11 @@ func serve(args []string) error {
 		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
 	}
 	hbaBackend := hbaBackendMode(*hbaBackendValue)
-	hbaInterval, err := hbaRefreshInterval(hbaBackend)
-	if err != nil {
+	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
 		return err
 	}
-	if err := vsockaddr.ValidatePort(uint64(*port)); err != nil {
+	hbas, err := newConfiguredHBACollector(hbaMode, hbaBackend)
+	if err != nil {
 		return err
 	}
 	if *useSyslog {
@@ -136,7 +136,6 @@ func serve(args []string) error {
 			}
 		}
 	}()
-	hbas := newConfiguredHBACollector(hbaInterval, hbaMode, hbaBackend)
 	service := newServiceState(uint32(*port))
 	// The control socket is the WebUI entry point for disk inventory and policy
 	// mutations.

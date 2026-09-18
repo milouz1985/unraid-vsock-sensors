@@ -104,16 +104,6 @@ type hbaSnapshotReader interface {
 	collect(context.Context) ([]sensors.HBA, error)
 }
 
-func newHBAReaderForBackend(mode hbaBackendMode) hbaSnapshotReader {
-	if mode == hbaBackendStorCLI {
-		return &storCLIReader{
-			discoverMetadata: discoverStorCLIHBAs,
-			readTemperatures: readStorCLITemperatures,
-		}
-	}
-	return newMPT3Reader()
-}
-
 type hbaMode string
 
 const (
@@ -132,29 +122,34 @@ var (
 	errHBABackendUnavailable = errors.New("HBA backend unavailable")
 )
 
-func hbaRefreshInterval(backend hbaBackendMode) (time.Duration, error) {
+func newConfiguredHBACollector(mode hbaMode, backend hbaBackendMode) (*hbaCollector, error) {
+	var interval time.Duration
+	var reader hbaSnapshotReader
 	switch backend {
 	case hbaBackendMPT3CTL:
-		return hbaMPT3CTLRefreshInterval, nil
+		interval = hbaMPT3CTLRefreshInterval
+		reader = newMPT3Reader()
 	case hbaBackendStorCLI:
-		return hbaStorCLIRefreshInterval, nil
+		interval = hbaStorCLIRefreshInterval
+		reader = &storCLIReader{
+			discoverMetadata: discoverStorCLIHBAs,
+			readTemperatures: readStorCLITemperatures,
+		}
 	default:
-		return 0, fmt.Errorf("invalid HBA backend %q (expected mpt3ctl or storcli)", backend)
+		return nil, fmt.Errorf("invalid HBA backend %q (expected mpt3ctl or storcli)", backend)
 	}
-}
 
-func newConfiguredHBACollector(interval time.Duration, mode hbaMode, backend hbaBackendMode) *hbaCollector {
 	c := &hbaCollector{
 		interval: interval,
 		mode:     mode,
 		backend:  backend,
 		err:      errors.New("HBA temperatures have not been collected yet"),
-		reader:   newHBAReaderForBackend(backend),
+		reader:   reader,
 	}
 	if mode == hbaModeDisabled {
 		c.err = nil
 	}
-	return c
+	return c, nil
 }
 
 func (c *hbaCollector) run(ctx context.Context) {

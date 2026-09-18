@@ -86,7 +86,7 @@ func TestPublisherClosesConnectionDuringSnapshotWait(t *testing.T) {
 	}
 }
 
-func TestHBARefreshInterval(t *testing.T) {
+func TestConfiguredHBACollectorUsesBackendInterval(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		backend hbaBackendMode
@@ -98,9 +98,12 @@ func TestHBARefreshInterval(t *testing.T) {
 		{name: "invalid", backend: "unknown", wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := hbaRefreshInterval(test.backend)
-			if got != test.want || (err != nil) != test.wantErr {
-				t.Fatalf("hbaRefreshInterval() = %s, %v; want %s, error=%v", got, err, test.want, test.wantErr)
+			collector, err := newConfiguredHBACollector(hbaModeEnabled, test.backend)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("newConfiguredHBACollector() error = %v; want error=%v", err, test.wantErr)
+			}
+			if err == nil && collector.interval != test.want {
+				t.Fatalf("collector interval = %s; want %s", collector.interval, test.want)
 			}
 		})
 	}

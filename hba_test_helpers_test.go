@@ -10,7 +10,12 @@ import (
 )
 
 func newTestHBACollector(interval time.Duration, mode hbaMode) *hbaCollector {
-	return newConfiguredHBACollector(interval, mode, hbaBackendMPT3CTL)
+	collector, err := newConfiguredHBACollector(mode, hbaBackendMPT3CTL)
+	if err != nil {
+		panic(err)
+	}
+	collector.interval = interval
+	return collector
 }
 
 type hbaSnapshotReaderFunc func(context.Context) ([]sensors.HBA, error)
