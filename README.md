@@ -102,9 +102,9 @@ La page **Diagnostics**, accessible depuis la page du plugin, lit en lecture
 seule l'instantané JSON publié par le daemon. Elle ne déclenche aucune collecte
 SMART. Un heartbeat emhttpd stale active temporairement le fallback SMART direct ; cela
 n'indique pas nécessairement une panne de disque. Un lien VSOCK déconnecté
-signifie que le récepteur Proxmox n'est pas joignable. Les températures des
-disques en veille peuvent naturellement être indisponibles. Les IDs disque du
-diagnostic peuvent contenir des numéros de série : les masquer avant partage.
+signifie que le récepteur Proxmox n'est pas joignable. Les disques en veille restent présents avec une sentinelle synthétique à `0 °C` ;
+les diagnostics l’affichent comme un état `standby` sans température physique. Les
+IDs disque du diagnostic peuvent contenir des numéros de série : les masquer avant partage.
 
 Le backend `mpt3ctl` ne nécessite aucun utilitaire externe mais reste
 expérimental. Il est utilisé par l'auteur avec un LSI SAS3008.
