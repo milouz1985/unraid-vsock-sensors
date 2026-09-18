@@ -268,7 +268,8 @@ func timePointer(value time.Time) *time.Time {
 	if value.IsZero() {
 		return nil
 	}
-	return &value
+	copy := value
+	return &copy
 }
 func ageSeconds(value *time.Time, now time.Time) *int64 {
 	if value == nil {

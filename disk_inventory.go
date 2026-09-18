@@ -83,8 +83,10 @@ func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSe
 		if entry.disk.id != "" {
 			assignedIDs[entry.disk.id] = struct{}{}
 		}
-		if strings.EqualFold(entry.disk.name, "flash") && entry.disk.device != "" {
-			flashDevices[entry.disk.device] = struct{}{}
+		if strings.EqualFold(entry.disk.name, "flash") {
+			if entry.disk.device != "" {
+				flashDevices[entry.disk.device] = struct{}{}
+			}
 		}
 	}
 	unassigned, err := readUnassignedEntries(devsINIPath, selector, assignedIDs, flashDevices)
@@ -190,8 +192,10 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 		// Skip copies of assigned disks before any validation. A shadowed entry
 		// must not trigger duplicate detection, policy evaluation, or thermal
 		// field validation.
-		if _, assigned := assignedIDs[id]; assigned {
-			continue
+		if id != "" {
+			if _, assigned := assignedIDs[id]; assigned {
+				continue
+			}
 		}
 		if _, flash := flashDevices[device]; flash {
 			continue
@@ -277,7 +281,10 @@ func parseBinaryDiskField(section *ini.Section, name string) (bool, error) {
 }
 
 func normalizeDiskDevice(device string) string {
-	device = strings.TrimPrefix(strings.TrimSpace(device), "/dev/")
+	device = strings.TrimSpace(device)
+	if strings.HasPrefix(device, "/dev/") {
+		device = strings.TrimPrefix(device, "/dev/")
+	}
 	if device == "." || device == ".." || strings.ContainsRune(device, filepath.Separator) {
 		return ""
 	}

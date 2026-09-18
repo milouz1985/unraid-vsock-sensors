@@ -14,9 +14,12 @@ import (
 )
 
 const (
-	diskWatchdogInterval = 5 * time.Second
-	diskSnapshotTimeout  = 3 * diskWatchdogInterval
-	diskWakeMargin       = 5 * time.Second
+	defaultDisksINIPath     = "/var/local/emhttp/disks.ini"
+	defaultDevsINIPath      = "/var/local/emhttp/devs.ini"
+	defaultUnraidVarINIPath = "/var/local/emhttp/var.ini"
+	diskWatchdogInterval    = 5 * time.Second
+	diskSnapshotTimeout     = 3 * diskWatchdogInterval
+	diskWakeMargin          = 5 * time.Second
 )
 
 type diskDataPaths struct {
@@ -30,13 +33,10 @@ type diskDataPaths struct {
 }
 
 var defaultDiskDataPaths = diskDataPaths{
-	disksINI:     "/var/local/emhttp/disks.ini",
-	devsINI:      "/var/local/emhttp/devs.ini",
-	varINI:       "/var/local/emhttp/var.ini",
-	sysBlockRoot: defaultSysBlockRoot,
-	policyFile:   defaultDiskPolicyFile,
-	sdspin:       defaultSDSpinPath,
-	smartctlType: defaultSmartctlTypePath,
+	disksINI: defaultDisksINIPath, devsINI: defaultDevsINIPath,
+	varINI:       defaultUnraidVarINIPath,
+	sysBlockRoot: defaultSysBlockRoot, policyFile: defaultDiskPolicyFile,
+	sdspin: defaultSDSpinPath, smartctlType: defaultSmartctlTypePath,
 }
 
 type diskCollector struct {

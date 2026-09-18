@@ -180,7 +180,9 @@ func (s *controlServer) stop() {
 	// Shutdown closes the listener before waiting for active handlers.
 	_ = s.server.Shutdown(shutdownCtx)
 	cancel()
-	<-s.done
+	if s.done != nil {
+		<-s.done
+	}
 }
 
 func (s *controlServer) registerRoutes(mux *http.ServeMux) {
