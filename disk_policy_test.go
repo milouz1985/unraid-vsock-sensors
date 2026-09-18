@@ -161,7 +161,7 @@ func TestPhysicalDiskBusAndPolicy(t *testing.T) {
 				policies["stable_id"] = test.policy
 			}
 			selector := &diskSelector{sysBlockRoot: environment.paths.sysBlockRoot, policies: policies}
-			entries, err := readAssignedEntries(environment.paths.disksINI, selector, true)
+			entries, err := readAssignedEntries(environment.paths.disksINI, selector)
 			if err != nil || len(entries) != 1 {
 				t.Fatalf("inventory entries = %#v, %v", entries, err)
 			}
@@ -274,7 +274,7 @@ func TestDiskListCanExposeIncompleteEntryForExclusion(t *testing.T) {
 	environment.write(t, environment.paths.disksINI,
 		"[disk1]\nid=stable_id\ndevice=../invalid\ntransport=ata\nrotational=1\nspundown=0\n")
 	selector := &diskSelector{sysBlockRoot: environment.paths.sysBlockRoot, policies: map[string]diskPolicy{}}
-	entries, err := readDiskInventoryEntries(environment.paths.disksINI, environment.paths.devsINI, selector, false)
+	entries, err := readDiskInventoryEntries(environment.paths.disksINI, environment.paths.devsINI, selector)
 	if err != nil {
 		t.Fatal(err)
 	}

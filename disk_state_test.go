@@ -64,19 +64,19 @@ func (c *diskCollector) refresh() {
 }
 
 func readDisks(disksINIPath string, selector *diskSelector) ([]unraidDisk, error) {
-	entries, err := readAssignedEntries(disksINIPath, selector, true)
+	entries, err := readAssignedEntries(disksINIPath, selector)
 	if err != nil {
 		return nil, err
 	}
-	return selectedDisks(entries), nil
+	return selectedDisks(entries)
 }
 
 func readUnassignedDisks(devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
-	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil, nil, true)
+	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	return selectedDisks(entries), nil
+	return selectedDisks(entries)
 }
 
 func requireSingleDisk(t *testing.T, collector *diskCollector) sensorsDisk {

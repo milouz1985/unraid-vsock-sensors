@@ -397,7 +397,7 @@ func TestDiskInventoryPrefersUsableUnassignedDuplicateInManagementView(t *testin
 			environment.write(t, environment.paths.devsINI, test.data)
 
 			entries, err := readDiskInventoryEntries(environment.paths.disksINI, environment.paths.devsINI,
-				&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, false)
+				&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -425,7 +425,7 @@ func TestDiskInventoryCollapsesIncompleteUnassignedDuplicates(t *testing.T) {
 			"[stale2]\nid=serial\ndevice=../../invalid\nrotational=1\nspundown=1\n")
 
 	entries, err := readDiskInventoryEntries(environment.paths.disksINI, environment.paths.devsINI,
-		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, false)
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +450,7 @@ func TestDiskInventoryManagementViewRejectsTwoUsableUnassignedDuplicates(t *test
 			"[dev2]\nid=serial\ndevice=sdb\nrotational=1\nspundown=0\n")
 
 	entries, err := readDiskInventoryEntries(environment.paths.disksINI, environment.paths.devsINI,
-		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, false)
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if entries != nil || err == nil || !strings.Contains(err.Error(), `duplicate disk ID "serial" in devs.ini`) {
 		t.Fatalf("management inventory = %#v, %v; want duplicate stable ID error", entries, err)
 	}
@@ -614,12 +614,12 @@ func TestAutoExcludedUSBEntriesSkipStrictValidation(t *testing.T) {
 	environment.write(t, environment.paths.disksINI, "[disk1]\ntransport=usb\ndevice=sdi\n")
 	environment.write(t, environment.paths.devsINI, "[external]\ntransport=\" USB \"\ndevice=sdj\nrotational=invalid\nspundown=invalid\n")
 	entries, err := readAssignedEntries(environment.paths.disksINI,
-		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, true)
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil || len(entries) != 1 || entries[0].selected {
 		t.Fatalf("assigned USB entry = %#v, %v; want incomplete excluded disk", entries, err)
 	}
 	entries, err = readUnassignedEntries(environment.paths.devsINI,
-		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, nil, nil, nil, true)
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, nil, nil, nil)
 	if err != nil || len(entries) != 1 || entries[0].selected {
 		t.Fatalf("unassigned USB entry = %#v, %v; want invalid excluded disk", entries, err)
 	}
@@ -645,7 +645,7 @@ func TestManagementInventorySeparatesSelectionFromEligibility(t *testing.T) {
 	`)+"\n")
 
 	entries, err := readAssignedEntries(environment.paths.disksINI,
-		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, false)
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot})
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("management inventory = %#v, %v", entries, err)
 	}

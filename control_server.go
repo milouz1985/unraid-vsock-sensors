@@ -242,17 +242,17 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 }
 
 // managementInventory builds the disk policy view served to the WebUI. It is
-// read on demand from the current policy file and the Unraid inventory files
-// with validateIncluded=false so that an incomplete or invalid disk still
-// appears and can be excluded. It does not depend on the collector's thermal
-// state.
+// read on demand from the current policy file and the Unraid inventory files.
+// Inventory parsing always preserves incomplete rows and their eligibility so
+// the WebUI can still exclude them. It does not depend on the collector's
+// thermal state.
 func (s *controlServer) managementInventory() ([]diskPolicyRow, error) {
 	policies, policyErr := readDiskPolicies(s.policies.path)
 	if policyErr != nil {
 		return nil, policyErr
 	}
 	selector := &diskSelector{sysBlockRoot: s.sysBlockRoot, policies: policies}
-	entries, err := readDiskInventoryEntries(s.disksINIPath, s.devsINIPath, selector, false)
+	entries, err := readDiskInventoryEntries(s.disksINIPath, s.devsINIPath, selector)
 	if err != nil {
 		return nil, err
 	}
