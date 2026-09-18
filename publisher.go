@@ -148,18 +148,14 @@ func publishSnapshotsWithDialer(
 		conn, err := dial(connectCtx)
 		cancel()
 		if err != nil {
-			if state != nil {
-				state.disconnected(err)
-			}
+			state.disconnected(err)
 			publishLog.update(err)
 			if !waitFor(ctx, defaultPublishInterval) {
 				break
 			}
 			continue
 		}
-		if state != nil {
-			state.connectedNow()
-		}
+		state.connectedNow()
 		err = publishConnection(ctx, conn, disks, hbas, state, &publishLog)
 		if err != nil && ctx.Err() == nil && !waitFor(ctx, defaultPublishInterval) {
 			break
@@ -176,16 +172,12 @@ func publishConnection(ctx context.Context, conn snapshotConnection, disks *disk
 			err = sensors.WriteFrame(conn, collectorSnapshot(disks, hbas))
 		}
 		if err != nil {
-			if state != nil {
-				state.disconnected(err)
-			}
+			state.disconnected(err)
 			publishLog.update(err)
 			return err
 		}
 		publishLog.update(nil)
-		if state != nil {
-			state.publishedNow()
-		}
+		state.publishedNow()
 		if !waitFor(ctx, defaultPublishInterval) {
 			return nil
 		}

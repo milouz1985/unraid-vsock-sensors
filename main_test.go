@@ -53,7 +53,7 @@ func TestPublisherClosesConnectionOnIOError(t *testing.T) {
 			conn := &closeCountingConnection{writeErr: test.writeErr, deadlineErr: test.deadlineErr}
 			log := stickyErrorLog{context: "test"}
 			err := publishConnection(context.Background(), conn,
-				newDiskCollector(diskDataPaths{}), newTestHBACollector(time.Minute, hbaModeDisabled), nil, &log)
+				newDiskCollector(diskDataPaths{}), newTestHBACollector(time.Minute, hbaModeDisabled), newServiceState(0), &log)
 			if err == nil || conn.closeCount.Load() != 1 {
 				t.Fatalf("publish = %v, closes = %d", err, conn.closeCount.Load())
 			}
@@ -69,7 +69,7 @@ func TestPublisherClosesConnectionAfterDialCancellation(t *testing.T) {
 		func(context.Context) (snapshotConnection, error) {
 			cancel()
 			return conn, nil
-		}, nil)
+		}, newServiceState(0))
 	if err != nil || conn.closeCount.Load() != 1 || conn.writes.Load() != 0 {
 		t.Fatalf("publish = %v, closes = %d, writes = %d", err, conn.closeCount.Load(), conn.writes.Load())
 	}
@@ -80,7 +80,7 @@ func TestPublisherClosesConnectionDuringSnapshotWait(t *testing.T) {
 	conn := &closeCountingConnection{onWrite: cancel}
 	err := publishSnapshotsWithDialer(ctx, newDiskCollector(diskDataPaths{}),
 		newTestHBACollector(time.Minute, hbaModeDisabled),
-		func(context.Context) (snapshotConnection, error) { return conn, nil }, nil)
+		func(context.Context) (snapshotConnection, error) { return conn, nil }, newServiceState(0))
 	if err != nil || conn.closeCount.Load() != 1 || conn.writes.Load() != 1 {
 		t.Fatalf("publish = %v, closes = %d, writes = %d", err, conn.closeCount.Load(), conn.writes.Load())
 	}
@@ -143,7 +143,7 @@ func capturePublishedSnapshots(
 		done <- publishSnapshotsWithDialer(ctx, disks, hbas, func(context.Context) (snapshotConnection, error) {
 			dials++
 			return client, nil
-		}, nil)
+		}, newServiceState(0))
 	}()
 
 	reader := sensors.NewFrameReader(server)
@@ -189,7 +189,7 @@ func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
 					dials++
 					return conn, nil
 				},
-				nil,
+				newServiceState(0),
 			)
 		}()
 
