@@ -39,9 +39,7 @@ func (c *diskCollector) collectFallback(ctx context.Context, disks []unraidDisk)
 	var next atomic.Int64
 	var workers sync.WaitGroup
 	for range min(fallbackWorkers, len(disks)) {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			for cycle.Err() == nil {
 				claimed := int(next.Add(1) - 1)
 				if claimed >= len(disks) {
@@ -50,7 +48,7 @@ func (c *diskCollector) collectFallback(ctx context.Context, disks []unraidDisk)
 				index := (start + claimed) % len(disks)
 				observations[index] = c.fallbackObservation(cycle, disks[index])
 			}
-		}()
+		})
 	}
 	workers.Wait()
 	c.fallbackCursor = (start + min(int(next.Load()), len(disks))) % len(disks)
@@ -83,10 +81,9 @@ func (c *diskCollector) fallbackObservation(ctx context.Context, disk unraidDisk
 			if errors.As(err, &exit) && exit.ExitCode() == 2 {
 				result.standby = true
 				result.err = nil
+				return result
 			}
-			if result.err != nil {
-				result.err = fmt.Errorf("sdspin status: %w", err)
-			}
+			result.err = fmt.Errorf("sdspin status: %w", err)
 			return result
 		}
 	}
