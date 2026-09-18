@@ -78,39 +78,23 @@ func readDiskInventoryEntries(disksINIPath, devsINIPath string, selector *diskSe
 		return nil, err
 	}
 	assignedIDs := make(map[string]struct{}, len(assigned))
-	flashIDs := make(map[string]struct{})
 	flashDevices := make(map[string]struct{})
 	for _, entry := range assigned {
 		if entry.disk.id != "" {
 			assignedIDs[entry.disk.id] = struct{}{}
 		}
 		if strings.EqualFold(entry.disk.name, "flash") {
-			if entry.disk.id != "" {
-				flashIDs[entry.disk.id] = struct{}{}
-			}
 			if entry.disk.device != "" {
 				flashDevices[entry.disk.device] = struct{}{}
 			}
 		}
 	}
-	unassigned, err := readUnassignedEntries(devsINIPath, selector, assignedIDs, flashIDs, flashDevices)
+	unassigned, err := readUnassignedEntries(devsINIPath, selector, assignedIDs, flashDevices)
 	if err != nil {
 		return nil, err
 	}
 
-	merged := make([]diskInventoryEntry, 0, len(assigned)+len(unassigned))
-	seenMergedIDs := make(map[string]struct{}, len(assigned)+len(unassigned))
-	// Assigned entries are visited first and win over devs.ini entries with
-	// the same stable ID.
-	for _, inventory := range [][]diskInventoryEntry{assigned, unassigned} {
-		for _, entry := range inventory {
-			if _, duplicate := seenMergedIDs[entry.disk.id]; duplicate && entry.disk.id != "" {
-				continue
-			}
-			seenMergedIDs[entry.disk.id] = struct{}{}
-			merged = append(merged, entry)
-		}
-	}
+	merged := append(assigned, unassigned...)
 	sort.Slice(merged, func(i, j int) bool {
 		if merged[i].disk.name == merged[j].disk.name {
 			return merged[i].disk.id < merged[j].disk.id
@@ -189,7 +173,7 @@ func readAssignedEntries(disksINIPath string, selector *diskSelector) ([]diskInv
 	return entries, nil
 }
 
-func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedIDs, flashIDs, flashDevices map[string]struct{}) ([]diskInventoryEntry, error) {
+func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedIDs, flashDevices map[string]struct{}) ([]diskInventoryEntry, error) {
 	config, err := ini.Load(devsINIPath)
 	if err != nil {
 		return nil, err
@@ -212,9 +196,6 @@ func readUnassignedEntries(devsINIPath string, selector *diskSelector, assignedI
 			if _, assigned := assignedIDs[id]; assigned {
 				continue
 			}
-		}
-		if _, flash := flashIDs[id]; flash {
-			continue
 		}
 		if _, flash := flashDevices[device]; flash {
 			continue

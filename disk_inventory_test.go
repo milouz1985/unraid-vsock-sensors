@@ -619,7 +619,7 @@ func TestAutoExcludedUSBEntriesSkipStrictValidation(t *testing.T) {
 		t.Fatalf("assigned USB entry = %#v, %v; want incomplete excluded disk", entries, err)
 	}
 	entries, err = readUnassignedEntries(environment.paths.devsINI,
-		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, nil, nil, nil)
+		&diskSelector{sysBlockRoot: environment.paths.sysBlockRoot}, nil, nil)
 	if err != nil || len(entries) != 1 || entries[0].selected {
 		t.Fatalf("unassigned USB entry = %#v, %v; want invalid excluded disk", entries, err)
 	}

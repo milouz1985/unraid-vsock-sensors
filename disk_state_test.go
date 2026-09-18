@@ -72,7 +72,7 @@ func readDisks(disksINIPath string, selector *diskSelector) ([]unraidDisk, error
 }
 
 func readUnassignedDisks(devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
-	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil, nil)
+	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil)
 	if err != nil {
 		return nil, err
 	}
