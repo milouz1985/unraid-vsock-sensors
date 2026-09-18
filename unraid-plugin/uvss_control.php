@@ -14,13 +14,9 @@ const UVSS_CONTROL_MUTATION_TIMEOUT = 5;
 /**
  * @return array<string,mixed>
  */
-function uvss_control_request(
-    string $method,
-    string $path,
-    ?array $body = null,
-    int $timeout = UVSS_CONTROL_RUNTIME_TIMEOUT,
-    bool $mutation = false
-): array {
+function uvss_control_request(string $method, string $path, ?array $body = null): array {
+    $mutation = $method !== 'GET';
+    $timeout = $mutation ? UVSS_CONTROL_MUTATION_TIMEOUT : UVSS_CONTROL_RUNTIME_TIMEOUT;
     if (!function_exists('curl_init')) {
         return ['ok' => false, 'kind' => 'transport', 'http_status' => 0,
             'error' => 'cURL extension is not available'];
@@ -97,19 +93,11 @@ function uvss_control_set_disk_policy(string $id, string $policy): array {
     return uvss_control_request(
         'PUT',
         '/v1/disk-policy',
-        ['id' => $id, 'policy' => $policy],
-        UVSS_CONTROL_MUTATION_TIMEOUT,
-        true
+        ['id' => $id, 'policy' => $policy]
     );
 }
 
 /** @return array<string,mixed> */
 function uvss_control_reset_disk_policies(): array {
-    return uvss_control_request(
-        'DELETE',
-        '/v1/disk-policies',
-        null,
-        UVSS_CONTROL_MUTATION_TIMEOUT,
-        true
-    );
+    return uvss_control_request('DELETE', '/v1/disk-policies');
 }
