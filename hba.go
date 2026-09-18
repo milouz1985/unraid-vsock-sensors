@@ -121,30 +121,26 @@ const (
 	hbaModeDisabled hbaMode = "disabled"
 )
 
-const hbaCollectionTimeout = 15 * time.Second
+const (
+	hbaMPT3CTLRefreshInterval = 15 * time.Second
+	hbaStorCLIRefreshInterval = 30 * time.Second
+	hbaCollectionTimeout      = 15 * time.Second
+)
 
 var (
 	errNoHBA                 = errors.New("no HBA controllers found")
 	errHBABackendUnavailable = errors.New("HBA backend unavailable")
 )
 
-func resolveHBAInterval(backend hbaBackendMode, interval time.Duration, explicit bool) (time.Duration, error) {
+func hbaRefreshInterval(backend hbaBackendMode) (time.Duration, error) {
 	switch backend {
 	case hbaBackendMPT3CTL:
-		if !explicit {
-			interval = 15 * time.Second
-		}
+		return hbaMPT3CTLRefreshInterval, nil
 	case hbaBackendStorCLI:
-		if !explicit {
-			interval = 30 * time.Second
-		}
+		return hbaStorCLIRefreshInterval, nil
 	default:
-		return 0, fmt.Errorf("invalid HBA backend %q", backend)
+		return 0, fmt.Errorf("invalid HBA backend %q (expected mpt3ctl or storcli)", backend)
 	}
-	if interval <= 0 {
-		return 0, errors.New("hba-interval must be greater than zero")
-	}
-	return interval, nil
 }
 
 func newConfiguredHBACollector(interval time.Duration, mode hbaMode, backend hbaBackendMode) *hbaCollector {

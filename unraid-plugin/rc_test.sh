@@ -173,8 +173,9 @@ run_rc stop >/dev/null
 
 run_rc start 0 "$script_dir/default.cfg" >/dev/null
 mapfile -t daemon_args < "$args_file"
+expected_args=(serve --port 990 --hba-mode enabled --hba-backend mpt3ctl --syslog)
 if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
-    echo "default plugin config forced an interval: ${daemon_args[*]}" >&2
+    echo "unexpected default plugin arguments: ${daemon_args[*]}" >&2
     exit 1
 fi
 run_rc stop >/dev/null
@@ -183,56 +184,26 @@ for backend in mpt3ctl storcli; do
     printf 'HBA_BACKEND="%s"\n' "$backend" > "$test_dir/hba.cfg"
     run_rc start 0 "$test_dir/hba.cfg" >/dev/null
     mapfile -t daemon_args < "$args_file"
-        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --syslog)
+    expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --syslog)
     if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
-        echo "$backend default forced an interval: ${daemon_args[*]}" >&2
+        echo "unexpected $backend arguments: ${daemon_args[*]}" >&2
         exit 1
     fi
     run_rc stop >/dev/null
-
-    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="1m"\n' "$backend" > "$test_dir/hba.cfg"
-    run_rc start 0 "$test_dir/hba.cfg" >/dev/null
-    mapfile -t daemon_args < "$args_file"
-        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval 1m --syslog)
-    if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
-        echo "$backend explicit interval was lost: ${daemon_args[*]}" >&2
-        exit 1
-    fi
-    run_rc stop >/dev/null
-
-    if [[ "$backend" == mpt3ctl ]]; then
-        backend_interval=10s
-        other_interval=5m
-    else
-        backend_interval=5m
-        other_interval=15s
-    fi
-    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="%s"\n' "$backend" "$backend_interval" > "$test_dir/hba.cfg"
-    run_rc start 0 "$test_dir/hba.cfg" >/dev/null
-    mapfile -t daemon_args < "$args_file"
-        expected_args=(serve --port 990 --hba-mode enabled --hba-backend "$backend" --hba-interval "$backend_interval" --syslog)
-    if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
-        echo "$backend rejected its own interval: ${daemon_args[*]}" >&2
-        exit 1
-    fi
-    run_rc stop >/dev/null
-
-    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="45s"\n' "$backend" > "$test_dir/hba.cfg"
-    if run_rc start 0 "$test_dir/hba.cfg" > "$test_dir/invalid.output" 2>&1; then
-        echo "$backend accepted an interval outside its fixed choices" >&2
-        exit 1
-    fi
-    if ! grep -Fq "refresh interval: 45s" "$test_dir/invalid.output"; then
-        echo "unexpected $backend invalid interval error: $(cat "$test_dir/invalid.output")" >&2
-        exit 1
-    fi
-
-    printf 'HBA_BACKEND="%s"\nHBA_INTERVAL="%s"\n' "$backend" "$other_interval" > "$test_dir/hba.cfg"
-    if run_rc start 0 "$test_dir/hba.cfg" > "$test_dir/invalid.output" 2>&1; then
-        echo "$backend accepted an interval reserved for the other backend" >&2
-        exit 1
-    fi
 done
+
+# HBA_INTERVAL was configurable before refresh rates became fixed per backend.
+# Existing persistent configs must remain usable across the upgrade, whatever
+# value they contain; the legacy setting is ignored.
+printf 'HBA_BACKEND="mpt3ctl"\nHBA_INTERVAL="5m"\n' > "$test_dir/legacy-hba.cfg"
+run_rc start 0 "$test_dir/legacy-hba.cfg" >/dev/null
+mapfile -t daemon_args < "$args_file"
+expected_args=(serve --port 990 --hba-mode enabled --hba-backend mpt3ctl --syslog)
+if [[ "${daemon_args[*]}" != "${expected_args[*]}" ]]; then
+    echo "legacy HBA_INTERVAL leaked into daemon arguments: ${daemon_args[*]}" >&2
+    exit 1
+fi
+run_rc stop >/dev/null
 
 # PID reuse may also point at another invocation of the UVSS binary. Matching
 # argv[0] alone is insufficient: only the long-lived `serve` subcommand is the

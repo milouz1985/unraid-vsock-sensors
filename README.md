@@ -92,17 +92,11 @@ Paramètres principaux :
 
 - **VSOCK port** : `990` ;
 - **HBA monitoring** : `enabled` ou `disabled` ;
-- **HBA backend** : `Native /dev/mpt3ctl` ou `StorCLI` ;
-- **HBA refresh interval** : `15s` par défaut avec `mpt3ctl`, `30s` avec
-  StorCLI.
+- **HBA backend** : `Native /dev/mpt3ctl` ou `StorCLI`.
 
-Le plugin propose :
-
-- `mpt3ctl` : `Default`, `10s`, `15s`, `30s`, `1m` ;
-- StorCLI : `Default`, `30s`, `1m`, `5m`.
-
-StorCLI utilise volontairement un intervalle plus long car sa collecte est plus
-coûteuse que l'accès ioctl natif MPT3.
+L'intervalle de collecte HBA est fixé automatiquement à `15s` avec `mpt3ctl`
+et à `30s` avec StorCLI. StorCLI utilise volontairement un intervalle plus long
+car sa collecte est plus coûteuse que l'accès ioctl natif MPT3.
 
 La page **Diagnostics**, accessible depuis la page du plugin, lit en lecture
 seule l'instantané JSON publié par le daemon. Elle ne déclenche aucune collecte

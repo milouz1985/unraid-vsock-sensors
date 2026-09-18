@@ -64,7 +64,6 @@ Serve options:
   --port PORT               AF_VSOCK port (default: 990)
   --hba-mode MODE           HBA collection: enabled or disabled (default: enabled)
   --hba-backend BACKEND     HBA backend: mpt3ctl or storcli (default: mpt3ctl)
-  --hba-interval DURATION   Delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)
   --syslog                  Send service logs to the system logger
 
 Hwmon options:
@@ -87,7 +86,6 @@ func serve(args []string) error {
 	port := fs.Uint("port", defaultPort, "vsock port")
 	hbaModeValue := fs.String("hba-mode", string(hbaModeEnabled), "HBA collection mode")
 	hbaBackendValue := fs.String("hba-backend", string(hbaBackendMPT3CTL), "HBA backend")
-	hbaIntervalValue := fs.Duration("hba-interval", 0, "delay between HBA refreshes (default: 15s mpt3ctl, 30s storcli)")
 	useSyslog := fs.Bool("syslog", false, "send service logs to syslog")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -95,21 +93,12 @@ func serve(args []string) error {
 	if fs.NArg() != 0 {
 		return errors.New("serve does not accept positional arguments")
 	}
-	intervalExplicit := false
-	fs.Visit(func(option *flag.Flag) {
-		if option.Name == "hba-interval" {
-			intervalExplicit = true
-		}
-	})
 	hbaMode := hbaMode(*hbaModeValue)
 	if hbaMode != hbaModeEnabled && hbaMode != hbaModeDisabled {
 		return fmt.Errorf("invalid HBA mode %q (expected enabled or disabled)", *hbaModeValue)
 	}
 	hbaBackend := hbaBackendMode(*hbaBackendValue)
-	if hbaBackend != hbaBackendMPT3CTL && hbaBackend != hbaBackendStorCLI {
-		return fmt.Errorf("invalid HBA backend %q (expected mpt3ctl or storcli)", *hbaBackendValue)
-	}
-	hbaInterval, err := resolveHBAInterval(hbaBackend, *hbaIntervalValue, intervalExplicit)
+	hbaInterval, err := hbaRefreshInterval(hbaBackend)
 	if err != nil {
 		return err
 	}
