@@ -138,6 +138,15 @@ func (s *controlServer) openListener() (net.Listener, error) {
 	return listener, nil
 }
 
+func (s *controlServer) newHTTPServer() *http.Server {
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return &http.Server{
+		Handler:     mux,
+		ReadTimeout: controlServerReadTimeout,
+	}
+}
+
 // start binds the Unix socket synchronously, then serves it in its own
 // goroutine. Failure to create the initial socket prevents daemon startup. A
 // later Serve failure is logged but deliberately does not stop the thermal
@@ -147,9 +156,7 @@ func (s *controlServer) start() error {
 	if err != nil {
 		return err
 	}
-	mux := http.NewServeMux()
-	s.registerRoutes(mux)
-	server := &http.Server{Handler: mux, ReadTimeout: controlServerReadTimeout}
+	server := s.newHTTPServer()
 	done := make(chan struct{})
 	s.server = server
 	s.done = done
