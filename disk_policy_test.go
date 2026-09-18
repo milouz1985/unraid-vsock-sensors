@@ -12,6 +12,40 @@ import (
 	"time"
 )
 
+func TestDiskPolicyStoreSkipsNoopWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disk-policies.json")
+	store := newDiskPolicyStore(path)
+	if err := store.Set("disk1", diskPolicyInclude); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Set("disk1", diskPolicyInclude); err != nil {
+		t.Fatal(err)
+	}
+	afterSamePolicy, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, afterSamePolicy) {
+		t.Fatal("setting an unchanged policy rewrote disk-policies.json")
+	}
+
+	if err := store.Set("missing", diskPolicyAuto); err != nil {
+		t.Fatal(err)
+	}
+	afterMissingAuto, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, afterMissingAuto) {
+		t.Fatal("setting Auto for an absent policy rewrote disk-policies.json")
+	}
+}
+
 func TestDiskPolicyStoreSerializesConcurrentSets(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "disk-policies.json")
 	store := newDiskPolicyStore(path)

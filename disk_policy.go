@@ -205,8 +205,14 @@ func (s *diskPolicyStore) Set(id string, policy diskPolicy) error {
 		return err
 	}
 	if policy == diskPolicyAuto {
+		if _, exists := policies[id]; !exists {
+			return nil
+		}
 		delete(policies, id)
 	} else {
+		if policies[id] == policy {
+			return nil
+		}
 		policies[id] = policy
 	}
 	return writeDiskPoliciesAtomic(s.path, policies)
