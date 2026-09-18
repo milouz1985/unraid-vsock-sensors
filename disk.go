@@ -44,8 +44,7 @@ type diskCollector struct {
 	watchdog time.Duration
 	now      func() time.Time
 
-	refreshMu              sync.Mutex
-	fallbackCursor         int // guarded by refreshMu
+	fallbackCursor         int
 	mu                     sync.RWMutex
 	err                    error
 	updatedAt              time.Time
@@ -53,15 +52,15 @@ type diskCollector struct {
 	state                  diskStateTracker
 	policyLog              stickyErrorLog
 	policyError            string
-	lastValidPolicies      map[string]diskPolicy // guarded by refreshMu
-	haveValidPolicies      bool                  // guarded by refreshMu
+	lastValidPolicies      map[string]diskPolicy
+	haveValidPolicies      bool
 	smartSource            smartSourceState
 	fallbackLog            stickyErrorLog
 	lastSuccessfulSnapshot []diskRuntimeDisk
 	publishedSource        smartSourceStatus
 
-	lastValidPollInterval time.Duration // guarded by refreshMu
-	haveValidPollInterval bool          // guarded by refreshMu
+	lastValidPollInterval time.Duration
+	haveValidPollInterval bool
 	pollLogInitialized    bool
 	lastPollInterval      time.Duration
 	lastPollError         string
@@ -128,9 +127,8 @@ func requestDiskRefresh(refresh chan<- struct{}) {
 }
 
 func (c *diskCollector) refreshWithContext(ctx context.Context) {
-	c.refreshMu.Lock()
-	defer c.refreshMu.Unlock()
-
+	// runDiskRefreshLoop is the sole production caller, so refresh state is
+	// serialized by the collection goroutine itself.
 	decisionAt := c.now()
 	pollInterval, configErr := c.effectivePollAttributes()
 	c.logPollAttributesChange(pollInterval, configErr)
