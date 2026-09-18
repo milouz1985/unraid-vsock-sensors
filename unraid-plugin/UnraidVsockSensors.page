@@ -3,16 +3,8 @@ Title="Unraid VSOCK Sensors"
 Icon="icon.png"
 ---
 <?php
-// The control helper is installed next to this page under the emhttp plugin
-// directory. Resolve it from the Unraid document root (the page lives in
-// /usr/local/emhttp/plugins/unraid-vsock-sensors) rather than a hard-coded
-// filesystem path.
-$uvssDocRoot = $_SERVER['DOCUMENT_ROOT'] ?: '/usr/local/emhttp';
-$uvssControlHelper = $uvssDocRoot . '/plugins/unraid-vsock-sensors/uvss_control.php';
-if (!is_file($uvssControlHelper)) {
-    $uvssControlHelper = __DIR__ . '/uvss_control.php';
-}
-require_once $uvssControlHelper;
+$docroot ??= ($_SERVER['DOCUMENT_ROOT'] ?: '/usr/local/emhttp');
+require_once $docroot . '/plugins/unraid-vsock-sensors/uvss_control.php';
 $plugin = 'unraid-vsock-sensors';
 $cfg = parse_plugin_cfg($plugin);
 $unraidState = @parse_ini_file('/var/local/emhttp/var.ini');
