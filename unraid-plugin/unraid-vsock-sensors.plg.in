@@ -26,7 +26,7 @@ temperatures over AF_VSOCK to Proxmox as native hwmon sensors.
 - Push persistent disk and HBA snapshots over VSOCK to Proxmox hwmon sensors, with saved topology and a stale-data failsafe.
 - Read temp and spundown from Unraid's disks.ini and devs.ini, and exclude USB disks by physical bus.
 - Add per-disk Auto, Include and Exclude policies with UI validation and reset.
-- Use backend-specific HBA polling defaults: 15 seconds for mpt3ctl and 30 seconds for StorCLI.
+- Use fixed backend-specific HBA polling intervals: 15 seconds for mpt3ctl and 30 seconds for StorCLI.
 
 ### 1.4.3 - 2026-08-31
 

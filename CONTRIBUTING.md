@@ -380,8 +380,8 @@ Exemples :
 
 ```text
 fix(disks): rejeter les IDs dupliqués dans chaque source Unraid
-feat(hba): adapter l'intervalle de rafraîchissement par défaut au backend
-fix(ui): conserver l'intervalle HBA sélectionné par backend
+refactor(hba): fixer l'intervalle selon le backend
+refactor(unraid): simplifier le bootstrap de la page
 docs: alléger et dédupliquer les README
 ```
 
