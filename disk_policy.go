@@ -17,9 +17,8 @@ const (
 	defaultDiskPolicyFile = "/boot/config/plugins/unraid-vsock-sensors/disk-policies.json"
 )
 
-// Error sentinels shared by the policy store and the control client. Callers
-// distinguish a bad caller value from a corrupted persisted file with
-// errors.Is instead of parsing error text.
+// Policy errors remain matchable with errors.Is so callers do not need to
+// distinguish failures by parsing error text.
 var (
 	// ErrInvalidDiskID is returned when a policy targets an empty or oversized
 	// stable disk ID.

@@ -7,7 +7,7 @@ Icon="icon.png"
 // directory. Resolve it from the Unraid document root (the page lives in
 // /usr/local/emhttp/plugins/unraid-vsock-sensors) rather than a hard-coded
 // filesystem path.
-$uvssDocRoot = $_SERVER['DOCUMENT_ROOT'] ?? '/usr/local/emhttp';
+$uvssDocRoot = $_SERVER['DOCUMENT_ROOT'] ?: '/usr/local/emhttp';
 $uvssControlHelper = $uvssDocRoot . '/plugins/unraid-vsock-sensors/uvss_control.php';
 if (!is_file($uvssControlHelper)) {
     $uvssControlHelper = __DIR__ . '/uvss_control.php';

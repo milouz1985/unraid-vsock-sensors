@@ -185,8 +185,8 @@ status() {
 poll() {
     local pid
     # The emhttpd poll_attributes heartbeat is frequent and carries no data, so
-    # it is delivered to the daemon as SIGUSR2 instead of spawning a process
-    # per event. The handler records the heartbeat and requests a refresh.
+    # it is delivered to the daemon as SIGUSR2 instead of going through the
+    # control HTTP API. The handler records the heartbeat and requests a refresh.
     if ! pid="$(running_pid)"; then
         return 0
     fi
@@ -194,7 +194,6 @@ poll() {
         echo "Unable to notify $name of SMART polling" >&2
         return 1
     fi
-    echo "$name SMART poll reported"
 }
 
 run_mutating_action() {

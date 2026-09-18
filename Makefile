@@ -171,7 +171,7 @@ hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
 	GO="$(GO)" VERSION="$$version" DEBIAN_REVISION="$(DEBIAN_REVISION)" \
 		./virt-temp/package.sh
 
-artifacts: build unraid-package hwmon-package ## Produit tous les artefacts versionnés
+artifacts: unraid-package hwmon-package ## Produit tous les artefacts versionnés
 
 update-plg: ## Génère le descripteur .plg public depuis le paquet .txz
 	@VERSION="$(VERSION)" ./unraid-plugin/update-plg.sh

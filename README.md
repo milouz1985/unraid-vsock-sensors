@@ -269,7 +269,7 @@ L'événement Unraid `poll_attributes` envoie `SIGUSR2` au daemon (via
 `rc … poll`), qui enregistre le heartbeat et demande une actualisation
 immédiate. Ce signal est privilégié au passage par la socket de contrôle parce
 que le heartbeat est fréquent et ne porte aucune donnée : il évite de lancer un
-processus par événement. Un watchdog de cinq secondes couvre les événements
+client Go ou une requête HTTP locale supplémentaire à chaque événement. Un watchdog de cinq secondes couvre les événements
 perdus et les changements d'état.
 
 Si aucun événement `poll_attributes` n'arrive pendant

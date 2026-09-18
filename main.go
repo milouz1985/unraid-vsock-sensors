@@ -163,7 +163,7 @@ func serve(args []string) error {
 	// before serve returns, regardless of how the daemon is being stopped.
 	defer control.stop()
 	// Collection remains independent from publication so a disk or controller
-	// command can never block the VSOCK heartbeat.
+	// operation can never block the VSOCK heartbeat.
 	go disks.run(ctx, refreshRequests)
 	go hbas.run(ctx)
 	go runDiagnostics(ctx, defaultDiagnosticsPath, service, disks, hbas)

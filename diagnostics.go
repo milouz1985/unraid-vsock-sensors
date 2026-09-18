@@ -338,10 +338,6 @@ func writeDiagnosticsAtomic(path string, snapshot diagnosticsSnapshot) error {
 		file.Close()
 		return err
 	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
 	if err := file.Close(); err != nil {
 		return err
 	}

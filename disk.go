@@ -158,13 +158,13 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 		return
 	}
 
-	readings, observations, fallbackErr := c.collectTemperatures(ctx, disks, decision, decisionAt, pollInterval)
+	observations, fallbackErr := c.collectTemperatures(ctx, disks, decision, decisionAt, pollInterval)
 	finishedAt := c.now()
 	wakeGrace := time.Duration(0)
 	if pollInterval > 0 {
 		wakeGrace = pollInterval + diskWakeMargin
 	}
-	readings = c.state.apply(observations, finishedAt, wakeGrace)
+	readings := c.state.apply(observations, finishedAt, wakeGrace)
 	if decision.source == diskSourceDirect {
 		c.smartSource.recordFallbackResult(finishedAt, fallbackErr)
 		c.fallbackLog.update(fallbackErr)
@@ -202,14 +202,12 @@ func (c *diskCollector) collectTemperatures(
 	decision smartSourceDecision,
 	decisionAt time.Time,
 	pollInterval time.Duration,
-) ([]sensors.Disk, []diskObservation, error) {
+) ([]diskObservation, error) {
 	if decision.source == diskSourceEmhttpd {
-		observations := makeDiskObservations(disks, pollInterval > 0)
-		return nil, observations, nil
+		return makeDiskObservations(disks, pollInterval > 0), nil
 	}
 	c.smartSource.beginDirectAttempt(decisionAt)
-	observations, err := c.collectFallback(ctx, disks)
-	return nil, observations, err
+	return c.collectFallback(ctx, disks)
 }
 
 func (c *diskCollector) publishDiskFailure(err error, now time.Time, source smartSourceStatus) {

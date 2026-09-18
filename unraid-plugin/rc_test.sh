@@ -139,8 +139,8 @@ if ! kill -0 "$daemon_pid" 2>/dev/null; then
 fi
 
 poll_output="$(run_rc poll)"
-if [[ "$poll_output" != *"SMART poll reported"* ]]; then
-    echo "poll did not report success: $poll_output" >&2
+if [[ -n "$poll_output" ]]; then
+    echo "successful poll unexpectedly wrote output: $poll_output" >&2
     exit 1
 fi
 for _ in {1..100}; do
