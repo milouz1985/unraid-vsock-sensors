@@ -136,15 +136,8 @@ _(HBA backend)_:
 </select>
 
 <blockquote class="inline_help">
-The native backend requires a controller handled by <code>mpt3sas</code> and access to <code>/dev/mpt3ctl</code>. It does not require an external utility but is experimental and has not yet been validated across a broad range of controllers and firmware versions.<br><br>
-The StorCLI backend requires StorCLI to be installed, for example through the <a href="https://forums.unraid.net/topic/192112-plugin-storcli64/" target="_blank" rel="noopener noreferrer">storcli64 Unraid plugin</a>.
-</blockquote>
-
-_(HBA refresh interval)_:
-: 15 seconds with native <code>mpt3ctl</code>, 30 seconds with StorCLI
-
-<blockquote class="inline_help">
-The refresh interval is fixed by the selected backend. StorCLI uses a longer interval because its command-based collection is more expensive than the native MPT3 ioctl path. Each new HBA state is pushed to Proxmox.
+The native backend requires a controller handled by <code>mpt3sas</code> and access to <code>/dev/mpt3ctl</code>. It does not require an external utility but is experimental and has not yet been validated across a broad range of controllers and firmware versions. It refreshes every 15 seconds.<br><br>
+The StorCLI backend requires StorCLI to be installed, for example through the <a href="https://forums.unraid.net/topic/192112-plugin-storcli64/" target="_blank" rel="noopener noreferrer">storcli64 Unraid plugin</a>, and refreshes every 30 seconds. Each new HBA state is pushed to Proxmox.
 </blockquote>
 
 &nbsp;
