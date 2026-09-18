@@ -11,10 +11,8 @@ function check(string $label, bool $ok): void {
 
 putenv('UVSS_CONTROL_SOCKET=' . sys_get_temp_dir() . '/uvss-nope.sock');
 $result = uvss_control_list_disks();
-$expected = function_exists('curl_init')
-    ? (($result['ok'] ?? false) === false && ($result['kind'] ?? '') === 'daemon')
-    : (($result['ok'] ?? false) === false && ($result['kind'] ?? '') === 'transport');
-check('daemon stopped returns a structured error', $expected);
+$expected = (($result['ok'] ?? false) === false && ($result['kind'] ?? '') === 'transport');
+check('missing control socket returns a transport error', $expected);
 
 if (function_exists('curl_init')) {
     $staleSocket = sys_get_temp_dir() . '/uvss-stale-' . getmypid() . '.sock';

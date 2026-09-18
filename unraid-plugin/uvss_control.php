@@ -22,11 +22,6 @@ function uvss_control_request(string $method, string $path, ?array $body = null)
             'error' => 'cURL extension is not available'];
     }
     $socket = uvss_control_socket_path();
-    if (!file_exists($socket)) {
-        return ['ok' => false, 'kind' => 'daemon', 'http_status' => 0,
-            'error' => 'unraid-vsock-sensors daemon is not running'];
-    }
-
     $payload = $body === null ? null : json_encode($body);
     if ($body !== null && $payload === false) {
         return ['ok' => false, 'kind' => 'protocol', 'http_status' => 0,
