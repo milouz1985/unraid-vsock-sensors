@@ -64,10 +64,10 @@ if ($data === false) {
 ?>
 
 <style>
-.uvssdiag-status.green { color: #21844a; }
-.uvssdiag-status.orange { color: #b66a00; }
-.uvssdiag-status.red { color: #c53434; }
-.uvssdiag-status.gray { color: #777; }
+.uvssdiag-status.green { color: var(--green-800, #21844a); }
+.uvssdiag-status.orange { color: var(--orange-300, #b66a00); }
+.uvssdiag-status.red { color: var(--red-600, #c53434); }
+.uvssdiag-status.gray { color: var(--alt-text-color, #777); }
 </style>
 
 <p><a href="/Settings/UnraidVsockSensors">Back to Unraid VSOCK Sensors</a> · <a href="/Settings/UnraidVsockSensorsDiagnostics">Refresh page</a></p>
@@ -102,11 +102,13 @@ $hba = $diagnostics['hba'] ?? [];
 <p>Last valid observation is when UVSS accepted a temperature, not when the disk was physically measured. Disk IDs may contain serial numbers; redact them before sharing this page or the diagnostics JSON file.</p>
 <?php if (!empty($disks['policy_error'])): ?><p class="red">Disk policies: <?=uvssDiagEsc($disks['policy_error'])?></p><?php endif; ?>
 <?php if (empty($disks['items'])): ?><p>No disk readings available.</p><?php else: ?>
+<div class="TableContainer">
 <table><thead><tr><th>Name</th><th>Unraid ID</th><th>Device</th><th>Transport</th><th>Rotational</th><th>Temperature</th><th>Status</th><th>Last valid source</th><th>Last valid observation</th></tr></thead><tbody>
 <?php foreach ($disks['items'] as $disk): ?>
 <tr><td><?=uvssDiagEsc($disk['name'] ?? null)?></td><td><?=uvssDiagEsc($disk['id'] ?? null)?></td><td><?=uvssDiagEsc($disk['device'] ?? null)?></td><td><?=uvssDiagEsc($disk['transport'] ?? null)?></td><td><?=!empty($disk['rotational']) ? 'Yes' : 'No'?></td><td><?=isset($disk['temperature_c']) ? uvssDiagEsc($disk['temperature_c']) . ' °C' : '—'?></td><td><?=uvssDiagState($disk['status'] ?? 'error')?><?php if (!empty($disk['error'])): ?>: <?=uvssDiagEsc($disk['error'])?><?php endif; ?></td><td><?=uvssDiagEsc($disk['source'] ?? null)?></td><td><?=uvssDiagEsc(uvssDiagAge($disk['last_valid_age_seconds'] ?? null))?></td></tr>
 <?php endforeach; ?>
 </tbody></table>
+</div>
 <?php endif; ?>
 
 <h3>HBA</h3>

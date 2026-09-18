@@ -65,22 +65,6 @@ if (($diskListResult['ok'] ?? false) !== true) {
 $diskPoliciesInvalid = $diskListState === 'invalid';
 ?>
 
-<style>
-.uvss-actions {
-    display: inline-flex !important;
-    gap: 8px;
-    width: auto !important;
-}
-
-.uvss-action {
-    display: inline-block !important;
-    width: 90px !important;
-    min-width: 90px !important;
-    max-width: 90px !important;
-    margin: 0 !important;
-}
-</style>
-
 ### Service
 
 <p><a href="/Settings/UnraidVsockSensorsDiagnostics">View read-only diagnostics</a></p>
@@ -96,7 +80,7 @@ _(Version)_:
 <input type="hidden" name="#command" value="/plugins/unraid-vsock-sensors/service.sh">
 
 _(Actions)_:
-: <span class="uvss-actions"><?php if ($running): ?><button class="uvss-action" type="submit" name="#arg[1]" value="stop">_(Stop)_</button><button class="uvss-action" type="submit" name="#arg[1]" value="restart">_(Restart)_</button><?php else: ?><button class="uvss-action" type="submit" name="#arg[1]" value="start">_(Start)_</button><?php endif; ?></span>
+: <span class="buttons-spaced"><?php if ($running): ?><button type="submit" name="#arg[1]" value="stop">_(Stop)_</button><button type="submit" name="#arg[1]" value="restart">_(Restart)_</button><?php else: ?><button type="submit" name="#arg[1]" value="start">_(Start)_</button><?php endif; ?></span>
 </form>
 
 ### Configuration
@@ -165,7 +149,7 @@ The refresh interval is fixed by the selected backend. StorCLI uses a longer int
 
 &nbsp;
 
-: <input type="submit" value="_(Apply)_">
+: <span><input type="submit" value="_(Apply)_"></span>
 </form>
 
 ### Disk policies
@@ -204,6 +188,7 @@ Disk policies are invalid. The daemon keeps the last valid policies already load
 
 <?php else: ?>
 
+<div class="TableContainer">
 <table>
 <thead>
 <tr>
@@ -288,6 +273,7 @@ Eligible
 
 </tbody>
 </table>
+</div>
 
 <?php endif; ?>
 
