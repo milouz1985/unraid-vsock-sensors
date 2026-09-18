@@ -120,10 +120,8 @@ func TestDiskRefreshSeparatesDecisionAndFinishedTimes(t *testing.T) {
 
 		collector.refresh()
 		status := collector.status()
-		if !collector.smartSource.lastDirectAttempt.Equal(decisionAt) ||
-			!status.source.lastFallbackAttempt.Equal(decisionAt) {
-			t.Fatalf("attempt timestamps = scheduler %s, diagnostic %s; want %s",
-				collector.smartSource.lastDirectAttempt, status.source.lastFallbackAttempt, decisionAt)
+		if !status.source.lastFallbackAttempt.Equal(decisionAt) {
+			t.Fatalf("fallback attempt timestamp = %s; want %s", status.source.lastFallbackAttempt, decisionAt)
 		}
 		if !status.updatedAt.Equal(finishedAt) || !collector.state["serial"].lastValidAt.Equal(finishedAt) {
 			t.Fatalf("completion timestamps = snapshot %s, reading %s; want %s",

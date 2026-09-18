@@ -47,7 +47,6 @@ type smartSourceState struct {
 	lastHeartbeat       time.Time
 	fallbackActive      bool
 	fallbackSince       time.Time
-	lastDirectAttempt   time.Time
 	lastFallbackAttempt time.Time
 	pollInterval        time.Duration
 	configError         string
@@ -89,13 +88,12 @@ func (s *smartSourceState) evaluate(now time.Time, pollInterval time.Duration, c
 			decision.justEntered = true
 		} else {
 			s.fallbackSince = time.Time{}
-			s.lastDirectAttempt = time.Time{}
 			s.lastFallbackError = ""
 			s.fallbackErrorAt = time.Time{}
 			decision.justRecovered = true
 		}
 	}
-	if fallback && (s.lastDirectAttempt.IsZero() || now.Sub(s.lastDirectAttempt) >= pollInterval) {
+	if fallback && (decision.justEntered || s.lastFallbackAttempt.IsZero() || now.Sub(s.lastFallbackAttempt) >= pollInterval) {
 		decision.directDue = true
 	}
 	return decision
@@ -103,7 +101,6 @@ func (s *smartSourceState) evaluate(now time.Time, pollInterval time.Duration, c
 
 func (s *smartSourceState) beginDirectAttempt(now time.Time) {
 	s.mu.Lock()
-	s.lastDirectAttempt = now
 	s.lastFallbackAttempt = now
 	s.mu.Unlock()
 }
