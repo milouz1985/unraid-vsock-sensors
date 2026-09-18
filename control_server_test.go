@@ -349,7 +349,6 @@ func TestControlServerShutdownWaitsForMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server.listener = listener
 	mux := http.NewServeMux()
 	server.registerRoutes(mux)
 	started := make(chan struct{})

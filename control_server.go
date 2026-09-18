@@ -36,9 +36,8 @@ type controlServer struct {
 	refresh    chan<- struct{}
 	paths      diskDataPaths
 
-	server   *http.Server
-	listener net.Listener
-	done     chan struct{}
+	server *http.Server
+	done   chan struct{}
 }
 
 // newControlServer wires the control API to the daemon. refresh is the
@@ -139,15 +138,6 @@ func (s *controlServer) openListener() (net.Listener, error) {
 	return listener, nil
 }
 
-func (s *controlServer) newHTTPServer() *http.Server {
-	mux := http.NewServeMux()
-	s.registerRoutes(mux)
-	return &http.Server{
-		Handler:     mux,
-		ReadTimeout: controlServerReadTimeout,
-	}
-}
-
 // start binds the Unix socket synchronously, then serves it in its own
 // goroutine. Failure to create the initial socket prevents daemon startup. A
 // later Serve failure is logged but deliberately does not stop the thermal
@@ -157,10 +147,11 @@ func (s *controlServer) start() error {
 	if err != nil {
 		return err
 	}
-	server := s.newHTTPServer()
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	server := &http.Server{Handler: mux, ReadTimeout: controlServerReadTimeout}
 	done := make(chan struct{})
 	s.server = server
-	s.listener = listener
 	s.done = done
 
 	go func() {
@@ -179,11 +170,9 @@ func (s *controlServer) stop() {
 		return
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), controlServerShutdownTimeout)
-	err := s.server.Shutdown(shutdownCtx)
+	// Shutdown closes the listener before waiting for active handlers.
+	_ = s.server.Shutdown(shutdownCtx)
 	cancel()
-	if err != nil && s.listener != nil {
-		_ = s.listener.Close()
-	}
 	if s.done != nil {
 		<-s.done
 	}
