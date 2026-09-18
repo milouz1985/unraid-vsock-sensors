@@ -56,11 +56,11 @@ grep -Fq "<!ENTITY package \"$package_name\">" "$plugin_output"
 grep -Fq "<!ENTITY packageURL \"https://github.com/milouz1985/unraid-vsock-sensors/releases/download/v2.0.0/$package_name\">" "$plugin_output"
 grep -Fq "<!ENTITY packageMD5 \"$package_md5\">" "$plugin_output"
 grep -Fq "<!ENTITY packageSHA256 \"$package_sha256\">" "$plugin_output"
-if grep -Fq 'rm -f "$cfgdir/$name.cfg"' "$plugin_output"; then
+if grep -Fq "rm -f \"\$cfgdir/\$name.cfg\"" "$plugin_output"; then
     echo "generated plugin still deletes persistent configuration on uninstall" >&2
     exit 1
 fi
-grep -Fq 'Configuration preserved in $cfgdir' "$plugin_output"
+grep -Fq "Configuration preserved in \$cfgdir" "$plugin_output"
 if [[ "$(stat -c '%a' "$plugin_output")" != "644" ]]; then
     echo "update-plg did not create the public descriptor with mode 0644" >&2
     exit 1
