@@ -378,10 +378,9 @@ Les détails du module et du protocole `/dev/virt-temp` sont documentés dans
 
 ## Mise à jour et désinstallation
 
-Une mise à jour du plugin conserve sa configuration et
-`disk-policies.json`.
-
-Une désinstallation explicite les supprime.
+Une mise à jour comme une désinstallation du plugin conserve sa configuration et
+`disk-policies.json` sous `/boot/config/plugins/unraid-vsock-sensors`. Supprimer
+manuellement ce répertoire pour effectuer une purge complète.
 
 Sur Proxmox :
 
