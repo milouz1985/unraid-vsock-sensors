@@ -17,7 +17,7 @@ func TestPublisherSavesHWMonInventoryCache(t *testing.T) {
 	cache := filepath.Join(directory, "inventory.json")
 	publisher := &hwmonPublisher{
 		cachePath: cache,
-		disks: hwmonInventory{initialized: true, sensors: []hwmonSensor{
+		disks: hwmonInventory{sensors: []hwmonSensor{
 			{id: "disk:serial", label: "disk1 (sda)"},
 		}},
 	}
@@ -126,10 +126,10 @@ func TestPublisherCachesChangedLabel(t *testing.T) {
 	}
 	publisher := &hwmonPublisher{
 		cachePath: filepath.Join(directory, "inventory.json"),
-		disks: hwmonInventory{initialized: true, sensors: []hwmonSensor{
+		disks: hwmonInventory{sensors: []hwmonSensor{
 			{id: "disk:serial", label: "disk1 (sda)"},
 		}},
-		hbas: hwmonInventory{initialized: true},
+		hbas: hwmonInventory{sensors: []hwmonSensor{}},
 	}
 	state := sensors.Response{
 		Disks: []sensors.Disk{{ID: "serial", Name: "disk1", Device: "sdb", Temp: 35}},

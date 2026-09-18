@@ -42,10 +42,10 @@ func TestPublisherDistinguishesMissingAndEmptyDiskInventory(t *testing.T) {
 	}
 	publisher := &hwmonPublisher{
 		cachePath: filepath.Join(directory, "inventory.json"),
-		disks: hwmonInventory{initialized: true, sensors: []hwmonSensor{
+		disks: hwmonInventory{sensors: []hwmonSensor{
 			{id: "disk:serial", label: "disk1 (sda)"},
 		}},
-		hbas: hwmonInventory{initialized: true},
+		hbas: hwmonInventory{sensors: []hwmonSensor{}},
 	}
 
 	_, err := publisher.publish(device, sensors.Response{})
@@ -73,7 +73,7 @@ func TestPublisherDistinguishesMissingAndEmptyDiskInventory(t *testing.T) {
 	if err := restored.restore(device); err != nil {
 		t.Fatal(err)
 	}
-	if !restored.disks.initialized || len(restored.disks.sensors) != 0 {
+	if restored.disks.sensors == nil || len(restored.disks.sensors) != 0 {
 		t.Fatalf("restored disk inventory = %#v, want initialized and empty", restored.disks)
 	}
 }
@@ -86,8 +86,8 @@ func TestPublisherDistinguishesMissingAndEmptyHBAInventory(t *testing.T) {
 	}
 	publisher := &hwmonPublisher{
 		cachePath: filepath.Join(directory, "inventory.json"),
-		disks:     hwmonInventory{initialized: true},
-		hbas: hwmonInventory{initialized: true, sensors: []hwmonSensor{
+		disks:     hwmonInventory{sensors: []hwmonSensor{}},
+		hbas: hwmonInventory{sensors: []hwmonSensor{
 			{id: "hba:serial", label: "HBA 1"},
 		}},
 	}
@@ -117,7 +117,7 @@ func TestPublisherDistinguishesMissingAndEmptyHBAInventory(t *testing.T) {
 	if err := restored.restore(device); err != nil {
 		t.Fatal(err)
 	}
-	if !restored.hbas.initialized || len(restored.hbas.sensors) != 0 {
+	if restored.hbas.sensors == nil || len(restored.hbas.sensors) != 0 {
 		t.Fatalf("restored HBA inventory = %#v, want initialized and empty", restored.hbas)
 	}
 }
@@ -163,7 +163,7 @@ func TestPublisherPublishesEmptyHBAInventory(t *testing.T) {
 	}
 	publisher := &hwmonPublisher{
 		cachePath: filepath.Join(directory, "inventory.json"),
-		disks:     hwmonInventory{initialized: true},
+		disks:     hwmonInventory{sensors: []hwmonSensor{}},
 	}
 	changed, err := publisher.publish(path, sensors.Response{Disks: []sensors.Disk{}, HBAs: []sensors.HBA{}})
 	if err != nil || !changed {
@@ -178,8 +178,7 @@ func TestPublisherPublishesEmptyHBAInventory(t *testing.T) {
 	}
 
 	publisher.hbas = hwmonInventory{
-		initialized: true,
-		sensors:     []hwmonSensor{{id: "hba:sas:1234", label: "HBA"}},
+		sensors: []hwmonSensor{{id: "hba:sas:1234", label: "HBA"}},
 	}
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatal(err)

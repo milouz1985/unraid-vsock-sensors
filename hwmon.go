@@ -130,7 +130,7 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 			reconfigured, publishErr := publisher.publish(virtTempDevicePath, snapshot.response)
 			firstGuestSnapshot := !seenGuestSnapshot
 			seenGuestSnapshot = true
-			familyInitialized := publisher.disks.initialized || publisher.hbas.initialized
+			familyInitialized := publisher.disks.sensors != nil || publisher.hbas.sensors != nil
 			// The first guest snapshot also restarts consumers when a family
 			// already exists from cache, even if no reconfiguration was needed.
 			if (reconfigured || (firstGuestSnapshot && familyInitialized)) && restartRetry == nil {

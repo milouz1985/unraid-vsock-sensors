@@ -89,10 +89,10 @@ func (publisher *hwmonPublisher) restore(device string) error {
 // means the new configuration survives a crash or power loss.
 func (publisher *hwmonPublisher) saveCache() error {
 	cached := cachedHWMonInventory{Version: 1}
-	if publisher.disks.initialized {
+	if publisher.disks.sensors != nil {
 		cached.Disks = &cachedHWMonFamily{Sensors: sensorsToCache(publisher.disks.sensors)}
 	}
-	if publisher.hbas.initialized {
+	if publisher.hbas.sensors != nil {
 		cached.HBAs = &cachedHWMonFamily{Sensors: sensorsToCache(publisher.hbas.sensors)}
 	}
 	data, err := json.MarshalIndent(cached, "", "  ")

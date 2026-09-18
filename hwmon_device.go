@@ -25,11 +25,10 @@ func publishHWMonFamily(
 	inventory *hwmonInventory,
 	current []hwmonSample,
 ) (bool, error) {
-	if !inventory.initialized || !sameHWMonConfiguration(inventory.sensors, current) {
+	if inventory.sensors == nil || !sameHWMonConfiguration(inventory.sensors, current) {
 		if err := writeHWMonSamples(path, namespace, "configure", current); err != nil {
 			return false, err
 		}
-		inventory.initialized = true
 		inventory.sensors = sensorsFromSamples(current)
 		return true, nil
 	}

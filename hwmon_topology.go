@@ -28,8 +28,7 @@ type hwmonSample struct {
 }
 
 type hwmonInventory struct {
-	initialized bool
-	sensors     []hwmonSensor
+	sensors []hwmonSensor
 }
 
 type hwmonDiskGroup struct {
