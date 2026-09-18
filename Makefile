@@ -47,24 +47,6 @@ MODULE_BUILD_ARTIFACTS := virt-temp/module/*.o \
 	virt-temp/module/modules.order
 
 
-# Resolve VERSION only for targets that actually produce versioned artifacts.
-#
-# If VERSION is provided explicitly, version.sh validates it.
-# Otherwise version.sh derives it from Git.
-define resolve-version
-	version="$(VERSION)"; \
-	if [ -n "$$version" ]; then \
-		version="$$(VERSION="$$version" ./version.sh)" || exit $$?; \
-	else \
-		version="$$(./version.sh)" || exit $$?; \
-	fi; \
-	[ -n "$$version" ] || { \
-		echo "Unable to determine version" >&2; \
-		exit 1; \
-	};
-endef
-
-
 .PHONY: help
 
 help: ## Affiche les commandes disponibles
@@ -154,8 +136,8 @@ test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
 .PHONY: build
 
 build: | $(BIN_DIR) ## Compile un binaire Linux statique
-	@$(resolve-version) \
-	CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 $(GO) build -buildvcs=false -trimpath \
+	@version="$$(VERSION="$(VERSION)" ./version.sh)" || exit $$?; \
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -trimpath \
 		-ldflags="-s -w -X main.version=$$version" \
 		-o $(BINARY) .
 
@@ -163,12 +145,10 @@ build: | $(BIN_DIR) ## Compile un binaire Linux statique
 .PHONY: unraid-package hwmon-package artifacts update-plg release
 
 unraid-package: ## Crée le paquet txz installable dans Unraid
-	@$(resolve-version) \
-	GO="$(GO)" VERSION="$$version" ./unraid-plugin/package.sh
+	@GO="$(GO)" VERSION="$(VERSION)" ./unraid-plugin/package.sh
 
 hwmon-package: ## Crée le paquet Debian hwmon installable sur Proxmox
-	@$(resolve-version) \
-	GO="$(GO)" VERSION="$$version" DEBIAN_REVISION="$(DEBIAN_REVISION)" \
+	@GO="$(GO)" VERSION="$(VERSION)" DEBIAN_REVISION="$(DEBIAN_REVISION)" \
 		./virt-temp/package.sh
 
 artifacts: unraid-package hwmon-package ## Produit tous les artefacts versionnés

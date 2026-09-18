@@ -19,10 +19,7 @@ type stickyErrorLog struct {
 }
 
 func (state *stickyErrorLog) update(err error) {
-	message := ""
-	if err != nil {
-		message = err.Error()
-	}
+	message := errorText(err)
 	if message == state.last {
 		return
 	}

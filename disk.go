@@ -14,12 +14,9 @@ import (
 )
 
 const (
-	defaultDisksINIPath     = "/var/local/emhttp/disks.ini"
-	defaultDevsINIPath      = "/var/local/emhttp/devs.ini"
-	defaultUnraidVarINIPath = "/var/local/emhttp/var.ini"
-	diskWatchdogInterval    = 5 * time.Second
-	diskSnapshotTimeout     = 3 * diskWatchdogInterval
-	diskWakeMargin          = 5 * time.Second
+	diskWatchdogInterval = 5 * time.Second
+	diskSnapshotTimeout  = 3 * diskWatchdogInterval
+	diskWakeMargin       = 5 * time.Second
 )
 
 type diskDataPaths struct {
@@ -33,10 +30,13 @@ type diskDataPaths struct {
 }
 
 var defaultDiskDataPaths = diskDataPaths{
-	disksINI: defaultDisksINIPath, devsINI: defaultDevsINIPath,
-	varINI:       defaultUnraidVarINIPath,
-	sysBlockRoot: defaultSysBlockRoot, policyFile: defaultDiskPolicyFile,
-	sdspin: defaultSDSpinPath, smartctlType: defaultSmartctlTypePath,
+	disksINI:     "/var/local/emhttp/disks.ini",
+	devsINI:      "/var/local/emhttp/devs.ini",
+	varINI:       "/var/local/emhttp/var.ini",
+	sysBlockRoot: defaultSysBlockRoot,
+	policyFile:   defaultDiskPolicyFile,
+	sdspin:       defaultSDSpinPath,
+	smartctlType: defaultSmartctlTypePath,
 }
 
 type diskCollector struct {
@@ -53,7 +53,6 @@ type diskCollector struct {
 	policyLog              stickyErrorLog
 	policyError            string
 	lastValidPolicies      map[string]diskPolicy
-	haveValidPolicies      bool
 	smartSource            smartSourceState
 	fallbackLog            stickyErrorLog
 	lastSuccessfulSnapshot []diskRuntimeDisk
@@ -178,8 +177,7 @@ func (c *diskCollector) readInventory() ([]unraidDisk, error) {
 	policies, policyErr := readDiskPolicies(policyFile)
 	if policyErr == nil {
 		c.lastValidPolicies = policies
-		c.haveValidPolicies = true
-	} else if c.haveValidPolicies {
+	} else if c.lastValidPolicies != nil {
 		// A transient read or parse failure must not change the effective disk
 		// selection. Keep using the last configuration that was known to be
 		// valid while exposing the current file error through diagnostics.

@@ -87,14 +87,6 @@ guest_exec() {
     check_guest_exec_result <<< "$result"
 }
 
-wait_for_guest() {
-    local deadline=$((SECONDS + BOOT_TIMEOUT))
-    until qm guest cmd "$VMID" ping >/dev/null 2>&1; do
-        (( SECONDS < deadline )) || die "Timed out waiting for QEMU Guest Agent on VM $VMID"
-        sleep 3
-    done
-}
-
 # Only the known Proxmox user-data deprecation is tolerated. Other guest
 # commands (including the tests) must still return zero to succeed.
 wait_for_cloud_init() {

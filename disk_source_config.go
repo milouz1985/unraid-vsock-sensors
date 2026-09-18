@@ -70,10 +70,7 @@ func (c *diskCollector) effectivePollAttributes() (time.Duration, error) {
 }
 
 func (c *diskCollector) logPollAttributesChange(interval time.Duration, configErr error) {
-	errorMessage := ""
-	if configErr != nil {
-		errorMessage = configErr.Error()
-	}
+	errorMessage := errorText(configErr)
 	if c.pollLogInitialized && c.lastPollInterval == interval && c.lastPollError == errorMessage {
 		return
 	}
