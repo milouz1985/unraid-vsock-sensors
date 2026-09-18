@@ -35,7 +35,7 @@ if ($data === false) {
 } else {
     $decoded = json_decode($data, true);
     if (!is_array($decoded)
-        || (int)($decoded['schema_version'] ?? 0) !== 1
+        || (int)($decoded['schema_version'] ?? 0) !== 2
         || (int)($decoded['pid'] ?? 0) <= 0
         || empty($decoded['version'])
         || empty($decoded['generated_at'])
@@ -81,12 +81,11 @@ $vsock = $diagnostics['vsock'] ?? [];
 $emhttpd = $diagnostics['emhttpd'] ?? [];
 $disks = $diagnostics['disks'] ?? [];
 $hba = $diagnostics['hba'] ?? [];
-$config = $diagnostics['config'] ?? [];
 ?>
 
 <h3>Overall status</h3>
 <table><thead><tr><th>Component</th><th>Status</th><th>Details</th></tr></thead><tbody>
-<tr><td>Service</td><td><?=uvssDiagState($diagnostics['service'] ?? 'error')?></td><td>PID <?=uvssDiagEsc($diagnostics['pid'] ?? null)?> · v<?=uvssDiagEsc($diagnostics['version'] ?? null)?> · uptime <?=uvssDiagEsc($diagnostics['uptime_seconds'] ?? null)?>s · started <?=uvssDiagEsc($diagnostics['started_at'] ?? null)?></td></tr>
+<tr><td>Service</td><td><?=uvssDiagState('running')?></td><td>PID <?=uvssDiagEsc($diagnostics['pid'] ?? null)?> · v<?=uvssDiagEsc($diagnostics['version'] ?? null)?> · uptime <?=uvssDiagEsc($diagnostics['uptime_seconds'] ?? null)?>s · started <?=uvssDiagEsc($diagnostics['started_at'] ?? null)?></td></tr>
 <tr><td>VSOCK</td><td><?=uvssDiagState($vsock['status'] ?? 'error')?></td><td>Last successful publish: <?=uvssDiagEsc(uvssDiagAge($vsock['last_published_age_seconds'] ?? null))?></td></tr>
 <tr><td>emhttpd SMART</td><td><?=uvssDiagState($emhttpd['status'] ?? 'error')?></td><td><?=uvssDiagEsc($emhttpd['temperature_source'] ?? null)?></td></tr>
 <tr><td>Disk collector</td><td><?=uvssDiagState($disks['status'] ?? 'error')?></td><td><?=uvssDiagEsc($disks['error'] ?? '')?></td></tr>
@@ -120,7 +119,7 @@ $config = $diagnostics['config'] ?? [];
 <?php endif; ?>
 
 <h3>VSOCK</h3>
-<p>Host CID: <?=uvssDiagEsc($vsock['host_cid'] ?? null)?> · Port: <?=uvssDiagEsc($config['vsock_port'] ?? null)?> · Last connection: <?=uvssDiagEsc($vsock['last_connected_at'] ?? null)?> · Last successful snapshot write: <?=uvssDiagEsc($vsock['last_published_at'] ?? null)?></p>
+<p>Host CID: <?=uvssDiagEsc($vsock['host_cid'] ?? null)?> · Port: <?=uvssDiagEsc($vsock['port'] ?? null)?> · Last connection: <?=uvssDiagEsc($vsock['last_connected_at'] ?? null)?> · Last successful snapshot write: <?=uvssDiagEsc($vsock['last_published_at'] ?? null)?></p>
 <?php if (!empty($vsock['last_error'])): ?><p class="red">VSOCK publisher: <?=uvssDiagEsc($vsock['last_error'])?> (<?=uvssDiagEsc($vsock['last_error_at'] ?? null)?>)</p><?php endif; ?>
 
 <?php endif; ?>

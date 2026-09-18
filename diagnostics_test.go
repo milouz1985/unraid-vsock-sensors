@@ -42,8 +42,8 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 	if snapshot.Emhttpd.LastPollAgeSeconds == nil || *snapshot.Emhttpd.LastPollAgeSeconds != 2 {
 		t.Fatalf("unexpected heartbeat age: %+v", snapshot.Emhttpd)
 	}
-	if snapshot.Config.PollAttributes != "30s" || snapshot.Config.EmhttpdStaleAfter != "45s" {
-		t.Fatalf("unexpected effective intervals: %+v", snapshot.Config)
+	if snapshot.Emhttpd.PollAttributes != "30s" || snapshot.Emhttpd.StaleAfter != "45s" {
+		t.Fatalf("unexpected effective intervals: %+v", snapshot.Emhttpd)
 	}
 	if snapshot.Disks.Items[0].LastValidAgeSeconds == nil || *snapshot.Disks.Items[0].LastValidAgeSeconds != 12 {
 		t.Fatalf("unexpected sample age: %+v", snapshot.Disks.Items[0])
@@ -60,6 +60,16 @@ func TestDiagnosticsSnapshotStatesAndNoRuntimeMutation(t *testing.T) {
 	data, err := json.Marshal(snapshot)
 	if err != nil || !json.Valid(data) {
 		t.Fatalf("invalid JSON: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := fields["config"]; exists {
+		t.Fatal("diagnostics schema still duplicates runtime config")
+	}
+	if _, exists := fields["service"]; exists {
+		t.Fatal("diagnostics schema still exposes the synthetic service field")
 	}
 
 	disks.source.source = diskSourceDirect
@@ -149,7 +159,7 @@ func TestWriteDiagnosticsRuntimeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var decoded diagnosticsSnapshot
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded.PID != os.Getpid() || decoded.SchemaVersion != 1 {
+	if err := json.Unmarshal(data, &decoded); err != nil || decoded.PID != os.Getpid() || decoded.SchemaVersion != 2 {
 		t.Fatalf("written snapshot = %+v, %v", decoded, err)
 	}
 }

@@ -31,22 +31,11 @@ type diagnosticsSnapshot struct {
 	PID           int               `json:"pid"`
 	StartedAt     time.Time         `json:"started_at"`
 	GeneratedAt   time.Time         `json:"generated_at"`
-	Service       string            `json:"service"`
 	UptimeSeconds int64             `json:"uptime_seconds"`
-	Config        diagnosticConfig  `json:"config"`
 	VSOCK         diagnosticVSOCK   `json:"vsock"`
 	Emhttpd       diagnosticEmhttpd `json:"emhttpd"`
 	Disks         diagnosticDisks   `json:"disks"`
 	HBA           diagnosticHBA     `json:"hba"`
-}
-
-type diagnosticConfig struct {
-	VSOCKPort         uint32         `json:"vsock_port"`
-	HBAMode           hbaMode        `json:"hba_mode"`
-	HBABackend        hbaBackendMode `json:"hba_backend"`
-	HBAInterval       string         `json:"hba_interval"`
-	PollAttributes    string         `json:"poll_attributes"`
-	EmhttpdStaleAfter string         `json:"emhttpd_stale_after"`
 }
 
 type diagnosticVSOCK struct {
@@ -118,25 +107,16 @@ func buildDiagnosticsSnapshot(service serviceStatus, disks diskCollectorStatus, 
 	diagnosticDisks, emhttpd := buildDiagnosticDiskServices(disks, now)
 	hba := buildDiagnosticHBA(hbas, now)
 	return diagnosticsSnapshot{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Version:       version,
 		PID:           service.pid,
 		StartedAt:     service.startedAt,
 		GeneratedAt:   now,
-		Service:       "running",
 		UptimeSeconds: int64(max(0, now.Sub(service.startedAt).Seconds())),
-		Config: diagnosticConfig{
-			VSOCKPort:         service.publisher.port,
-			HBAMode:           hbas.mode,
-			HBABackend:        hbas.backend,
-			HBAInterval:       hbas.interval.String(),
-			PollAttributes:    emhttpd.PollAttributes,
-			EmhttpdStaleAfter: emhttpd.StaleAfter,
-		},
-		VSOCK:   vsock,
-		Emhttpd: emhttpd,
-		Disks:   diagnosticDisks,
-		HBA:     hba,
+		VSOCK:         vsock,
+		Emhttpd:       emhttpd,
+		Disks:         diagnosticDisks,
+		HBA:           hba,
 	}
 }
 
