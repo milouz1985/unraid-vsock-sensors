@@ -31,22 +31,8 @@ var (
 	ErrInvalidPoliciesFile = errors.New("disk policies file is invalid")
 )
 
-// errInvalidPoliciesFile wraps a specific reason so readDiskPolicies can keep
-// a detailed message while remaining matchable with errors.Is.
-type errInvalidPoliciesFile struct {
-	reason string
-}
-
-func (e *errInvalidPoliciesFile) Error() string {
-	return "disk policies file is invalid: " + e.reason
-}
-
-func (e *errInvalidPoliciesFile) Unwrap() error {
-	return ErrInvalidPoliciesFile
-}
-
 func invalidPoliciesFile(reason string) error {
-	return &errInvalidPoliciesFile{reason: reason}
+	return fmt.Errorf("%w: %s", ErrInvalidPoliciesFile, reason)
 }
 
 type diskPolicy string
