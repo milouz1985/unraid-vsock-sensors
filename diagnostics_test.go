@@ -151,7 +151,7 @@ func TestWriteDiagnosticsRuntimeFile(t *testing.T) {
 	if err := writeDiagnosticsAtomic(path, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0644 {
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("unexpected file mode: %v, %v", info, err)
 	}
 	data, err := os.ReadFile(path)

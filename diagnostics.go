@@ -309,7 +309,7 @@ func writeDiagnosticsAtomic(path string, snapshot diagnosticsSnapshot) error {
 		return err
 	}
 	defer os.Remove(file.Name())
-	if err := file.Chmod(0644); err != nil {
+	if err := file.Chmod(0600); err != nil {
 		file.Close()
 		return err
 	}
