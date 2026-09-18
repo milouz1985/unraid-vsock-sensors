@@ -139,8 +139,7 @@ func serve(args []string) error {
 	service := newServiceState(uint32(*port))
 	// The control socket is the WebUI entry point for disk inventory and policy
 	// mutations.
-	control := newControlServer(defaultControlSocketPath, refreshRequests,
-		defaultDiskPolicyFile, defaultDisksINIPath, defaultDevsINIPath, defaultSysBlockRoot)
+	control := newControlServer(defaultControlSocketPath, refreshRequests, defaultDiskDataPaths)
 	// Initial control-socket setup is required for a valid daemon start. A later
 	// listener failure is logged by the control goroutine but does not stop the
 	// thermal collection or VSOCK publication paths.

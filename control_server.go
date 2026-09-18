@@ -31,12 +31,10 @@ import (
 // reflected by the next GET without waiting for an asynchronous thermal
 // refresh.
 type controlServer struct {
-	socketPath   string
-	policies     *diskPolicyStore
-	refresh      chan<- struct{}
-	disksINIPath string
-	devsINIPath  string
-	sysBlockRoot string
+	socketPath string
+	policies   *diskPolicyStore
+	refresh    chan<- struct{}
+	paths      diskDataPaths
 
 	server   *http.Server
 	listener net.Listener
@@ -44,32 +42,17 @@ type controlServer struct {
 }
 
 // newControlServer wires the control API to the daemon. refresh is the
-// write-only channel through which the server requests a disk collection;
-// policyFile is the persistent policy store used both for mutations and for
-// management reads. The *Path fields are the read-only inputs used to build
-// the management inventory. The emhttpd heartbeat is not
-// carried over this socket: it is delivered to the collector out of band
-// (SIGUSR2) because it is frequent and carries no data.
-func newControlServer(socketPath string, refresh chan<- struct{}, policyFile string, disksINIPath, devsINIPath, sysBlockRoot string) *controlServer {
-	if policyFile == "" {
-		policyFile = defaultDiskPolicyFile
-	}
-	if disksINIPath == "" {
-		disksINIPath = defaultDisksINIPath
-	}
-	if devsINIPath == "" {
-		devsINIPath = defaultDevsINIPath
-	}
-	if sysBlockRoot == "" {
-		sysBlockRoot = defaultSysBlockRoot
-	}
+// write-only channel through which the server requests a disk collection. The
+// server shares the collector's disk data paths so management reads and policy
+// mutations cannot drift onto a different inventory or policy store. The
+// emhttpd heartbeat is delivered to the collector out of band (SIGUSR2) because
+// it is frequent and carries no data.
+func newControlServer(socketPath string, refresh chan<- struct{}, paths diskDataPaths) *controlServer {
 	return &controlServer{
-		socketPath:   socketPath,
-		policies:     newDiskPolicyStore(policyFile),
-		refresh:      refresh,
-		disksINIPath: disksINIPath,
-		devsINIPath:  devsINIPath,
-		sysBlockRoot: sysBlockRoot,
+		socketPath: socketPath,
+		policies:   newDiskPolicyStore(paths.policyFile),
+		refresh:    refresh,
+		paths:      paths,
 	}
 }
 
@@ -251,8 +234,8 @@ func (s *controlServer) managementInventory() ([]diskPolicyRow, error) {
 	if policyErr != nil {
 		return nil, policyErr
 	}
-	selector := &diskSelector{sysBlockRoot: s.sysBlockRoot, policies: policies}
-	entries, err := readDiskInventoryEntries(s.disksINIPath, s.devsINIPath, selector)
+	selector := &diskSelector{sysBlockRoot: s.paths.sysBlockRoot, policies: policies}
+	entries, err := readDiskInventoryEntries(s.paths.disksINI, s.paths.devsINI, selector)
 	if err != nil {
 		return nil, err
 	}

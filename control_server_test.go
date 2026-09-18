@@ -30,8 +30,7 @@ func startControlServerForTest(t *testing.T, environment *diskTestEnvironment, r
 	if len(socketPath) > 0 && socketPath[0] != "" {
 		path = socketPath[0]
 	}
-	server := newControlServer(path, refresh, environment.paths.policyFile,
-		environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
+	server := newControlServer(path, refresh, environment.paths)
 	if err := server.start(); err != nil {
 		t.Fatalf("start control server: %v", err)
 	}
@@ -118,8 +117,7 @@ func TestControlServerRefusesNonSocketPath(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not a socket"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	server := newControlServer(path, make(chan struct{}, 1), environment.paths.policyFile,
-		environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
+	server := newControlServer(path, make(chan struct{}, 1), environment.paths)
 	if err := server.start(); err == nil || !strings.Contains(err.Error(), "not a socket") {
 		t.Fatalf("start over regular file = %v", err)
 	}
@@ -162,8 +160,7 @@ func TestControlServerRefusesActiveInstance(t *testing.T) {
 			_ = conn.Close()
 		}
 	}()
-	server := newControlServer(path, make(chan struct{}, 1), environment.paths.policyFile,
-		environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
+	server := newControlServer(path, make(chan struct{}, 1), environment.paths)
 	if err := server.start(); err == nil || !strings.Contains(err.Error(), "already listening") {
 		t.Fatalf("start over active socket = %v", err)
 	}
@@ -347,8 +344,7 @@ func TestControlServerConcurrentSetsNoLostUpdate(t *testing.T) {
 func TestControlServerShutdownWaitsForMutation(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	path := filepath.Join(t.TempDir(), "control.sock")
-	server := newControlServer(path, make(chan struct{}, 1), environment.paths.policyFile,
-		environment.paths.disksINI, environment.paths.devsINI, environment.paths.sysBlockRoot)
+	server := newControlServer(path, make(chan struct{}, 1), environment.paths)
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
