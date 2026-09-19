@@ -21,6 +21,14 @@ Pushes disk temperatures from Unraid's disks.ini and devs.ini, and HBA
 temperatures over AF_VSOCK to Proxmox as native hwmon sensors.
 </DESCRIPTION>
 <CHANGES>
+### 2.1.0 - 2026-09-19
+
+- Add a read-only Diagnostics page that displays the daemon's runtime state: VSOCK link, emhttpd polling and fallback, per-disk thermal status and HBA readings.
+- Keep invalid disks visible in the management inventory so they can be identified and excluded without blocking policy management.
+- Keep the last valid poll_attributes and disk policies in effect when a transient read or parse error occurs, so a temporary failure no longer drops the effective configuration.
+- Report a stale control-socket shutdown when an accepted policy mutation is still in flight after the stop deadline.
+- Preserve the Unraid configuration on plugin removal, and harden the control API request decoding (bounded bodies, rejection of non-scalar fields).
+
 ### 2.0.0 - 2026-09-13
 
 - Push persistent disk and HBA snapshots over VSOCK to Proxmox hwmon sensors, with saved topology and a stale-data failsafe.
