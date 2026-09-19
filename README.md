@@ -207,6 +207,13 @@ leurs champs ou de leurs doublons.
 Deux entrées actives partageant le même ID dans une même source invalident
 l'inventaire : aucun inventaire partiel n'est publié.
 
+Une entrée sélectionnée doit également être éligible à la collecte thermique.
+Une identité stable ou des champs `rotational`/`spundown` invalides sur une
+entrée sélectionnée invalident l'inventaire thermique plutôt que de publier une
+vue partielle. L'entrée reste visible dans l'inventaire de gestion pour
+diagnostiquer le problème et, si son ID stable est valide, la placer en
+`Exclude`.
+
 L'identité repose sur l'ID stable fourni par Unraid, jamais sur `/dev/sdX`.
 
 L'emhttpd analysé tronque ces IDs à 79 octets. Cette limite observée n'est pas
@@ -265,16 +272,18 @@ Le champ `spundown` a toujours la priorité sur `temp` :
 L'événement Unraid `poll_attributes` envoie `SIGUSR2` au daemon (via
 `rc … poll`), qui enregistre le heartbeat et demande une actualisation
 immédiate. Ce signal est privilégié au passage par la socket de contrôle parce
-que le heartbeat est fréquent et ne porte aucune donnée : il évite de lancer un
-client Go ou une requête HTTP locale supplémentaire à chaque événement. Un watchdog de cinq secondes couvre les événements
-perdus et les changements d'état.
+que le heartbeat est fréquent et ne porte aucune donnée : il évite une requête
+HTTP locale supplémentaire à chaque événement. Un watchdog de cinq secondes
+couvre les événements perdus et les changements d'état.
 
-Si aucun événement `poll_attributes` n'arrive pendant
-`poll_attributes + 15 secondes` (45 s avec le réglage 30 s), UVSS interroge
-temporairement les disques via `smartctl_type` avec `-n standby,3`. Pour les HDD
-ATA, il vérifie d'abord l'état avec `sdspin` et n'interroge que les disques
-actifs ; les HDD d'un autre bus ou de type inconnu restent indisponibles par
-prudence. La première collecte directe démarre dès la détection du blocage ;
+Le heartbeat est considéré stale lorsque son absence dépasse
+`poll_attributes + 15 secondes`. En l'absence d'un nouvel événement, le
+watchdog de cinq secondes détecte ce dépassement au refresh suivant. UVSS
+interroge alors temporairement les disques via `smartctl_type` avec
+`-n standby,3`. Pour les HDD ATA, il vérifie d'abord l'état avec `sdspin` et
+n'interroge que les disques actifs ; les HDD d'un autre bus ou de type inconnu
+restent indisponibles par prudence. La première collecte directe démarre dès la
+détection du blocage ;
 les suivantes suivent l'intervalle `poll_attributes`, même si le watchdog
 continue de vérifier l'état toutes les cinq secondes. Entre deux collectes,
 UVSS conserve la dernière mesure sans relancer SMART. Les commandes ont un
@@ -282,12 +291,12 @@ timeout et une concurrence bornée. Le premier nouvel événement
 `poll_attributes` rétablit aussitôt la source native.
 
 Si une lecture directe échoue, UVSS marque la température indisponible au lieu
-de republier une ancienne mesure. Le failsafe hwmon de 10 secondes peut alors
-prendre le relais. `poll_attributes=0` désactive ce fallback, puisqu'aucun
-événement périodique n'est attendu. Dans ce mode, les disques actifs sont
-marqués indisponibles car leur température ne peut pas être considérée comme
-fraîche ; les disques en veille restent en `standby` avec la sentinelle
-synthétique.
+de republier une ancienne mesure. Le failsafe hwmon, configuré à 10 secondes
+par défaut, peut alors prendre le relais. `poll_attributes=0` désactive ce
+fallback, puisqu'aucun événement périodique n'est attendu. Dans ce mode, les
+disques actifs sont marqués indisponibles car leur température ne peut pas être
+considérée comme fraîche ; les disques en veille restent en `standby` avec la
+sentinelle synthétique.
 
 Lorsqu'un disque est en état `standby`, UVSS le conserve dans l'inventaire avec
 `Temp=0` comme sentinelle synthétique de contrôle. Cette valeur ne représente
@@ -362,7 +371,7 @@ avec la température failsafe.
 Un snapshot valide, même vide, est autoritaire. Un snapshot en erreur conserve
 au contraire la topologie précédente.
 
-Après dix secondes sans mise à jour, une sonde `virt_temp` passe à :
+Par défaut, après dix secondes sans mise à jour, une sonde `virt_temp` passe à :
 
 ```text
 100 °C
