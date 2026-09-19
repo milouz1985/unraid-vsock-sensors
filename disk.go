@@ -57,12 +57,7 @@ type diskCollector struct {
 	fallbackLog            stickyErrorLog
 	lastSuccessfulSnapshot []diskRuntimeDisk
 	publishedSource        smartSourceStatus
-
-	lastValidPollInterval time.Duration
-	haveValidPollInterval bool
-	pollLogInitialized    bool
-	lastPollInterval      time.Duration
-	lastPollError         string
+	pollConfig             pollAttributesState
 }
 
 type diskRuntimeDisk struct {
@@ -129,8 +124,8 @@ func (c *diskCollector) refreshWithContext(ctx context.Context) {
 	// runDiskRefreshLoop is the sole production caller, so refresh state is
 	// serialized by the collection goroutine itself.
 	decisionAt := c.now()
-	pollInterval, configErr := c.effectivePollAttributes()
-	c.logPollAttributesChange(pollInterval, configErr)
+	pollInterval, configErr := c.pollConfig.effective(c.paths.varINI)
+	c.pollConfig.logChange(pollInterval, configErr)
 	decision := c.smartSource.evaluate(decisionAt, pollInterval, configErr)
 	if decision.justEntered {
 		log.Printf("emhttpd SMART polling stale, enabling direct SMART fallback")

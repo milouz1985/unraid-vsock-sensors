@@ -20,6 +20,16 @@ const (
 	maximumRecommendedPolling = 60 * time.Second
 )
 
+// pollAttributesState owns the effective poll_attributes interval and the
+// de-duplicated log of the last value and configuration error it was read from.
+type pollAttributesState struct {
+	interval       time.Duration
+	haveValid      bool
+	logInitialized bool
+	lastInterval   time.Duration
+	lastError      string
+}
+
 func parsePollAttributes(data []byte) (time.Duration, error) {
 	config, err := ini.Load(data)
 	if err != nil {
@@ -56,27 +66,30 @@ func readPollAttributes(path string) (time.Duration, error) {
 	return interval, nil
 }
 
-func (c *diskCollector) effectivePollAttributes() (time.Duration, error) {
-	interval, err := readPollAttributes(c.paths.varINI)
+// effective reads the current poll_attributes interval and resolves the
+// effective value: a valid read replaces the last known good interval, while a
+// failed read keeps the last valid interval when one was ever observed.
+func (s *pollAttributesState) effective(varINIPath string) (time.Duration, error) {
+	interval, err := readPollAttributes(varINIPath)
 	if err == nil {
-		c.lastValidPollInterval = interval
-		c.haveValidPollInterval = true
+		s.interval = interval
+		s.haveValid = true
 		return interval, nil
 	}
-	if c.haveValidPollInterval {
-		return c.lastValidPollInterval, err
+	if s.haveValid {
+		return s.interval, err
 	}
 	return interval, err
 }
 
-func (c *diskCollector) logPollAttributesChange(interval time.Duration, configErr error) {
+func (s *pollAttributesState) logChange(interval time.Duration, configErr error) {
 	errorMessage := errorText(configErr)
-	if c.pollLogInitialized && c.lastPollInterval == interval && c.lastPollError == errorMessage {
+	if s.logInitialized && s.lastInterval == interval && s.lastError == errorMessage {
 		return
 	}
-	c.pollLogInitialized = true
-	c.lastPollInterval = interval
-	c.lastPollError = errorMessage
+	s.logInitialized = true
+	s.lastInterval = interval
+	s.lastError = errorMessage
 	logPollAttributes(interval, configErr)
 }
 
