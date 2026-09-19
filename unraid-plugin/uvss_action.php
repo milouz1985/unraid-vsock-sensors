@@ -13,10 +13,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
 
 require_once __DIR__ . '/uvss_control.php';
 
-$action = (string)($_POST['action'] ?? '');
+$action = $_POST['action'] ?? '';
+if (!is_string($action)) {
+    $action = '';
+}
 if ($action === 'set-disk-policy') {
-    $id = (string)($_POST['disk_id'] ?? '');
-    $policy = (string)($_POST['policy'] ?? '');
+    $id = $_POST['disk_id'] ?? '';
+    $policy = $_POST['policy'] ?? '';
+    if (!is_string($id) || !is_string($policy)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'invalid disk policy request']);
+        exit;
+    }
     $result = uvss_control_set_disk_policy($id, $policy);
 } elseif ($action === 'reset-disk-policies') {
     $result = uvss_control_reset_disk_policies();

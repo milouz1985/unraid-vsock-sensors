@@ -20,6 +20,7 @@ BASH_SCRIPTS := version.sh \
 	unraid-plugin/package_test.sh \
 	unraid-plugin/update-plg.sh \
 	unraid-plugin/update_plg_test.sh \
+	unraid-plugin/uvss_action_test.sh \
 	unraid-plugin/poll_attributes \
 	unraid-plugin/rc.unraid-vsock-sensors \
 	unraid-plugin/rc_test.sh \
@@ -107,6 +108,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	bash virt-temp/debian/lifecycle_test.sh
 	bash unraid-plugin/package_test.sh
 	bash unraid-plugin/update_plg_test.sh
+	bash unraid-plugin/uvss_action_test.sh
 	bash unraid-plugin/rc_test.sh
 	php unraid-plugin/uvss_control_test.php >/dev/null
 
