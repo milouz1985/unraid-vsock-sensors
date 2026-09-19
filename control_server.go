@@ -21,15 +21,10 @@ import (
 // controlServer is the daemon's local WebUI API. It listens on a Unix socket
 // and exposes only disk inventory plus disk-policy mutations.
 //
-// The emhttpd poll_attributes heartbeat is not carried over this socket: it is
-// frequent and carries no data, so it is delivered out of band (SIGUSR2) to the
-// collector. See newControlServer for details.
-//
 // The server owns the disk policy store and the read-only inputs needed to
-// build the management inventory. Policy mutations are served from the
-// persisted file and the inventory is read on demand, so a PUT/DELETE is
-// reflected by the next GET without waiting for an asynchronous thermal
-// refresh.
+// build the management inventory. Current policies and inventory are read from
+// disk on demand, so a mutation is reflected by the next GET without waiting
+// for a thermal refresh.
 type controlServer struct {
 	socketPath  string
 	policyStore *diskPolicyStore
@@ -47,9 +42,7 @@ var errControlSocketInUse = errors.New("control socket is already in use")
 // newControlServer wires the control API to the daemon. refresh is the
 // write-only channel through which the server requests a disk collection. The
 // server shares the collector's disk data paths so management reads and policy
-// mutations cannot drift onto a different inventory or policy store. The
-// emhttpd heartbeat is delivered to the collector out of band (SIGUSR2) because
-// it is frequent and carries no data.
+// mutations cannot drift onto a different inventory or policy store.
 func newControlServer(socketPath string, refresh chan<- struct{}, paths diskDataPaths) *controlServer {
 	return &controlServer{
 		socketPath:  socketPath,
