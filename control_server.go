@@ -31,10 +31,10 @@ import (
 // reflected by the next GET without waiting for an asynchronous thermal
 // refresh.
 type controlServer struct {
-	socketPath string
-	policies   *diskPolicyStore
-	refresh    chan<- struct{}
-	paths      diskDataPaths
+	socketPath  string
+	policyStore *diskPolicyStore
+	refresh     chan<- struct{}
+	paths       diskDataPaths
 
 	server *http.Server
 	done   chan struct{}
@@ -52,10 +52,10 @@ var errControlSocketInUse = errors.New("control socket is already in use")
 // it is frequent and carries no data.
 func newControlServer(socketPath string, refresh chan<- struct{}, paths diskDataPaths) *controlServer {
 	return &controlServer{
-		socketPath: socketPath,
-		policies:   newDiskPolicyStore(paths.policyFile),
-		refresh:    refresh,
-		paths:      paths,
+		socketPath:  socketPath,
+		policyStore: newDiskPolicyStore(paths.policyFile),
+		refresh:     refresh,
+		paths:       paths,
 	}
 }
 
@@ -234,7 +234,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 // the WebUI can still exclude them. It does not depend on the collector's
 // thermal state.
 func (s *controlServer) managementInventory() ([]diskPolicyRow, error) {
-	policies, policyErr := readDiskPolicies(s.policies.path)
+	policies, policyErr := readDiskPolicies(s.paths.policyFile)
 	if policyErr != nil {
 		return nil, policyErr
 	}
@@ -270,7 +270,7 @@ func (s *controlServer) handleSetDiskPolicy(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	if err := s.policies.Set(request.ID, request.Policy); err != nil {
+	if err := s.policyStore.Set(request.ID, request.Policy); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrInvalidDiskID) || errors.Is(err, ErrInvalidDiskPolicy) {
 			status = http.StatusBadRequest
@@ -284,7 +284,7 @@ func (s *controlServer) handleSetDiskPolicy(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *controlServer) handleResetDiskPolicies(w http.ResponseWriter, r *http.Request) {
-	if err := s.policies.Reset(); err != nil {
+	if err := s.policyStore.Reset(); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
