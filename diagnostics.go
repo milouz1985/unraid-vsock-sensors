@@ -154,7 +154,7 @@ func buildDiagnosticDiskServices(disks diskCollectorStatus, now time.Time) (diag
 	}
 	if disks.err != nil {
 		diskResult.Status = diagnosticStatusError
-	} else if disks.updatedAt.IsZero() || !now.Before(disks.updatedAt.Add(diskSnapshotTimeout)) {
+	} else if disks.updatedAt.IsZero() || disks.stale {
 		diskResult.Status = diagnosticStatusStale
 	}
 	if diskResult.Status != diagnosticStatusHealthy {
@@ -213,7 +213,7 @@ func buildDiagnosticHBA(hbas hbaCollectorStatus, now time.Time) diagnosticHBA {
 		result.LastError = ""
 	} else if hbas.err != nil {
 		result.Status = diagnosticStatusError
-	} else if hbas.lastSuccessfulAt.IsZero() || !now.Before(hbas.lastSuccessfulAt.Add(hbas.interval+hbaCollectionTimeout)) {
+	} else if hbas.lastSuccessfulAt.IsZero() || hbas.stale {
 		result.Status = diagnosticStatusStale
 	} else {
 		result.Status = diagnosticStatusHealthy

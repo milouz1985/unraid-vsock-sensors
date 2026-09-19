@@ -80,6 +80,7 @@ type diskCollectorStatus struct {
 	policyError string
 	disks       []diskRuntimeDisk
 	source      smartSourceStatus
+	stale       bool
 }
 
 func newDiskCollector(paths diskDataPaths) *diskCollector {
@@ -265,13 +266,20 @@ func (c *diskCollector) reuseFallbackSnapshot(disks []unraidDisk) []diskRuntimeD
 	return result
 }
 
+// stale reports whether the last published disk snapshot has outlived
+// diskSnapshotTimeout without a successful refresh. It is the single expiry
+// rule shared by the VSOCK snapshot and the diagnostics status.
+func (c *diskCollector) stale() bool {
+	return !c.now().Before(c.updatedAt.Add(diskSnapshotTimeout))
+}
+
 func (c *diskCollector) snapshot() ([]sensors.Disk, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.err != nil {
 		return nil, c.err
 	}
-	if !c.now().Before(c.updatedAt.Add(diskSnapshotTimeout)) {
+	if c.stale() {
 		return nil, errors.New("disk cache snapshot expired")
 	}
 	return diskReadingsFromRuntime(c.lastSuccessfulSnapshot), nil
@@ -297,6 +305,7 @@ func (c *diskCollector) status() diskCollectorStatus {
 		policyError: c.policyError,
 		disks:       slices.Clone(c.lastSuccessfulSnapshot),
 		source:      c.publishedSource,
+		stale:       c.stale(),
 	}
 	c.mu.RUnlock()
 

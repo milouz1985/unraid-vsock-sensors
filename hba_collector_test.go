@@ -180,6 +180,34 @@ func TestHBACollectorDisabledDoesNotCollect(t *testing.T) {
 	}
 }
 
+func TestHBASnapshotExpiryMatchesStaleStatus(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		collector := newTestHBACollector(time.Minute, hbaModeEnabled)
+		collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
+			return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
+		})
+		collector.refresh(context.Background())
+
+		// Fresh snapshot: both the VSOCK snapshot and the diagnostics status agree.
+		if _, err := collector.snapshot(); err != nil {
+			t.Fatalf("fresh snapshot = %v; want available", err)
+		}
+		if status := collector.status(); status.stale {
+			t.Fatal("fresh snapshot reported as stale in status")
+		}
+
+		// Crossing the collection budget expires the VSOCK snapshot, and the
+		// diagnostics status must report the same expiry.
+		time.Sleep(collector.interval + hbaCollectionTimeout + time.Millisecond)
+		if _, err := collector.snapshot(); err == nil {
+			t.Fatal("expired snapshot did not return an error")
+		}
+		if status := collector.status(); !status.stale {
+			t.Fatal("expired snapshot not reported as stale in status")
+		}
+	})
+}
+
 func TestHBAStableIDPrefersSASAcrossBackends(t *testing.T) {
 	if got, want := hbaStableID("0x56:C9:2B:F0:00:2E:67:05", "0000:06:10.0", "SERIAL"), "sas:56c92bf0002e6705"; got != want {
 		t.Fatalf("ID = %q, want %q", got, want)

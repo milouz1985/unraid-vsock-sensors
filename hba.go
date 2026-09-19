@@ -35,6 +35,7 @@ type hbaCollectorStatus struct {
 	lastErrorAt            time.Time
 	err                    error
 	lastSuccessfulSnapshot []sensors.HBA
+	stale                  bool
 }
 
 type hbaMetadata struct {
@@ -198,6 +199,13 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	c.lastSuccessfulSnapshot = slices.Clone(readings)
 }
 
+// stale reports whether the last successful HBA snapshot has outlived the
+// refresh interval plus its collection budget. It is the single expiry rule
+// shared by the VSOCK snapshot and the diagnostics status.
+func (c *hbaCollector) stale() bool {
+	return !time.Now().Before(c.lastSuccessfulAt.Add(c.interval + hbaCollectionTimeout))
+}
+
 func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -208,7 +216,7 @@ func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	if c.err != nil {
 		return nil, c.err
 	}
-	if !time.Now().Before(c.lastSuccessfulAt.Add(c.interval + hbaCollectionTimeout)) {
+	if c.stale() {
 		return nil, errors.New("HBA temperature snapshot expired")
 	}
 	return slices.Clone(c.lastSuccessfulSnapshot), nil
@@ -220,6 +228,6 @@ func (c *hbaCollector) status() hbaCollectorStatus {
 	return hbaCollectorStatus{
 		interval: c.interval, mode: c.mode, backend: c.backend,
 		lastSuccessfulAt: c.lastSuccessfulAt, lastErrorAt: c.lastErrorAt, err: c.err,
-		lastSuccessfulSnapshot: slices.Clone(c.lastSuccessfulSnapshot),
+		lastSuccessfulSnapshot: slices.Clone(c.lastSuccessfulSnapshot), stale: c.stale(),
 	}
 }

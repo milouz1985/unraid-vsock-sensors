@@ -472,3 +472,30 @@ func TestInventoryFailureDoesNotPublishStaleDiskAfterRecovery(t *testing.T) {
 		t.Fatalf("disk after inventory failure recovery = %#v", disk)
 	}
 }
+
+func TestDiskSnapshotExpiryMatchesStaleStatus(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	collector := newDiskCollector(diskDataPaths{})
+	collector.now = func() time.Time { return now }
+	collector.err = nil
+	collector.updatedAt = now
+	collector.lastSuccessfulSnapshot = []diskRuntimeDisk{{reading: sensors.Disk{ID: "disk1", Temp: 35}}}
+
+	// Fresh snapshot: both the VSOCK snapshot and the diagnostics status agree.
+	if _, err := collector.snapshot(); err != nil {
+		t.Fatalf("fresh snapshot = %v; want available", err)
+	}
+	if status := collector.status(); status.stale {
+		t.Fatal("fresh snapshot reported as stale in status")
+	}
+
+	// Crossing the snapshot timeout expires the VSOCK snapshot, and the
+	// diagnostics status must report the same expiry.
+	now = now.Add(diskSnapshotTimeout + time.Millisecond)
+	if _, err := collector.snapshot(); err == nil {
+		t.Fatal("expired snapshot did not return an error")
+	}
+	if status := collector.status(); !status.stale {
+		t.Fatal("expired snapshot not reported as stale in status")
+	}
+}
