@@ -20,10 +20,9 @@ type cachedHWMonInventory struct {
 	HBAs    *cachedHWMonFamily `json:"hbas,omitempty"`
 }
 
-// cachedHWMonFamily wraps a family's sensors instead of storing a pointer to a
-// slice directly. Besides keeping the absent-versus-empty distinction explicit,
-// the object can later carry family-level metadata without changing its JSON
-// shape again.
+// cachedHWMonFamily holds the sensors of one cache family (disks or hbas).
+// Storing the sensors in an object rather than a raw slice keeps the JSON shape
+// stable as "readings".
 type cachedHWMonFamily struct {
 	Sensors []cachedHWMonSensor `json:"readings"`
 }
