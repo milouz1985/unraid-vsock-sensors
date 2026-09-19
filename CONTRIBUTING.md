@@ -12,7 +12,8 @@ Le projet nécessite :
 - Go 1.27.0 ou plus récent ;
 - GNU Make ;
 - Bash ;
-- PHP CLI ;
+- PHP CLI ; les extensions cURL et PCNTL sont nécessaires pour le test
+  d'intégration du client de la socket de contrôle ;
 - ShellCheck ;
 - Git ;
 - `dpkg-buildpackage`, debhelper 13 et `rsync` pour construire le paquet Proxmox.
@@ -20,7 +21,7 @@ Le projet nécessite :
 Sous Debian ou Ubuntu :
 
 ```sh
-sudo apt install make shellcheck php-cli git debhelper rsync
+sudo apt install make shellcheck php-cli php-curl git debhelper rsync
 ```
 
 Le module `virt-temp` nécessite également les headers Linux correspondant au

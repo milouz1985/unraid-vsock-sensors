@@ -24,7 +24,12 @@ if (function_exists('curl_init')) {
     @unlink($staleSocket);
 }
 
-if (function_exists('curl_init') && function_exists('stream_socket_server') && function_exists('pcntl_fork')) {
+$integrationFunctions = ['curl_init', 'stream_socket_server', 'pcntl_fork'];
+$missingIntegrationFunctions = array_values(array_filter(
+    $integrationFunctions,
+    fn(string $function): bool => !function_exists($function)
+));
+if ($missingIntegrationFunctions === []) {
     $dir = sys_get_temp_dir() . '/uvss-ctl-test-' . getmypid();
     mkdir($dir, 0700, true);
     $socket = $dir . '/control.sock';
@@ -120,7 +125,8 @@ if (function_exists('curl_init') && function_exists('stream_socket_server') && f
     }
     rmdir($dir);
 } else {
-    echo "SKIP cURL/stream-socket/pcntl integration (extension not available)\n";
+    fwrite(STDERR, 'SKIP control socket integration: missing PHP functions: '
+        . implode(', ', $missingIntegrationFunctions) . "\n");
 }
 
 exit($failures === 0 ? 0 : 1);
