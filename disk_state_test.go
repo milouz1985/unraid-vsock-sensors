@@ -3,97 +3,14 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
-
-// Representative anonymized SCSI identity at the 79-byte length observed in
-// Unraid tests. Its model_serial shape matters; the original value does not.
-const maxLengthUnraidDiskID = "SEAGATE_EXOS_X24_ST24000NM002H-3KS133_ANONYMIZED_SERIAL_00000000000000000000000"
-
-type diskTestEnvironment struct {
-	paths diskDataPaths
-	now   time.Time
-}
-
-func newDiskTestEnvironment(t *testing.T, pollAttributes string) *diskTestEnvironment {
-	t.Helper()
-	root := t.TempDir()
-	environment := &diskTestEnvironment{
-		paths: diskDataPaths{
-			disksINI: filepath.Join(root, "disks.ini"), devsINI: filepath.Join(root, "devs.ini"),
-			varINI:       filepath.Join(root, "var.ini"),
-			sysBlockRoot: filepath.Join(root, "class", "block"),
-			policyFile:   filepath.Join(root, "disk-policies.json"),
-		},
-		now: time.Unix(1_800_000_000, 0),
-	}
-	environment.write(t, environment.paths.disksINI, "[flash]\ndevice=sdz\nrotational=0\nspundown=0\n")
-	environment.write(t, environment.paths.devsINI, "")
-	environment.write(t, environment.paths.varINI, "poll_attributes=\""+pollAttributes+"\"\n")
-	return environment
-}
-
-func unknownBusSelector(t *testing.T) *diskSelector {
-	t.Helper()
-	return &diskSelector{sysBlockRoot: filepath.Join(t.TempDir(), "class", "block")}
-}
-
-func (environment *diskTestEnvironment) write(t *testing.T, path, data string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func (environment *diskTestEnvironment) collector() *diskCollector {
-	collector := newDiskCollector(environment.paths)
-	collector.now = func() time.Time { return environment.now }
-	return collector
-}
-
-func (c *diskCollector) refresh() {
-	c.refreshWithContext(context.Background())
-}
-
-func readDisks(disksINIPath string, selector *diskSelector) ([]unraidDisk, error) {
-	entries, err := readAssignedEntries(disksINIPath, selector)
-	if err != nil {
-		return nil, err
-	}
-	return selectedDisks(entries)
-}
-
-func readUnassignedDisks(devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
-	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	return selectedDisks(entries)
-}
-
-func requireSingleDisk(t *testing.T, collector *diskCollector) sensorsDisk {
-	t.Helper()
-	readings, err := collector.snapshot()
-	if err != nil || len(readings) != 1 {
-		t.Fatalf("snapshot = %#v, %v; want one disk", readings, err)
-	}
-	return sensorsDisk{readings[0].ID, readings[0].Name, readings[0].Device, readings[0].Temp, readings[0].Unavailable}
-}
-
-// sensorsDisk keeps assertions concise without hiding the public snapshot fields.
-type sensorsDisk struct {
-	id, name, device string
-	temp             float64
-	unavailable      bool
-}
 
 func TestDiskStateReadingsMatchThermalState(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)

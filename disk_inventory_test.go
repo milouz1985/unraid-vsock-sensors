@@ -16,6 +16,31 @@ import (
 	"unraid-vsock-sensors/internal/sensors"
 )
 
+// Representative anonymized SCSI identity at the 79-byte length observed in
+// Unraid tests. Its model_serial shape matters; the original value does not.
+const maxLengthUnraidDiskID = "SEAGATE_EXOS_X24_ST24000NM002H-3KS133_ANONYMIZED_SERIAL_00000000000000000000000"
+
+func unknownBusSelector(t *testing.T) *diskSelector {
+	t.Helper()
+	return &diskSelector{sysBlockRoot: filepath.Join(t.TempDir(), "class", "block")}
+}
+
+func readDisks(disksINIPath string, selector *diskSelector) ([]unraidDisk, error) {
+	entries, err := readAssignedEntries(disksINIPath, selector)
+	if err != nil {
+		return nil, err
+	}
+	return selectedDisks(entries)
+}
+
+func readUnassignedDisks(devsINIPath string, selector *diskSelector) ([]unraidDisk, error) {
+	entries, err := readUnassignedEntries(devsINIPath, selector, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return selectedDisks(entries)
+}
+
 func TestParsePollAttributes(t *testing.T) {
 	for name, test := range map[string]struct {
 		data string

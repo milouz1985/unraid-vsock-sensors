@@ -74,43 +74,6 @@ func TestDiskPolicyStoreSerializesConcurrentSets(t *testing.T) {
 	}
 }
 
-func addFakeBlockDevice(t *testing.T, blockRoot, device string, usb bool) {
-	t.Helper()
-	root := filepath.Clean(filepath.Join(blockRoot, "..", ".."))
-	busRoot := filepath.Join(root, "bus")
-	for _, bus := range []string{"pci", "scsi", "usb"} {
-		if err := os.MkdirAll(filepath.Join(busRoot, bus), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	physical := filepath.Join(root, "devices", "pci0000:00", "0000:00:01.0", device, "host6", "target6:0:0", "6:0:0:0")
-	if usb {
-		physical = filepath.Join(root, "devices", "pci0000:00", "usb2", "2-1", "2-1:1.0", device, "host6", "target6:0:0", "6:0:0:0")
-	}
-	if err := os.MkdirAll(physical, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(busRoot, "scsi"), filepath.Join(physical, "subsystem")); err != nil {
-		t.Fatal(err)
-	}
-	busNode := filepath.Join(root, "devices", "pci0000:00", "0000:00:01.0")
-	bus := "pci"
-	if usb {
-		busNode = filepath.Join(root, "devices", "pci0000:00", "usb2", "2-1", "2-1:1.0")
-		bus = "usb"
-	}
-	if err := os.Symlink(filepath.Join(busRoot, bus), filepath.Join(busNode, "subsystem")); err != nil && !os.IsExist(err) {
-		t.Fatal(err)
-	}
-	classNode := filepath.Join(blockRoot, device)
-	if err := os.MkdirAll(classNode, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(physical, filepath.Join(classNode, "device")); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestPhysicalDiskBusAndPolicy(t *testing.T) {
 	tests := []struct {
 		name, transport, logicalName        string
