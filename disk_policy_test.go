@@ -377,3 +377,53 @@ func TestDiskPoliciesResetRejectsDirectory(t *testing.T) {
 		t.Fatalf("policy directory after failed reset = %v, %v", info, err)
 	}
 }
+
+func TestDiskPolicyFileErrorsIncludeOperationAndPath(t *testing.T) {
+	root := t.TempDir()
+	notDirectory := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(notDirectory, []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		path      string
+		operation string
+		call      func(string) error
+	}{
+		{
+			name:      "read",
+			path:      root,
+			operation: "read disk policies",
+			call: func(path string) error {
+				_, err := readDiskPolicies(path)
+				return err
+			},
+		},
+		{
+			name:      "write",
+			path:      filepath.Join(notDirectory, "disk-policies.json"),
+			operation: "create directory for disk policies",
+			call: func(path string) error {
+				return writeDiskPoliciesAtomic(path, map[string]diskPolicy{"stable_id": diskPolicyInclude})
+			},
+		},
+		{
+			name:      "reset",
+			path:      filepath.Join(notDirectory, "disk-policies.json"),
+			operation: "inspect disk policies",
+			call: func(path string) error {
+				return newDiskPolicyStore(path).Reset()
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.call(test.path)
+			if err == nil || !strings.Contains(err.Error(), test.operation) || !strings.Contains(err.Error(), test.path) {
+				t.Fatalf("error = %v; want operation %q and path %q", err, test.operation, test.path)
+			}
+		})
+	}
+}

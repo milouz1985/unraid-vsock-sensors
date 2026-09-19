@@ -31,8 +31,8 @@ var (
 	ErrInvalidPoliciesFile = errors.New("disk policies file is invalid")
 )
 
-func invalidPoliciesFile(reason string) error {
-	return fmt.Errorf("%w: %s", ErrInvalidPoliciesFile, reason)
+func invalidPoliciesFile(path, reason string) error {
+	return fmt.Errorf("%w at %q: %s", ErrInvalidPoliciesFile, path, reason)
 }
 
 type diskPolicy string
@@ -144,20 +144,20 @@ func readDiskPolicies(path string) (map[string]diskPolicy, error) {
 		return policies, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read disk policies %q: %w", path, err)
 	}
 	if err := json.Unmarshal(data, &policies); err != nil {
-		return nil, invalidPoliciesFile("parse: " + err.Error())
+		return nil, invalidPoliciesFile(path, "parse: "+err.Error())
 	}
 	if policies == nil {
-		return nil, invalidPoliciesFile("must be a JSON object")
+		return nil, invalidPoliciesFile(path, "must be a JSON object")
 	}
 	for id, policy := range policies {
 		if id == "" || len(id) > maxUnraidDiskIDSize {
-			return nil, invalidPoliciesFile(fmt.Sprintf("invalid ID %q", id))
+			return nil, invalidPoliciesFile(path, fmt.Sprintf("invalid ID %q", id))
 		}
 		if policy != diskPolicyInclude && policy != diskPolicyExclude {
-			return nil, invalidPoliciesFile(fmt.Sprintf("invalid policy %q for ID %q", policy, id))
+			return nil, invalidPoliciesFile(path, fmt.Sprintf("invalid policy %q for ID %q", policy, id))
 		}
 	}
 	return policies, nil
@@ -213,7 +213,7 @@ func (s *diskPolicyStore) Reset() error {
 		return nil
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("inspect disk policies %q: %w", s.path, err)
 	}
 	if info.IsDir() {
 		return fmt.Errorf("disk policies path %q is a directory", s.path)
@@ -222,34 +222,41 @@ func (s *diskPolicyStore) Reset() error {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("remove disk policies %q: %w", s.path, err)
+	}
+	return nil
 }
 
 // writeDiskPoliciesAtomic persists the policy file with a temporary file,
 // flush, sync and rename so a crash never leaves a truncated file.
 func writeDiskPoliciesAtomic(path string, policies map[string]diskPolicy) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return fmt.Errorf("create directory for disk policies %q: %w", path, err)
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".disk-policies-*")
+	file, err := os.CreateTemp(directory, ".disk-policies-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("create temporary disk policies for %q: %w", path, err)
 	}
 	defer os.Remove(file.Name())
 	if err := file.Chmod(0600); err != nil {
 		file.Close()
-		return err
+		return fmt.Errorf("set temporary disk policies mode for %q: %w", path, err)
 	}
 	if err := json.NewEncoder(file).Encode(policies); err != nil {
 		file.Close()
-		return err
+		return fmt.Errorf("encode temporary disk policies for %q: %w", path, err)
 	}
 	if err := file.Sync(); err != nil {
 		file.Close()
-		return err
+		return fmt.Errorf("sync temporary disk policies for %q: %w", path, err)
 	}
 	if err := file.Close(); err != nil {
-		return err
+		return fmt.Errorf("close temporary disk policies for %q: %w", path, err)
 	}
-	return os.Rename(file.Name(), path)
+	if err := os.Rename(file.Name(), path); err != nil {
+		return fmt.Errorf("replace disk policies %q: %w", path, err)
+	}
+	return nil
 }
