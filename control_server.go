@@ -265,8 +265,11 @@ func (s *controlServer) handleSetDiskPolicy(w http.ResponseWriter, r *http.Reque
 	}
 	if err := s.policyStore.Set(request.ID, request.Policy); err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, ErrInvalidDiskID) || errors.Is(err, ErrInvalidDiskPolicy) {
+		switch {
+		case errors.Is(err, ErrInvalidDiskID), errors.Is(err, ErrInvalidDiskPolicy):
 			status = http.StatusBadRequest
+		case errors.Is(err, ErrInvalidPoliciesFile):
+			status = http.StatusUnprocessableEntity
 		}
 		writeError(w, status, err.Error())
 		return

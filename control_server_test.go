@@ -280,11 +280,22 @@ func TestControlServerInvalidPolicyFileCanBeReset(t *testing.T) {
 	environment.write(t, environment.paths.disksINI,
 		"[disk1]\nid=serial\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 	environment.write(t, environment.paths.policyFile, `{"serial":"bogus"}`)
-	server := startControlServerForTest(t, environment, make(chan struct{}, 1))
+	refresh := make(chan struct{}, 1)
+	server := startControlServerForTest(t, environment, refresh)
 
 	status, _, err := controlRequest(server.socketPath, http.MethodGet, "/v1/disks", nil, time.Second)
 	if err != nil || status != http.StatusUnprocessableEntity {
 		t.Fatalf("GET invalid policies = %d, %v; want 422", status, err)
+	}
+	status, _, err = controlRequest(server.socketPath, http.MethodPut, "/v1/disk-policy",
+		diskPolicySetRequest{ID: "serial", Policy: diskPolicyExclude}, time.Second)
+	if err != nil || status != http.StatusUnprocessableEntity {
+		t.Fatalf("PUT with invalid policies = %d, %v; want 422", status, err)
+	}
+	select {
+	case <-refresh:
+		t.Fatal("failed policy mutation requested a refresh")
+	default:
 	}
 	status, _, err = controlRequest(server.socketPath, http.MethodDelete, "/v1/disk-policies", nil, time.Second)
 	if err != nil || status != http.StatusOK {
