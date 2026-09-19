@@ -16,7 +16,7 @@ close_inherited_fds() {
     for path in /proc/self/fd/*; do
         descriptor="${path##*/}"
         if [[ "$descriptor" =~ ^[0-9]+$ ]] && (( descriptor > 2 )); then
-            eval "exec ${descriptor}>&-"
+            exec {descriptor}>&-
         fi
     done
 }
