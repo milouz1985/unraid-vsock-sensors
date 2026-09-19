@@ -288,13 +288,15 @@ func TestControlServerRejectsInvalidMutationBodies(t *testing.T) {
 	client := &http.Client{Transport: transport, Timeout: time.Second}
 
 	for _, test := range []struct {
-		name string
-		body string
+		name      string
+		body      string
+		wantError string
 	}{
 		{name: "truncated", body: `{"id":"serial"`},
 		{name: "unknown field", body: `{"id":"serial","policy":"include","extra":true}`},
 		{name: "second value", body: `{"id":"serial","policy":"include"}{}`},
 		{name: "oversized", body: strings.Repeat("x", int(controlRequestBodyLimit)+1)},
+		{name: "missing ID", body: `{"policy":"include"}`, wantError: ErrInvalidDiskID.Error()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request, err := http.NewRequest(http.MethodPut, "http://uvss/v1/disk-policy", strings.NewReader(test.body))
@@ -305,9 +307,16 @@ func TestControlServerRejectsInvalidMutationBodies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			body, err := io.ReadAll(response.Body)
 			response.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
 			if response.StatusCode != http.StatusBadRequest {
 				t.Fatalf("status = %d; want 400", response.StatusCode)
+			}
+			if test.wantError != "" && !strings.Contains(string(body), test.wantError) {
+				t.Fatalf("body = %q; want error containing %q", body, test.wantError)
 			}
 		})
 	}

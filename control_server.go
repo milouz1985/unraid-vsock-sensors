@@ -270,10 +270,6 @@ func (s *controlServer) handleSetDiskPolicy(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	if request.ID == "" {
-		writeError(w, http.StatusBadRequest, "id is required")
-		return
-	}
 	if err := s.policies.Set(request.ID, request.Policy); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrInvalidDiskID) || errors.Is(err, ErrInvalidDiskPolicy) {

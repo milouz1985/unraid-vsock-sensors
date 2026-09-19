@@ -176,15 +176,15 @@ func newDiskPolicyStore(path string) *diskPolicyStore {
 }
 
 func (s *diskPolicyStore) Set(id string, policy diskPolicy) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if id == "" || len(id) > maxUnraidDiskIDSize {
 		return fmt.Errorf("%w: must contain 1 to %d bytes", ErrInvalidDiskID, maxUnraidDiskIDSize)
 	}
 	if policy != diskPolicyAuto && policy != diskPolicyInclude && policy != diskPolicyExclude {
 		return fmt.Errorf("%w %q", ErrInvalidDiskPolicy, policy)
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	policies, err := readDiskPolicies(s.path)
 	if err != nil {
