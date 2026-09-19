@@ -58,10 +58,11 @@ Le heartbeat emhttpd `poll_attributes` reste hors bande : le hook Unraid appelle
 `rc … poll`, qui envoie `SIGUSR2` au daemon sans passer par HTTP.
 
 Au démarrage, une socket résiduelle n'est supprimée que si `ECONNREFUSED`
-prouve qu'aucun processus ne l'écoute. Un shutdown propre ferme le serveur de
-façon synchrone. Une erreur ultérieure du listener est journalisée sans arrêter
-la collecte thermique ni la publication VSOCK ; un restart du service recrée
-alors le control plane.
+prouve qu'aucun processus ne l'écoute. Une socket déjà utilisée par une autre
+instance empêche le démarrage ; toute autre erreur initiale est journalisée sans
+bloquer la collecte thermique ni la publication VSOCK. Un shutdown propre ferme
+le serveur de façon synchrone. Une erreur ultérieure du listener reste elle aussi
+isolée du data plane ; un restart du service recrée alors le control plane.
 
 ## Installation
 

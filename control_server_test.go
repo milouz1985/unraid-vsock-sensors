@@ -126,6 +126,21 @@ func TestControlServerRefusesNonSocketPath(t *testing.T) {
 	}
 }
 
+func TestControlPlaneStartupFailureIsNonFatal(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	path := filepath.Join(t.TempDir(), "control.sock")
+	if err := os.WriteFile(path, []byte("not a socket"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := newControlServer(path, make(chan struct{}, 1), environment.paths)
+	if err := startControlPlane(server); err != nil {
+		t.Fatalf("degraded control-plane startup = %v; want non-fatal", err)
+	}
+	if server.server != nil {
+		t.Fatal("failed control plane unexpectedly installed an HTTP server")
+	}
+}
+
 func TestControlServerReclaimsStaleSocket(t *testing.T) {
 	environment := newDiskTestEnvironment(t, "30")
 	path := filepath.Join(t.TempDir(), "control.sock")
@@ -161,7 +176,7 @@ func TestControlServerRefusesActiveInstance(t *testing.T) {
 		}
 	}()
 	server := newControlServer(path, make(chan struct{}, 1), environment.paths)
-	if err := server.start(); err == nil || !strings.Contains(err.Error(), "already listening") {
+	if err := startControlPlane(server); err == nil || !errors.Is(err, errControlSocketInUse) || !strings.Contains(err.Error(), "already listening") {
 		t.Fatalf("start over active socket = %v", err)
 	}
 }

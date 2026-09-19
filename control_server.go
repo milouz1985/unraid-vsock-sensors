@@ -40,6 +40,10 @@ type controlServer struct {
 	done   chan struct{}
 }
 
+// errControlSocketInUse distinguishes a second daemon instance from failures
+// that affect only the optional WebUI control plane.
+var errControlSocketInUse = errors.New("control socket is already in use")
+
 // newControlServer wires the control API to the daemon. refresh is the
 // write-only channel through which the server requests a disk collection. The
 // server shares the collector's disk data paths so management reads and policy
@@ -78,7 +82,7 @@ func (s *controlServer) prepareSocket() error {
 	conn, dialErr := dialer.Dial("unix", s.socketPath)
 	if dialErr == nil {
 		conn.Close()
-		return fmt.Errorf("another unraid-vsock-sensors instance is already listening on %s", s.socketPath)
+		return fmt.Errorf("%w: another unraid-vsock-sensors instance is already listening on %s", errControlSocketInUse, s.socketPath)
 	}
 	// Only a kernel connection refusal proves the socket is stale. A timeout or
 	// permission error does not, so the path is preserved.
@@ -129,6 +133,9 @@ func (s *controlServer) openListener() (net.Listener, error) {
 	}
 	listener, err := net.Listen("unix", s.socketPath)
 	if err != nil {
+		if errors.Is(err, unix.EADDRINUSE) {
+			return nil, fmt.Errorf("%w at %q: %v", errControlSocketInUse, s.socketPath, err)
+		}
 		return nil, fmt.Errorf("listen on control socket %q: %w", s.socketPath, err)
 	}
 	if err := os.Chmod(s.socketPath, 0660); err != nil {

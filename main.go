@@ -140,10 +140,7 @@ func serve(args []string) error {
 	// The control socket is the WebUI entry point for disk inventory and policy
 	// mutations.
 	control := newControlServer(defaultControlSocketPath, refreshRequests, defaultDiskDataPaths)
-	// Initial control-socket setup is required for a valid daemon start. A later
-	// listener failure is logged by the control goroutine but does not stop the
-	// thermal collection or VSOCK publication paths.
-	if err := control.start(); err != nil {
+	if err := startControlPlane(control); err != nil {
 		return err
 	}
 	// Shut the control plane down synchronously so the Unix socket is removed
@@ -155,4 +152,16 @@ func serve(args []string) error {
 	go hbas.run(ctx)
 	go runDiagnostics(ctx, defaultDiagnosticsPath, service, disks, hbas)
 	return publishSnapshots(ctx, uint32(*port), disks, hbas, service)
+}
+
+// startControlPlane keeps control-plane failures isolated from temperature
+// collection and VSOCK publication. A socket already owned by another daemon
+// remains fatal because continuing would create two active service instances.
+func startControlPlane(control *controlServer) error {
+	err := control.start()
+	if err == nil || errors.Is(err, errControlSocketInUse) {
+		return err
+	}
+	log.Printf("control API unavailable at startup: %v; restart the service to restore the WebUI control plane", err)
+	return nil
 }
