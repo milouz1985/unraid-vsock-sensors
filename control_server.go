@@ -271,7 +271,8 @@ func (s *controlServer) handleSetDiskPolicy(w http.ResponseWriter, r *http.Reque
 		writeError(w, status, err.Error())
 		return
 	}
-	// The refresh is requested only after the policy file was persisted.
+	// Refresh even after a no-op so every successful WebUI action immediately
+	// recomputes the published disk snapshot.
 	requestDiskRefresh(s.refresh)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

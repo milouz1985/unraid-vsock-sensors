@@ -222,17 +222,21 @@ func TestControlServerPolicyMutationIsImmediateAndRefreshes(t *testing.T) {
 		"[disk1]\nid=stable_id\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n")
 	refresh := make(chan struct{}, 1)
 	server := startControlServerForTest(t, environment, refresh)
+	expectRefresh := func(operation string) {
+		t.Helper()
+		select {
+		case <-refresh:
+		default:
+			t.Fatalf("%s did not request a refresh", operation)
+		}
+	}
 
 	status, body, err := controlRequest(server.socketPath, http.MethodPut, "/v1/disk-policy",
 		diskPolicySetRequest{ID: "stable_id", Policy: diskPolicyExclude}, time.Second)
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("PUT policy = %d, %v; %q", status, err, body)
 	}
-	select {
-	case <-refresh:
-	default:
-		t.Fatal("policy mutation did not request a refresh")
-	}
+	expectRefresh("policy mutation")
 	policies, err := readDiskPolicies(environment.paths.policyFile)
 	if err != nil || policies["stable_id"] != diskPolicyExclude {
 		t.Fatalf("persisted policies = %#v, %v", policies, err)
@@ -248,6 +252,12 @@ func TestControlServerPolicyMutationIsImmediateAndRefreshes(t *testing.T) {
 	if len(rows) != 1 || rows[0].Policy != diskPolicyExclude || rows[0].Selected {
 		t.Fatalf("inventory after PUT = %#v", rows)
 	}
+	status, body, err = controlRequest(server.socketPath, http.MethodPut, "/v1/disk-policy",
+		diskPolicySetRequest{ID: "stable_id", Policy: diskPolicyExclude}, time.Second)
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("no-op PUT policy = %d, %v; %q", status, err, body)
+	}
+	expectRefresh("no-op policy mutation")
 
 	status, body, err = controlRequest(server.socketPath, http.MethodDelete, "/v1/disk-policies", nil, time.Second)
 	if err != nil || status != http.StatusOK {
@@ -256,6 +266,13 @@ func TestControlServerPolicyMutationIsImmediateAndRefreshes(t *testing.T) {
 	if _, err := os.Stat(environment.paths.policyFile); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("policy file after reset = %v; want absent", err)
 	}
+	expectRefresh("policy reset")
+
+	status, body, err = controlRequest(server.socketPath, http.MethodDelete, "/v1/disk-policies", nil, time.Second)
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("no-op DELETE policies = %d, %v; %q", status, err, body)
+	}
+	expectRefresh("no-op policy reset")
 }
 
 func TestControlServerInvalidPolicyFileCanBeReset(t *testing.T) {
