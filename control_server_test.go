@@ -41,7 +41,12 @@ func startControlServerForTest(t *testing.T, environment *diskTestEnvironment, r
 
 func (s *controlTestServer) stop(t *testing.T) {
 	t.Helper()
-	s.server.stop()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := s.server.stop(ctx); err != nil {
+		t.Errorf("stop control server: %v", err)
+		return
+	}
 	waitForSocketGone(t, s.socketPath)
 }
 
@@ -393,11 +398,15 @@ func TestControlServerShutdownWaitsForMutation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("mutation did not reach server")
 	}
-	stopDone := make(chan struct{})
-	go func() { server.stop(); close(stopDone) }()
+	stopDone := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		stopDone <- server.stop(ctx)
+	}()
 	select {
-	case <-stopDone:
-		t.Fatal("shutdown returned while request was in flight")
+	case err := <-stopDone:
+		t.Fatalf("shutdown returned while request was in flight: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)
@@ -405,9 +414,67 @@ func TestControlServerShutdownWaitsForMutation(t *testing.T) {
 		t.Fatalf("mutation during shutdown: %v", err)
 	}
 	select {
-	case <-stopDone:
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("shutdown after mutation: %v", err)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("shutdown did not finish")
+	}
+	waitForSocketGone(t, path)
+}
+
+func TestControlServerShutdownReportsExpiredContext(t *testing.T) {
+	environment := newDiskTestEnvironment(t, "30")
+	path := filepath.Join(t.TempDir(), "control.sock")
+	server := newControlServer(path, make(chan struct{}, 1), environment.paths)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	server.server = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})}
+	server.done = make(chan struct{})
+	go func() {
+		defer close(server.done)
+		_ = server.server.Serve(listener)
+	}()
+
+	requestDone := make(chan error, 1)
+	go func() {
+		status, _, err := controlRequest(path, http.MethodGet, "/", nil, time.Second)
+		if err == nil && status != http.StatusOK {
+			err = fmt.Errorf("status = %d", status)
+		}
+		requestDone <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not reach server")
+	}
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	err = server.stop(expired)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown with expired context = %v; want deadline exceeded", err)
+	}
+	select {
+	case err := <-requestDone:
+		t.Fatalf("active request ended before release: %v", err)
+	default:
+	}
+	releaseOnce.Do(func() { close(release) })
+	if err := <-requestDone; err != nil {
+		t.Fatalf("request after shutdown timeout: %v", err)
 	}
 	waitForSocketGone(t, path)
 }

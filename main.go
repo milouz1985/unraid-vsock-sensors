@@ -143,9 +143,15 @@ func serve(args []string) error {
 	if err := startControlPlane(control); err != nil {
 		return err
 	}
-	// Shut the control plane down synchronously so the Unix socket is removed
-	// before serve returns, regardless of how the daemon is being stopped.
-	defer control.stop()
+	// Close the control listener and give accepted requests a bounded window to
+	// finish before serve returns.
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), controlServerShutdownTimeout)
+		defer cancel()
+		if err := control.stop(shutdownCtx); err != nil {
+			log.Printf("control server shutdown incomplete: %v", err)
+		}
+	}()
 	// Collection remains independent from publication so a disk or controller
 	// operation can never block the VSOCK heartbeat.
 	go disks.run(ctx, refreshRequests)

@@ -155,9 +155,10 @@ func (s *controlServer) newHTTPServer() *http.Server {
 }
 
 // start binds the Unix socket synchronously, then serves it in its own
-// goroutine. Failure to create the initial socket prevents daemon startup. A
-// later Serve failure is logged but deliberately does not stop the thermal
-// data plane; restarting the service recreates the control socket.
+// goroutine. It returns initial setup failures to the daemon lifecycle, which
+// decides whether they are fatal. A later Serve failure is logged but
+// deliberately does not stop the thermal data plane; restarting the service
+// recreates the control socket.
 func (s *controlServer) start() error {
 	listener, err := s.openListener()
 	if err != nil {
@@ -178,18 +179,18 @@ func (s *controlServer) start() error {
 	return nil
 }
 
-// stop drains accepted requests before closing the local control socket.
-func (s *controlServer) stop() {
+// stop closes the local listener and waits for accepted requests until ctx
+// expires. A returned context error means some handlers may still be running.
+func (s *controlServer) stop(ctx context.Context) error {
 	if s.server == nil {
-		return
+		return nil
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), controlServerShutdownTimeout)
 	// Shutdown closes the listener before waiting for active handlers.
-	_ = s.server.Shutdown(shutdownCtx)
-	cancel()
+	err := s.server.Shutdown(ctx)
 	if s.done != nil {
 		<-s.done
 	}
+	return err
 }
 
 func (s *controlServer) registerRoutes(mux *http.ServeMux) {

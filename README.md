@@ -60,9 +60,11 @@ Le heartbeat emhttpd `poll_attributes` reste hors bande : le hook Unraid appelle
 Au démarrage, une socket résiduelle n'est supprimée que si `ECONNREFUSED`
 prouve qu'aucun processus ne l'écoute. Une socket déjà utilisée par une autre
 instance empêche le démarrage ; toute autre erreur initiale est journalisée sans
-bloquer la collecte thermique ni la publication VSOCK. Un shutdown propre ferme
-le serveur de façon synchrone. Une erreur ultérieure du listener reste elle aussi
-isolée du data plane ; un restart du service recrée alors le control plane.
+bloquer la collecte thermique ni la publication VSOCK. Un shutdown ferme le
+listener puis laisse jusqu'à sept secondes aux requêtes acceptées pour se terminer ;
+une expiration est journalisée et une mutation encore active peut rester non
+appliquée. Une erreur ultérieure du listener reste elle aussi isolée du data
+plane ; un restart du service recrée alors le control plane.
 
 ## Installation
 
