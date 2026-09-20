@@ -70,7 +70,8 @@ func validateHWMonSamples(namespace string, readings []hwmonSample) ([]int64, er
 	milliCelsius := make([]int64, len(readings))
 	for index, reading := range readings {
 		sensor := reading.sensor
-		if !strings.HasPrefix(sensor.id, prefix) || len(sensor.id) > maxHWMonIDSize ||
+		if !strings.HasPrefix(sensor.id, prefix) || len(sensor.id) == len(prefix) ||
+			len(sensor.id) > maxHWMonIDSize ||
 			strings.ContainsRune(sensor.id, '\x00') {
 			return nil, fmt.Errorf("invalid hwmon sensor ID %q", sensor.id)
 		}

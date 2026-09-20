@@ -294,6 +294,8 @@ func TestValidateHWMonSamplesRejectsInvalidFields(t *testing.T) {
 	}{
 		{name: "namespace", namespace: "other", reading: hwmonTestSample("other:1", "disk1", 30)},
 		{name: "wrong prefix", namespace: "disk", reading: hwmonTestSample("hba:0", "hba0", 30)},
+		{name: "empty disk suffix", namespace: "disk", reading: hwmonTestSample("disk:", "disk1", 30)},
+		{name: "empty HBA suffix", namespace: "hba", reading: hwmonTestSample("hba:", "hba0", 30)},
 		{name: "ID NUL", namespace: "disk", reading: hwmonTestSample("disk:bad\x00id", "disk1", 30)},
 		{name: "label newline", namespace: "disk", reading: hwmonTestSample("disk:1", "disk1\nbad", 30)},
 		{name: "NaN", namespace: "disk", reading: hwmonTestSample("disk:1", "disk1", math.NaN())},
