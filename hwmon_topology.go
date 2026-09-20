@@ -114,15 +114,9 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 // and limits labels to maxHWMonLabelSize bytes. Keep strict validation as a
 // final guard, but normalize dynamic labels before they reach it.
 func sanitizeHWMonLabel(label, fallback string) string {
-	label = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, label)
-	label = strings.TrimSpace(label)
+	label = normalizeHWMonLabel(label)
 	if label == "" {
-		label = fallback
+		label = normalizeHWMonLabel(fallback)
 	}
 	if len(label) <= maxHWMonLabelSize {
 		return label
@@ -133,6 +127,15 @@ func sanitizeHWMonLabel(label, fallback string) string {
 		limit--
 	}
 	return label[:limit]
+}
+
+func normalizeHWMonLabel(label string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, label))
 }
 
 // Labels are topology metadata. Temperature refreshes do not update them, so a

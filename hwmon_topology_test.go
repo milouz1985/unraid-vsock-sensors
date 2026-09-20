@@ -102,6 +102,7 @@ func TestSanitizeHWMonLabel(t *testing.T) {
 	}{
 		{name: "control characters", label: " Mega\tRAID\n\x00 ", fallback: "hba:sas:1234", want: "Mega RAID"},
 		{name: "empty after sanitizing", label: "\t\r\n\x00", fallback: "hba:sas:1234", want: "hba:sas:1234"},
+		{name: "fallback control characters", label: "", fallback: "hba:sas:\n1234", want: "hba:sas: 1234"},
 		{name: "ASCII truncation", label: strings.Repeat("a", maxHWMonLabelSize+1), fallback: "fallback", want: strings.Repeat("a", maxHWMonLabelSize)},
 		{name: "UTF-8 truncation keeps rune boundary", label: strings.Repeat("é", 48), fallback: "fallback", want: strings.Repeat("é", 47)},
 	}
