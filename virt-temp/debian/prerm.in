@@ -6,6 +6,16 @@ version="@VERSION@"
 service="unraid-vsock-hwmon.service"
 saved_sources="/var/lib/unraid-vsock-sensors/dkms-sources"
 
+clear_virt_temp_config() {
+    for family in /sys/kernel/config/virt_temp/disk /sys/kernel/config/virt_temp/hba; do
+        [ -d "$family" ] || continue
+        for sensor in "$family"/*; do
+            [ -d "$sensor" ] || continue
+            rmdir -- "$sensor"
+        done
+    done
+}
+
 case "$1" in
     upgrade)
         # dpkg removes the old /usr/src directory during unpacking. Keep the
@@ -27,6 +37,7 @@ case "$1" in
     remove|deconfigure)
         systemctl stop "$service" 2>/dev/null || true
         if grep -q '^virt_temp ' /proc/modules; then
+            clear_virt_temp_config
             modprobe -r virt_temp
         fi
         # Remove every DKMS version belonging to this package, not only the

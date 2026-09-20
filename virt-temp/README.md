@@ -14,40 +14,54 @@ Le paquet Debian installe principalement :
 - `unraid-vsock-hwmon.service` ;
 - `/etc/default/unraid-vsock-hwmon`.
 
-Le module crée :
+Le module expose deux interfaces complémentaires :
 
 ```text
-/dev/virt-temp
+/sys/kernel/config/virt_temp/
+├── disk/
+└── hba/
+
+/dev/virt-temp/
+└── <ID encodé en hexadécimal>
 ```
 
-Le récepteur VSOCK alimente ce périphérique et expose ensuite les températures
-via le sous-système Linux `hwmon`.
+Configfs pilote le cycle de vie et les métadonnées des sondes. Chaque sonde
+créée obtient ensuite son propre périphérique caractère, utilisé uniquement pour
+pousser sa température courante. Les consommateurs continuent à lire les
+valeurs via le sous-système Linux `hwmon`.
 
-## Protocole `/dev/virt-temp`
+## Interface kernel
 
 Les familles `disk` et `hba` sont indépendantes.
 
-Le protocole textuel utilise :
+Une sonde est créée en ajoutant un objet configfs sous la famille correspondante.
+Le nom de l'objet est la partie de l'ID stable située après `disk:` ou `hba:`,
+encodée en hexadécimal. Son attribut `label` configure le label hwmon.
 
-```text
-sample<TAB><ID><TAB><température en milli°C><TAB><label>
-configure<TAB><famille>
-commit<TAB><famille>
+Exemple conceptuel :
+
+```sh
+mkdir /sys/kernel/config/virt_temp/disk/73657269616c31
+printf '%s\n' 'disk1' > /sys/kernel/config/virt_temp/disk/73657269616c31/label
+printf '%s\n' '42000' > /dev/virt-temp/6469736b3a73657269616c31
 ```
 
-`configure` remplace la topologie d'une famille.
+Le fichier `/dev/virt-temp/<ID hexadécimal>` accepte uniquement un entier signé
+en milli°C. L'identité et la famille ne sont pas transportées dans les données :
+elles sont déjà portées par le périphérique ouvert. Il n'existe donc plus de
+protocole `sample`/`configure`/`commit`, ni de session ou de staging côté noyau.
 
-`commit` met uniquement à jour les sondes déjà configurées.
-
-Une session fermée sans opération finale ne modifie rien.
+Supprimer l'objet configfs supprime immédiatement le périphérique hwmon et le
+node `/dev` associé. Un descripteur `/dev` déjà ouvert reste mémoire-safe grâce
+au refcount du `config_item`, mais ses écritures retournent `ENODEV` après la
+suppression.
 
 Contraintes principales :
 
 - famille : `disk` ou `hba` ;
-- ID : 1 à 84 octets, préfixé par `disk:` ou `hba:` ;
+- ID complet : 1 à 84 octets, préfixé par `disk:` ou `hba:` ;
 - label : 1 à 95 octets ;
-- aucune tabulation ni retour à la ligne dans les ID ou labels ;
-- maximum 1 024 enregistrements par session ;
+- aucune tabulation, retour à la ligne ou NUL dans les ID ou labels ;
 - température : entier signé en milli°C, sans borne physique arbitraire.
 
 ## Topologie hwmon
@@ -62,9 +76,10 @@ temp1_label
 Son identité dépend de son ID stable, pas de `hwmonX`, `/dev/sdX` ou de sa
 position dans l'inventaire.
 
-Un changement sur une sonde ne décale donc jamais les canaux des autres.
-
-Une modification d'inventaire ou de label déclenche un nouveau `configure`.
+Un changement sur une sonde ne décale donc jamais les canaux des autres. Une
+modification de topologie crée ou supprime uniquement les objets configfs
+concernés. Un changement de label réenregistre seulement le hwmon de cette
+sonde.
 
 ## Cache et failsafe
 
@@ -100,12 +115,14 @@ Puis recharger le module.
 
 ## Récupération après erreur
 
-Si une nouvelle topologie ne peut pas être enregistrée, le module tente de
-restaurer la précédente.
+La topologie côté noyau est reconstruite à partir de l'inventaire userspace. Si
+le module est déchargé puis rechargé, les anciens chemins configfs et `/dev`
+disparaissent. Une écriture qui rencontre `ENOENT` ou `ENODEV` déclenche alors
+une réconciliation de la famille concernée.
 
-Si le module est déchargé puis rechargé alors que le récepteur tourne encore,
-un ancien `commit` retourne `ESTALE`. Le récepteur répond alors par un nouveau
-`configure`.
+Une création partiellement réussie reste récupérable : l'appel suivant
+réutilise les objets déjà présents, réapplique leur label et recrée les éléments
+manquants.
 
 Les consommateurs qui ne suivent pas correctement les changements hwmon peuvent
 être relancés automatiquement :
@@ -186,7 +203,7 @@ dpkg -s unraid-vsock-sensors-hwmon
 dkms status -m virt-temp
 systemctl status unraid-vsock-hwmon.service
 journalctl -u unraid-vsock-hwmon.service -n 100 --no-pager
-ls -l /dev/virt-temp
+find /dev/virt-temp -maxdepth 1 -type c -ls
 sensors
 ```
 
@@ -233,8 +250,8 @@ apt purge unraid-vsock-sensors-hwmon
 
 ## Tests
 
-Le vrai module, DKMS, systemd, hwmon, le failsafe et la récupération après
-`ESTALE` sont testés dans une VM Proxmox dédiée.
+Le vrai module, DKMS, systemd, configfs, les nodes `/dev`, hwmon, le failsafe et
+la récupération après reload sont testés dans une VM Proxmox dédiée.
 
 Voir [`../tests/vm/README.md`](../tests/vm/README.md).
 

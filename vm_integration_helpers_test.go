@@ -46,7 +46,7 @@ func testVirtTempModule(t *testing.T) string {
 	return module
 }
 
-func loadTestVirtTemp(t *testing.T) string {
+func loadTestVirtTemp(t *testing.T) {
 	t.Helper()
 	requireVMIntegrationTest(t)
 	if _, err := os.Stat("/sys/module/virt_temp"); !errors.Is(err, os.ErrNotExist) {
@@ -55,26 +55,47 @@ func loadTestVirtTemp(t *testing.T) string {
 	runVMTestCommand(t, "insmod", testVirtTempModule(t))
 	t.Cleanup(func() {
 		if _, err := os.Stat("/sys/module/virt_temp"); err == nil {
+			clearTestVirtTempConfig(t)
 			if output, err := exec.Command("rmmod", "virt_temp").CombinedOutput(); err != nil {
 				t.Errorf("unload virt_temp: %v\n%s", err, output)
 			}
 		}
 	})
-	if info, err := os.Stat(virtTempDevicePath); err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		t.Fatalf("expected real character device: %v", err)
+	if info, err := os.Stat(virtTempConfigPath); err != nil || !info.IsDir() {
+		t.Fatalf("expected virt_temp configfs root: %v", err)
 	}
-	return virtTempDevicePath
+}
+
+func clearTestVirtTempConfig(t *testing.T) {
+	t.Helper()
+	for _, namespace := range []string{"disk", "hba"} {
+		entries, err := os.ReadDir(filepath.Join(virtTempConfigPath, namespace))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				if err := os.Remove(filepath.Join(virtTempConfigPath, namespace, entry.Name())); err != nil {
+					t.Fatalf("remove configfs sensor %s: %v", entry.Name(), err)
+				}
+			}
+		}
+	}
 }
 
 func reloadTestVirtTemp(t *testing.T) {
 	t.Helper()
+	clearTestVirtTempConfig(t)
 	runVMTestCommand(t, "rmmod", "virt_temp")
 	runVMTestCommand(t, "insmod", testVirtTempModule(t))
 }
 
 func vmHWMonPaths(t *testing.T, namespace, id string) []string {
 	t.Helper()
-	pattern := fmt.Sprintf("/sys/devices/platform/unraid_%s_%x/hwmon/hwmon*/temp1_input", namespace, id)
+	if !strings.HasPrefix(id, namespace+":") {
+		t.Fatalf("sensor %q is outside %s namespace", id, namespace)
+	}
+	pattern := fmt.Sprintf("/sys/class/misc/virt-temp-%x/hwmon/hwmon*/temp1_input", id)
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		t.Fatal(err)

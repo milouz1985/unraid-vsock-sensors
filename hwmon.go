@@ -22,7 +22,8 @@ import (
 )
 
 const (
-	virtTempDevicePath    = "/dev/virt-temp"
+	virtTempConfigPath    = "/sys/kernel/config/virt_temp"
+	virtTempDeviceDir     = "/dev"
 	defaultHWMonCache     = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"
 	systemdRestartTimeout = 10 * time.Second
 	restartRetryDelay     = 30 * time.Second
@@ -84,9 +85,9 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 		return fmt.Errorf("listen on vsock port %d: %w", config.port, err)
 	}
 	defer listener.Close()
-	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through %s", config.port, virtTempDevicePath)
+	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through virt_temp configfs and per-sensor devices", config.port)
 	publisher := &hwmonPublisher{cachePath: config.cachePath}
-	err = publisher.restore(virtTempDevicePath)
+	err = publisher.restore(virtTempConfigPath, virtTempDeviceDir)
 	if err != nil {
 		log.Printf("hwmon inventory cache warning: %s", err)
 	}
@@ -127,7 +128,7 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 				updateLog.update(fmt.Errorf("discard snapshot queued for %s", time.Since(snapshot.receivedAt).Round(time.Millisecond)))
 				continue
 			}
-			reconfigured, publishErr := publisher.publish(virtTempDevicePath, snapshot.response)
+			reconfigured, publishErr := publisher.publish(virtTempConfigPath, virtTempDeviceDir, snapshot.response)
 			firstGuestSnapshot := !seenGuestSnapshot
 			seenGuestSnapshot = true
 			familyInitialized := publisher.disks.sensors != nil || publisher.hbas.sensors != nil
@@ -150,7 +151,7 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 	}
 }
 
-func (publisher *hwmonPublisher) publish(device string, state sensors.Response) (bool, error) {
+func (publisher *hwmonPublisher) publish(configRoot, deviceRoot string, state sensors.Response) (bool, error) {
 	disks, hbas := makeHWMonSamples(state)
 	var diskErr, hbaErr error
 	reconfigured := false
@@ -160,7 +161,7 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 		diskErr = fmt.Errorf("disks: %s", state.Error)
 	} else if state.Disks == nil {
 		diskErr = errors.New("disks: inventory is missing; waiting for sensors")
-	} else if changed, err := publishHWMonFamily(device, "disk", &publisher.disks, disks); err != nil {
+	} else if changed, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &publisher.disks, disks); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
 	} else {
 		reconfigured = reconfigured || changed
@@ -172,7 +173,7 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 		hbaErr = fmt.Errorf("HBA: %s", state.HBAError)
 	} else if state.HBAs == nil {
 		hbaErr = errors.New("HBA: inventory is missing; waiting for sensors")
-	} else if changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas); err != nil {
+	} else if changed, err := publishHWMonFamily(configRoot, deviceRoot, "hba", &publisher.hbas, hbas); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
 	} else {
 		reconfigured = reconfigured || changed

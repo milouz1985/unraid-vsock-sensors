@@ -49,7 +49,7 @@ check_installed() {
     [[ "$status" == *': installed'* ]]
     magic="$(modinfo -F vermagic virt_temp)"
     [[ "${magic%% *}" == "$kernel" ]]
-    [[ -c /dev/virt-temp ]]
+    [[ -d /sys/kernel/config/virt_temp ]]
     systemctl is-enabled --quiet "$service"
     # Wait past RestartSec so a process repeatedly crashing is not a success.
     sleep 3
@@ -115,7 +115,7 @@ check_failed_upgrade() {
     [[ "$(sha256sum "$module_file" | awk '{print $1}')" == "$(cat /var/tmp/uvss-expected-module.sha256)" ]]
     [[ "$(modinfo -F vermagic virt_temp)" == "$kernel "* ]]
     grep -q '^virt_temp ' /proc/modules
-    [[ -d /sys/module/virt_temp && -c /dev/virt-temp ]]
+    [[ -d /sys/module/virt_temp && -d /sys/kernel/config/virt_temp ]]
     systemctl is-enabled --quiet "$service"
     systemctl is-active --quiet "$service"
 }
@@ -263,7 +263,7 @@ phase_remove_after_failed_upgrade() {
     if systemctl is-active --quiet "$service"; then
         echo "Service is still active after package removal" >&2; exit 1
     fi
-    [[ ! -d /sys/module/virt_temp && ! -c /dev/virt-temp ]]
+    [[ ! -d /sys/module/virt_temp && ! -d /sys/kernel/config/virt_temp ]]
     [[ ! -e /usr/bin/unraid-vsock-sensors ]]
     # A direct remove after a failed upgrade must clear every DKMS version,
     # including the preserved old one and its backup sources.
@@ -301,7 +301,7 @@ phase_final() {
     if systemctl is-active --quiet "$service"; then
         echo "Service is still active after package removal" >&2; exit 1
     fi
-    [[ ! -d /sys/module/virt_temp && ! -e /dev/virt-temp ]]
+    [[ ! -d /sys/module/virt_temp && ! -d /sys/kernel/config/virt_temp ]]
     [[ ! -e /usr/bin/unraid-vsock-sensors ]]
     check_unregistered "$final_version"
     cmp -- "$config" /var/tmp/uvss-expected-config

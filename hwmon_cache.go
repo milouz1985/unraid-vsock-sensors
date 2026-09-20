@@ -58,7 +58,7 @@ func loadHWMonCache(path string) (*cachedHWMonInventory, error) {
 // restore loads the last known configuration and recreates its virtual hwmon
 // devices at the failsafe temperature. Families are restored independently, so
 // one invalid family does not prevent the other from remaining usable.
-func (publisher *hwmonPublisher) restore(device string) error {
+func (publisher *hwmonPublisher) restore(configRoot, deviceRoot string) error {
 	cached, err := loadHWMonCache(publisher.cachePath)
 	if err != nil || cached == nil {
 		return err
@@ -66,13 +66,13 @@ func (publisher *hwmonPublisher) restore(device string) error {
 	var diskErr, hbaErr error
 	if cached.Disks != nil {
 		readings := samplesFromCache(cached.Disks.Sensors)
-		if _, err := publishHWMonFamily(device, "disk", &publisher.disks, readings); err != nil {
+		if _, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &publisher.disks, readings); err != nil {
 			diskErr = fmt.Errorf("restore disks: %w", err)
 		}
 	}
 	if cached.HBAs != nil {
 		readings := samplesFromCache(cached.HBAs.Sensors)
-		if _, err := publishHWMonFamily(device, "hba", &publisher.hbas, readings); err != nil {
+		if _, err := publishHWMonFamily(configRoot, deviceRoot, "hba", &publisher.hbas, readings); err != nil {
 			hbaErr = fmt.Errorf("restore HBA: %w", err)
 		}
 	}

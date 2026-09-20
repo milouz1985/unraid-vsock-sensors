@@ -3,13 +3,13 @@
 package main
 
 import (
-	"bytes"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
 	"unraid-vsock-sensors/internal/sensors"
 )
 
@@ -64,135 +64,79 @@ func TestMakeHWMonSamplesFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 	}
 }
 
-func TestPublisherOmitsUnavailableDiskAndItsGroupFromCommit(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "virt-temp")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	inventory := hwmonInventory{}
-	initial := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
-		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 34},
-		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Temp: 38},
-		{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 45},
-	}})
-	if _, err := publishHWMonFamily(path, "disk", &inventory, initial); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Truncate(path, 0); err != nil {
-		t.Fatal(err)
-	}
-	current := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
+func TestUpdateHWMonFamilySkipsUnavailableSensors(t *testing.T) {
+	deviceRoot := t.TempDir()
+	readings := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},
 		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
 		{ID: "3", Name: "cache", Device: "nvme0n1", Transport: "nvme", Temp: 46},
 	}})
-	if _, err := publishHWMonFamily(path, "disk", &inventory, current); err != nil {
-		t.Fatal(err)
+	prepareFakeHWMonKernel(t, t.TempDir(), deviceRoot, "disk", readings)
+	for _, reading := range readings {
+		path, err := hwmonTemperatureDevicePath(deviceRoot, "disk", reading.sensor.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("unchanged\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	data, err := os.ReadFile(path)
+	values, err := validateHWMonSamples("disk", readings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "sample\tdisk:1\t35000\tdisk1\n" +
-		"sample\tdisk:3\t46000\tcache\n" +
-		"commit\tdisk\n"
-	if got := string(data); got != want {
-		t.Fatalf("update = %q, want failed disk and group omitted %q", got, want)
+	if err := updateHWMonFamily(deviceRoot, "disk", readings, values, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, reading := range readings {
+		path, _ := hwmonTemperatureDevicePath(deviceRoot, "disk", reading.sensor.id)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reading.omitOnCommit {
+			if !strings.HasPrefix(string(data), "unchanged") {
+				t.Fatalf("%s was refreshed despite omitOnCommit: %q", reading.sensor.id, data)
+			}
+		} else if strings.HasPrefix(string(data), "unchanged") {
+			t.Fatalf("%s was not refreshed", reading.sensor.id)
+		}
 	}
 }
 
-func TestPublisherConfiguresUnavailableDiskAndItsGroupAtFailsafe(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "virt-temp")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	readings := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
-		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},
-		{ID: "2", Name: "disk2", Device: "sdb", Rotational: true, Unavailable: true},
-	}})
-	if _, err := publishHWMonFamily(path, "disk", &hwmonInventory{}, readings); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "sample\tdisk:group:hdd\t100000\tHDD maximum\n" +
-		"sample\tdisk:1\t35000\tdisk1\n" +
-		"sample\tdisk:2\t100000\tdisk2\n" +
-		"configure\tdisk\n"
-	if got := string(data); got != want {
-		t.Fatalf("configuration = %q, want failed disk and group at failsafe %q", got, want)
-	}
-}
-
-func TestEncodeHWMonSamples(t *testing.T) {
-	readings := []hwmonSample{
-		hwmonTestSample("disk:1", "disk1 (sda)", 34.125),
-		hwmonTestSample("disk:group:hdd", "HDD maximum", 38),
-	}
-	var output bytes.Buffer
-	if err := encodeHWMonSamples(&output, "disk", "commit", readings); err != nil {
-		t.Fatal(err)
-	}
-	want := "sample\tdisk:1\t34125\tdisk1 (sda)\n" +
-		"sample\tdisk:group:hdd\t38000\tHDD maximum\n" +
-		"commit\tdisk\n"
-	if got := output.String(); got != want {
-		t.Fatalf("encoded snapshot = %q, want %q", got, want)
-	}
-}
-
-func TestEncodeHWMonSamplesIDSizeBoundary(t *testing.T) {
+func TestValidateHWMonSamplesIDSizeBoundary(t *testing.T) {
 	maximumID := "disk:" + strings.Repeat("a", maxHWMonIDSize-len("disk:"))
 	if got := len(maximumID); got != maxHWMonIDSize {
 		t.Fatalf("maximum disk hwmon ID is %d bytes, want %d", got, maxHWMonIDSize)
 	}
-	if err := encodeHWMonSamples(&bytes.Buffer{}, "disk", "commit", []hwmonSample{
+	if _, err := validateHWMonSamples("disk", []hwmonSample{
 		hwmonTestSample(maximumID, "Maximum ID", 30),
 	}); err != nil {
 		t.Fatalf("maximum-length ID rejected: %v", err)
 	}
-	if err := encodeHWMonSamples(&bytes.Buffer{}, "disk", "commit", []hwmonSample{
+	if _, err := validateHWMonSamples("disk", []hwmonSample{
 		hwmonTestSample(maximumID+"X", "Oversized ID", 30),
 	}); err == nil {
 		t.Fatal("ID larger than maxHWMonIDSize accepted")
 	}
 }
 
-func TestEncodeHWMonSamplesAllowsSignedTemperaturesOutsideHardwareRanges(t *testing.T) {
+func TestValidateHWMonSamplesAllowsSignedTemperaturesOutsideHardwareRanges(t *testing.T) {
 	readings := []hwmonSample{
 		hwmonTestSample("hba:sas:negative", "Negative", -40.125),
 		hwmonTestSample("hba:sas:high", "High", 200),
 	}
-	var output bytes.Buffer
-	if err := encodeHWMonSamples(&output, "hba", "commit", readings); err != nil {
+	got, err := validateHWMonSamples("hba", readings)
+	if err != nil {
 		t.Fatal(err)
 	}
-	want := "sample\thba:sas:negative\t-40125\tNegative\n" +
-		"sample\thba:sas:high\t200000\tHigh\n" +
-		"commit\thba\n"
-	if got := output.String(); got != want {
-		t.Fatalf("encoded snapshot = %q, want %q", got, want)
+	want := []int64{-40125, 200000}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("milli-Celsius = %v, want %v", got, want)
 	}
 }
 
-func TestEncodeHWMonSamplesAllowsEmptyCommitSubset(t *testing.T) {
-	readings := []hwmonSample{{
-		sensor:       hwmonSensor{id: "disk:1", label: "disk1 (sda)"},
-		temperature:  hwmonFailsafeTemp,
-		omitOnCommit: true,
-	}}
-	var output bytes.Buffer
-	if err := encodeHWMonSamples(&output, "disk", "commit", readings); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := output.String(), "commit\tdisk\n"; got != want {
-		t.Fatalf("encoded snapshot = %q, want empty subset %q", got, want)
-	}
-}
-
-func TestEncodeHWMonSamplesRejectsInvalidFields(t *testing.T) {
+func TestValidateHWMonSamplesRejectsInvalidFields(t *testing.T) {
 	tests := []struct {
 		name      string
 		namespace string
@@ -206,38 +150,37 @@ func TestEncodeHWMonSamplesRejectsInvalidFields(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := encodeHWMonSamples(&bytes.Buffer{}, test.namespace, "commit", []hwmonSample{test.reading}); err == nil {
+			if _, err := validateHWMonSamples(test.namespace, []hwmonSample{test.reading}); err == nil {
 				t.Fatal("expected validation error")
 			}
 		})
 	}
 }
 
-func TestEncodeHWMonSamplesValidatesBeforeWriting(t *testing.T) {
-	readings := []hwmonSample{
-		hwmonTestSample("disk:1", "disk1", 30),
-		hwmonTestSample("disk:2", "invalid\nlabel", 31),
-	}
-	var output bytes.Buffer
-	if err := encodeHWMonSamples(&output, "disk", "commit", readings); err == nil {
-		t.Fatal("expected validation error")
-	}
-	if output.Len() != 0 {
-		t.Fatalf("validation wrote %q before returning an error", output.String())
-	}
-}
-
-func TestEncodeHWMonSamplesRejectsDuplicateIDsBeforeWriting(t *testing.T) {
+func TestValidateHWMonSamplesRejectsDuplicateIDs(t *testing.T) {
 	readings := []hwmonSample{
 		hwmonTestSample("hba:serial:1234", "hba0", 50),
 		hwmonTestSample("hba:serial:1234", "hba1", 51),
 	}
-	var output bytes.Buffer
-	if err := encodeHWMonSamples(&output, "hba", "commit", readings); err == nil {
+	if _, err := validateHWMonSamples("hba", readings); err == nil {
 		t.Fatal("expected duplicate ID error")
 	}
-	if output.Len() != 0 {
-		t.Fatalf("validation wrote %q before returning an error", output.String())
+}
+
+func TestHWMonSensorPathsAreDeterministicAndFilesystemSafe(t *testing.T) {
+	key, err := hwmonSensorKey("disk", "disk:group:hdd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "67726f75703a686464" {
+		t.Fatalf("key = %q", key)
+	}
+	path, err := hwmonTemperatureDevicePath("/dev", "disk", "disk:group:hdd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := path, filepath.Join("/dev", "virt-temp", "6469736b3a67726f75703a686464"); got != want {
+		t.Fatalf("device path = %q, want %q", got, want)
 	}
 }
 
@@ -249,5 +192,51 @@ func makeDiskSamples(state sensors.Response) []hwmonSample {
 func hwmonTestSample(id, label string, temperature float64) hwmonSample {
 	return hwmonSample{
 		sensor: hwmonSensor{id: id, label: label}, temperature: temperature,
+	}
+}
+
+func prepareFakeHWMonKernel(t *testing.T, configRoot, deviceRoot, namespace string, readings []hwmonSample) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(configRoot, namespace), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, reading := range readings {
+		key, err := hwmonSensorKey(namespace, reading.sensor.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		directory := filepath.Join(configRoot, namespace, key)
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+		label := filepath.Join(directory, "label")
+		if _, err := os.Stat(label); os.IsNotExist(err) {
+			if err := os.WriteFile(label, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		device, err := hwmonTemperatureDevicePath(deviceRoot, namespace, reading.sensor.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(device), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(device); os.IsNotExist(err) {
+			if err := os.WriteFile(device, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func prepareFakeStaleSensor(t *testing.T, configRoot, namespace, id string) {
+	t.Helper()
+	key, err := hwmonSensorKey(namespace, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(configRoot, namespace, key), 0700); err != nil {
+		t.Fatal(err)
 	}
 }

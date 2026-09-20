@@ -4,7 +4,7 @@ set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
-mkdir -p "$test_root"/{bin,dkms/virt-temp/old,src/virt-temp-old,src/virt-temp-new,modules/A/build,modules/B/build,saved}
+mkdir -p "$test_root"/{bin,dkms/virt-temp/old,src/virt-temp-old,src/virt-temp-new,modules/A/build,modules/B/build,saved,configfs/disk,configfs/hba}
 touch "$test_root/src/virt-temp-old/dkms.conf" "$test_root/src/virt-temp-old/virt-temp.c"
 touch "$test_root/src/virt-temp-new/dkms.conf" "$test_root/default" "$test_root/device" "$test_root/proc_modules"
 ln -s "$test_root/src/virt-temp-old" "$test_root/dkms/virt-temp/old/source"
@@ -74,8 +74,8 @@ render_script() {
         -e "s|/etc/default/unraid-vsock-hwmon|$test_root/config|g" \
         -e "s|/usr/share/unraid-vsock-sensors-hwmon/unraid-vsock-hwmon.default|$test_root/default|g" \
         -e "s|/proc/modules|$test_root/proc_modules|g" \
+        -e "s|/sys/kernel/config/virt_temp|$test_root/configfs|g" \
         -e "s|/usr/local/sbin/uninstall-unraid-vsock-hwmon|$test_root/absent-installer|g" \
-        -e "s|-c /dev/virt-temp|-f $test_root/device|g" \
         -e "s|kernel_release=\"\$(uname -r)\"|kernel_release=A|" \
         "$repo_dir/virt-temp/debian/$script.in" > "$output"
 }

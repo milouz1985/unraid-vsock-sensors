@@ -8,7 +8,7 @@ Elle couvre notamment :
 - le module `virt_temp` ;
 - le vrai sysfs hwmon ;
 - le collecteur disque avec des block devices QEMU ;
-- le failsafe et `ESTALE` ;
+- le failsafe et la reconstruction après reload du module ;
 - DKMS ;
 - systemd ;
 - l'installation, la mise à jour, la suppression et la purge du paquet Debian.
@@ -210,7 +210,8 @@ Il vérifie notamment :
 - failsafe et récupération ;
 - erreur d'écriture réelle via `/dev/full` ;
 - reload du module ;
-- vrai `ESTALE` ;
+- suppression/recréation réelle de la topologie configfs ;
+- sécurité d’un descripteur `/dev/virt-temp/*` encore ouvert pendant un `rmdir` ;
 - reconfiguration par le code de production ;
 - restauration du cache ;
 - collecteur disque avec vrais block devices QEMU.
