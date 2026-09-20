@@ -118,16 +118,8 @@ static const struct hwmon_ops hwmon_ops = {
 	.is_visible = is_visible, .read = read_value, .read_string = read_label,
 };
 
-static const u32 temp_config[] = {
-	HWMON_T_INPUT | HWMON_T_LABEL,
-	0,
-};
-static const struct hwmon_channel_info temp_channel_info = {
-	.type = hwmon_temp,
-	.config = temp_config,
-};
 static const struct hwmon_channel_info * const temp_info[] = {
-	&temp_channel_info,
+	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT | HWMON_T_LABEL),
 	NULL,
 };
 static const struct hwmon_chip_info temp_chip_info = {
