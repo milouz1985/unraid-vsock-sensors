@@ -136,12 +136,15 @@ func updateHWMonFamily(
 	skipUnavailable bool,
 ) error {
 	for index, reading := range readings {
-		if skipUnavailable && reading.omitOnCommit {
-			continue
-		}
 		path, err := hwmonTemperatureDevicePath(deviceRoot, namespace, reading.sensor.id)
 		if err != nil {
 			return err
+		}
+		if skipUnavailable && reading.omitOnCommit {
+			if _, err := os.Stat(path); err != nil {
+				return fmt.Errorf("check hwmon sensor %q: %w", reading.sensor.id, err)
+			}
+			continue
 		}
 		if err := writeKernelAttribute(path, strconv.FormatInt(milliCelsius[index], 10)); err != nil {
 			return fmt.Errorf("update hwmon sensor %q: %w", reading.sensor.id, err)

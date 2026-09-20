@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -101,6 +102,22 @@ func TestUpdateHWMonFamilySkipsUnavailableSensors(t *testing.T) {
 		} else if strings.HasPrefix(string(data), "unchanged") {
 			t.Fatalf("%s was not refreshed", reading.sensor.id)
 		}
+	}
+}
+
+func TestUpdateHWMonFamilyDetectsMissingUnavailableSensor(t *testing.T) {
+	deviceRoot := t.TempDir()
+	readings := makeDiskSamples(sensors.Response{Disks: []sensors.Disk{
+		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Unavailable: true},
+	}})
+	values, err := validateHWMonSamples("disk", readings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = updateHWMonFamily(deviceRoot, "disk", readings, values, true)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing unavailable sensor error = %v, want os.ErrNotExist", err)
 	}
 }
 

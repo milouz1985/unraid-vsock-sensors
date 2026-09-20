@@ -80,15 +80,21 @@ func TestVMHWMon(t *testing.T) {
 	}
 	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
 
-	t.Log("reload loses configfs topology; the next update recreates it")
+	t.Log("reload loses configfs topology; even an unavailable sensor recreates it")
+	diskSamples[0].temperature = hwmonFailsafeTemp
+	diskSamples[0].omitOnCommit = true
 	reloadTestVirtTemp(t)
 	publish("disk", &disks, diskSamples, true)
 	publish("hba", &hbas, hbaSamples, true)
-	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
+	requireVMHWMonTemp(t, "disk", "disk:vm-a", "100000")
 	requireVMHWMonTemp(t, "hba", "hba:vm-a", "48000")
 	if readVMHWMonAttribute(t, "disk", "disk:vm-a", "temp1_label") != "New label" {
 		t.Fatal("reconfigure did not apply the current label")
 	}
+	diskSamples[0].temperature = 35.125
+	diskSamples[0].omitOnCommit = false
+	publish("disk", &disks, diskSamples, false)
+	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
 
 	t.Log("an open temperature fd remains memory-safe across sensor removal")
 	heldDevice, err := hwmonTemperatureDevicePath(virtTempDeviceDir, "disk", "disk:vm-a")
