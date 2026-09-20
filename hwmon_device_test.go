@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -250,6 +251,23 @@ func TestValidateHWMonSamplesIDSizeBoundary(t *testing.T) {
 		hwmonTestSample(maximumID+"X", "Oversized ID", 30),
 	}); err == nil {
 		t.Fatal("ID larger than maxHWMonIDSize accepted")
+	}
+}
+
+func TestValidateHWMonSamplesSensorCountBoundary(t *testing.T) {
+	readings := make([]hwmonSample, maxHWMonSensors+1)
+	for index := range readings {
+		readings[index] = hwmonTestSample(
+			fmt.Sprintf("disk:%d", index),
+			fmt.Sprintf("disk%d", index),
+			30,
+		)
+	}
+	if _, err := validateHWMonSamples("disk", readings[:maxHWMonSensors]); err != nil {
+		t.Fatalf("%d sensors rejected: %v", maxHWMonSensors, err)
+	}
+	if _, err := validateHWMonSamples("disk", readings); err == nil {
+		t.Fatalf("%d sensors accepted; maximum is %d", len(readings), maxHWMonSensors)
 	}
 }
 

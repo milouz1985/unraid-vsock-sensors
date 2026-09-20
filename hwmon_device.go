@@ -20,6 +20,7 @@ const (
 	maxHBAHWMonIDSize  = len("hba:") + maxHBAStableIDSize
 	maxHWMonIDSize     = max(maxDiskHWMonIDSize, maxHBAHWMonIDSize)
 	maxHWMonLabelSize  = 95
+	maxHWMonSensors    = 1024
 )
 
 func publishHWMonFamily(
@@ -58,12 +59,15 @@ func publishHWMonFamily(
 }
 
 func validateHWMonSamples(namespace string, readings []hwmonSample) ([]int64, error) {
-	prefix := namespace + ":"
-	ids := make(map[string]struct{}, len(readings))
-	milliCelsius := make([]int64, len(readings))
 	if namespace != "disk" && namespace != "hba" {
 		return nil, fmt.Errorf("invalid hwmon namespace %q", namespace)
 	}
+	if len(readings) > maxHWMonSensors {
+		return nil, fmt.Errorf("too many hwmon sensors: %d exceeds maximum %d", len(readings), maxHWMonSensors)
+	}
+	prefix := namespace + ":"
+	ids := make(map[string]struct{}, len(readings))
+	milliCelsius := make([]int64, len(readings))
 	for index, reading := range readings {
 		sensor := reading.sensor
 		if !strings.HasPrefix(sensor.id, prefix) || len(sensor.id) > maxHWMonIDSize ||
