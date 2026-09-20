@@ -95,7 +95,7 @@ func vmHWMonPaths(t *testing.T, namespace, id string) []string {
 	if !strings.HasPrefix(id, namespace+":") {
 		t.Fatalf("sensor %q is outside %s namespace", id, namespace)
 	}
-	pattern := fmt.Sprintf("/sys/class/misc/virt-temp-%x/hwmon/hwmon*/temp1_input", id)
+	pattern := fmt.Sprintf("/sys/class/misc/virt-temp-%x/hwmon*/temp1_input", id)
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		t.Fatal(err)
