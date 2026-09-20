@@ -31,15 +31,9 @@
 static_assert(DEVICE_NAME_SIZE <= NAME_MAX + 1,
 	      "virt_temp device name exceeds NAME_MAX");
 
-struct virt_temp_family {
-	struct config_group group;
-	const char *namespace;
-};
-
 struct virt_temp_sensor {
 	struct config_item item;
 	struct mutex lock;
-	const struct virt_temp_family *family;
 	char id[ID_SIZE];
 	char label[LABEL_SIZE];
 	char hwmon_name[HWMON_NAME_SIZE];
@@ -54,17 +48,12 @@ struct virt_temp_sensor {
 
 static unsigned int stale_timeout = 10;
 static struct configfs_subsystem virt_temp_subsystem;
-static struct virt_temp_family disk_family = { .namespace = "disk" };
-static struct virt_temp_family hba_family = { .namespace = "hba" };
+static struct config_group disk_family;
+static struct config_group hba_family;
 
 static inline struct virt_temp_sensor *to_sensor(struct config_item *item)
 {
 	return item ? container_of(item, struct virt_temp_sensor, item) : NULL;
-}
-
-static inline struct virt_temp_family *to_family(struct config_group *group)
-{
-	return group ? container_of(group, struct virt_temp_family, group) : NULL;
 }
 
 static int set_stale_timeout(const char *value,
@@ -371,9 +360,10 @@ static const struct config_item_type sensor_type = {
 	.ct_owner = THIS_MODULE,
 };
 
-static int decode_sensor_id(struct virt_temp_sensor *sensor, const char *name)
+static int decode_sensor_id(struct virt_temp_sensor *sensor,
+			    const char *namespace, const char *name)
 {
-	size_t namespace_length = strlen(sensor->family->namespace);
+	size_t namespace_length = strlen(namespace);
 	size_t hex_length = strlen(name);
 	size_t suffix_length;
 	char *suffix;
@@ -390,7 +380,7 @@ static int decode_sensor_id(struct virt_temp_sensor *sensor, const char *name)
 		return -EINVAL;
 	if (memchr(suffix, '\0', suffix_length))
 		return -EINVAL;
-	memcpy(sensor->id, sensor->family->namespace, namespace_length);
+	memcpy(sensor->id, namespace, namespace_length);
 	sensor->id[namespace_length] = ':';
 	suffix[suffix_length] = '\0';
 	return 0;
@@ -408,7 +398,7 @@ static void unregister_sensor(struct virt_temp_sensor *sensor)
 static struct config_item *make_sensor(struct config_group *group,
 				       const char *name)
 {
-	struct virt_temp_family *family = to_family(group);
+	const char *namespace = config_item_name(&group->cg_item);
 	struct virt_temp_sensor *sensor;
 	int err;
 
@@ -416,8 +406,7 @@ static struct config_item *make_sensor(struct config_group *group,
 	if (!sensor)
 		return ERR_PTR(-ENOMEM);
 	mutex_init(&sensor->lock);
-	sensor->family = family;
-	err = decode_sensor_id(sensor, name);
+	err = decode_sensor_id(sensor, namespace, name);
 	if (err)
 		goto fail;
 	config_item_init_type_name(&sensor->item, name, &sensor_type);
@@ -473,12 +462,10 @@ static int __init virt_temp_init(void)
 	config_group_init_type_name(&virt_temp_subsystem.su_group, "virt_temp",
 				    &root_type);
 	mutex_init(&virt_temp_subsystem.su_mutex);
-	config_group_init_type_name(&disk_family.group, "disk", &family_type);
-	config_group_init_type_name(&hba_family.group, "hba", &family_type);
-	configfs_add_default_group(&disk_family.group,
-				   &virt_temp_subsystem.su_group);
-	configfs_add_default_group(&hba_family.group,
-				   &virt_temp_subsystem.su_group);
+	config_group_init_type_name(&disk_family, "disk", &family_type);
+	config_group_init_type_name(&hba_family, "hba", &family_type);
+	configfs_add_default_group(&disk_family, &virt_temp_subsystem.su_group);
+	configfs_add_default_group(&hba_family, &virt_temp_subsystem.su_group);
 	err = configfs_register_subsystem(&virt_temp_subsystem);
 	if (err)
 		mutex_destroy(&virt_temp_subsystem.su_mutex);
