@@ -95,7 +95,7 @@ func configureHWMonFamily(
 ) error {
 	familyPath := filepath.Join(configRoot, namespace)
 	desired := make(map[string]struct{}, len(readings))
-	for _, reading := range readings {
+	for index, reading := range readings {
 		key, err := hwmonSensorKey(namespace, reading.sensor.id)
 		if err != nil {
 			return err
@@ -105,12 +105,17 @@ func configureHWMonFamily(
 		if err := os.Mkdir(sensorPath, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("create hwmon sensor %q: %w", reading.sensor.id, err)
 		}
+		devicePath, err := hwmonTemperatureDevicePath(deviceRoot, namespace, reading.sensor.id)
+		if err != nil {
+			return err
+		}
+		// The first label write registers hwmon, so initialize its value first.
+		if err := writeKernelAttribute(devicePath, strconv.FormatInt(milliCelsius[index], 10)); err != nil {
+			return fmt.Errorf("initialize hwmon sensor %q: %w", reading.sensor.id, err)
+		}
 		if err := writeKernelAttribute(filepath.Join(sensorPath, "label"), reading.sensor.label); err != nil {
 			return fmt.Errorf("label hwmon sensor %q: %w", reading.sensor.id, err)
 		}
-	}
-	if err := updateHWMonFamily(deviceRoot, namespace, readings, milliCelsius, false); err != nil {
-		return err
 	}
 
 	entries, err := os.ReadDir(familyPath)

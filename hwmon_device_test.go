@@ -121,6 +121,58 @@ func TestUpdateHWMonFamilyDetectsMissingUnavailableSensor(t *testing.T) {
 	}
 }
 
+func TestConfigureHWMonFamilyInitializesTemperatureBeforeLabel(t *testing.T) {
+	tests := []struct {
+		name    string
+		reading hwmonSample
+		want    string
+	}{
+		{name: "available", reading: hwmonTestSample("disk:serial", "disk1", 35.125), want: "35125\n"},
+		{
+			name: "cached failsafe",
+			reading: samplesFromCache([]cachedHWMonSensor{
+				{ID: "disk:serial", Label: "disk1"},
+			})[0],
+			want: "100000\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configRoot := t.TempDir()
+			deviceRoot := t.TempDir()
+			if err := os.Mkdir(filepath.Join(configRoot, "disk"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			reading := test.reading
+			devicePath, err := hwmonTemperatureDevicePath(deviceRoot, "disk", reading.sensor.id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(devicePath), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(devicePath, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			values, err := validateHWMonSamples("disk", []hwmonSample{reading})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := configureHWMonFamily(configRoot, deviceRoot, "disk", []hwmonSample{reading}, values); err == nil {
+				t.Fatal("expected missing label attribute to fail configuration")
+			}
+			got, err := os.ReadFile(devicePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != test.want {
+				t.Fatalf("temperature before label failure = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestPublishHWMonFamilyInvalidatesInventoryAfterConfigurationFailure(t *testing.T) {
 	configRoot := t.TempDir()
 	deviceRoot := t.TempDir()
