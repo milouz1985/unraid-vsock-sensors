@@ -34,7 +34,6 @@ static_assert(DEVICE_NAME_SIZE <= NAME_MAX + 1,
 struct virt_temp_sensor {
 	struct config_item item;
 	struct mutex lock;
-	char id[ID_SIZE];
 	char label[LABEL_SIZE];
 	char hwmon_name[HWMON_NAME_SIZE];
 	char device_name[DEVICE_NAME_SIZE];
@@ -136,13 +135,13 @@ static const struct hwmon_chip_info temp_chip_info = {
 	.info = temp_info,
 };
 
-static void make_device_names(struct virt_temp_sensor *sensor)
+static void make_device_names(struct virt_temp_sensor *sensor, const char *id)
 {
 	char *end;
 	size_t prefix = strscpy(sensor->device_name, "virt-temp-",
 				 sizeof(sensor->device_name));
 
-	end = bin2hex(sensor->device_name + prefix, sensor->id, strlen(sensor->id));
+	end = bin2hex(sensor->device_name + prefix, id, strlen(id));
 	*end = '\0';
 	scnprintf(sensor->device_node, sizeof(sensor->device_node),
 		  "virt-temp/%s", sensor->device_name + prefix);
@@ -360,8 +359,7 @@ static const struct config_item_type sensor_type = {
 	.ct_owner = THIS_MODULE,
 };
 
-static int decode_sensor_id(struct virt_temp_sensor *sensor,
-			    const char *namespace, const char *name)
+static int decode_sensor_id(char *id, const char *namespace, const char *name)
 {
 	size_t namespace_length = strlen(namespace);
 	size_t hex_length = strlen(name);
@@ -374,14 +372,14 @@ static int decode_sensor_id(struct virt_temp_sensor *sensor,
 	suffix_length = hex_length / 2;
 	if (!suffix_length || namespace_length + 1 + suffix_length >= ID_SIZE)
 		return -ENAMETOOLONG;
-	suffix = sensor->id + namespace_length + 1;
+	suffix = id + namespace_length + 1;
 	err = hex2bin((u8 *)suffix, name, suffix_length);
 	if (err)
 		return -EINVAL;
 	if (memchr(suffix, '\0', suffix_length))
 		return -EINVAL;
-	memcpy(sensor->id, namespace, namespace_length);
-	sensor->id[namespace_length] = ':';
+	memcpy(id, namespace, namespace_length);
+	id[namespace_length] = ':';
 	suffix[suffix_length] = '\0';
 	return 0;
 }
@@ -400,20 +398,21 @@ static struct config_item *make_sensor(struct config_group *group,
 {
 	const char *namespace = config_item_name(&group->cg_item);
 	struct virt_temp_sensor *sensor;
+	char id[ID_SIZE];
 	int err;
 
 	sensor = kzalloc(sizeof(*sensor), GFP_KERNEL);
 	if (!sensor)
 		return ERR_PTR(-ENOMEM);
 	mutex_init(&sensor->lock);
-	err = decode_sensor_id(sensor, namespace, name);
+	err = decode_sensor_id(id, namespace, name);
 	if (err)
 		goto fail;
 	config_item_init_type_name(&sensor->item, name, &sensor_type);
 	atomic_long_set(&sensor->temperature, FAILSAFE_MILLIC);
 	smp_store_release(&sensor->last_update, jiffies);
 
-	make_device_names(sensor);
+	make_device_names(sensor, id);
 	sensor->misc.minor = MISC_DYNAMIC_MINOR;
 	sensor->misc.name = sensor->device_name;
 	sensor->misc.fops = &temperature_fops;
