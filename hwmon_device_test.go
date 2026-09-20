@@ -211,8 +211,12 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconciliationFailure(t *testing.T) 
 	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1", 35)}
 	inventory := hwmonInventory{sensors: sensorsFromSamples(current)}
 
-	if _, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current); err == nil {
+	_, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current)
+	if err == nil {
 		t.Fatal("expected stale inventory reconciliation failure")
+	}
+	if !strings.Contains(err.Error(), "reconcile stale disk inventory:") {
+		t.Fatalf("stale reconciliation error = %q", err)
 	}
 	if !reflect.DeepEqual(inventory.sensors, sensorsFromSamples(current)) {
 		t.Fatalf("inventory after failed stale reconciliation = %#v, want last valid %#v", inventory.sensors, sensorsFromSamples(current))

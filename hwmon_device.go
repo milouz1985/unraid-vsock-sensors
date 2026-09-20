@@ -32,30 +32,28 @@ func publishHWMonFamily(
 	if err != nil {
 		return false, err
 	}
-	if inventory.needsReconcile || inventory.sensors == nil ||
-		!sameHWMonConfiguration(inventory.sensors, current) {
-		if err := reconcileHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); err != nil {
-			inventory.needsReconcile = true
-			return false, err
+	reconcileImmediately := inventory.needsReconcile || inventory.sensors == nil ||
+		!sameHWMonConfiguration(inventory.sensors, current)
+	if !reconcileImmediately {
+		err = updateHWMonFamily(deviceRoot, namespace, current, milliCelsius)
+		if err == nil {
+			return false, nil
 		}
-		inventory.sensors = sensorsFromSamples(current)
-		inventory.needsReconcile = false
-		return true, nil
-	}
-
-	if err := updateHWMonFamily(deviceRoot, namespace, current, milliCelsius); err != nil {
 		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, unix.ENODEV) {
 			return false, err
 		}
-		if reconcileErr := reconcileHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); reconcileErr != nil {
-			inventory.needsReconcile = true
-			return false, fmt.Errorf("reconcile stale %s inventory: %w", namespace, reconcileErr)
-		}
-		inventory.sensors = sensorsFromSamples(current)
-		inventory.needsReconcile = false
-		return true, nil
 	}
-	return false, nil
+
+	if err := reconcileHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); err != nil {
+		inventory.needsReconcile = true
+		if !reconcileImmediately {
+			return false, fmt.Errorf("reconcile stale %s inventory: %w", namespace, err)
+		}
+		return false, err
+	}
+	inventory.sensors = sensorsFromSamples(current)
+	inventory.needsReconcile = false
+	return true, nil
 }
 
 func validateHWMonSamples(namespace string, readings []hwmonSample) ([]int64, error) {
