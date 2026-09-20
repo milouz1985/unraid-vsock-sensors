@@ -64,7 +64,7 @@ func validateHWMonSamples(namespace string, readings []hwmonSample) ([]int64, er
 	for index, reading := range readings {
 		sensor := reading.sensor
 		if !strings.HasPrefix(sensor.id, prefix) || len(sensor.id) > maxHWMonIDSize ||
-			strings.ContainsAny(sensor.id, "\x00\t\r\n") {
+			strings.ContainsRune(sensor.id, '\x00') {
 			return nil, fmt.Errorf("invalid hwmon sensor ID %q", sensor.id)
 		}
 		if _, duplicate := ids[sensor.id]; duplicate {

@@ -61,7 +61,8 @@ Contraintes principales :
 - famille : `disk` ou `hba` ;
 - ID complet : 1 à 84 octets, préfixé par `disk:` ou `hba:` ;
 - label : 1 à 95 octets ;
-- aucune tabulation, retour à la ligne ou NUL dans les ID ou labels ;
+- aucun NUL dans les ID ;
+- aucune tabulation, retour à la ligne ou NUL dans les labels ;
 - température : entier signé en milli°C, sans borne physique arbitraire.
 
 ## Topologie hwmon

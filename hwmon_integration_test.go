@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,19 @@ func TestVMHWMon(t *testing.T) {
 	requireVMHWMonTemp(t, "disk", maximumDiskID, "39000")
 	if got := readVMHWMonAttribute(t, "disk", maximumDiskID, "temp1_label"); got != "Maximum ID" {
 		t.Fatalf("maximum-length ID label = %q, want Maximum ID", got)
+	}
+	publish("disk", &disks, diskSamples, true)
+
+	t.Log("control characters in IDs cross the hex-encoded kernel interfaces")
+	controlSamples := []hwmonSample{
+		diskSamples[0],
+		hwmonTestSample("disk:tab\tid", "Tab ID", 36),
+		hwmonTestSample("disk:carriage\rreturn", "Carriage return ID", 37),
+		hwmonTestSample("disk:new\nline", "Newline ID", 38),
+	}
+	publish("disk", &disks, controlSamples, true)
+	for _, sample := range controlSamples[1:] {
+		requireVMHWMonTemp(t, "disk", sample.sensor.id, strconv.FormatInt(int64(sample.temperature*1000), 10))
 	}
 	publish("disk", &disks, diskSamples, true)
 

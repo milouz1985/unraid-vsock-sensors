@@ -266,7 +266,8 @@ func TestValidateHWMonSamplesRejectsInvalidFields(t *testing.T) {
 	}{
 		{name: "namespace", namespace: "other", reading: hwmonTestSample("other:1", "disk1", 30)},
 		{name: "wrong prefix", namespace: "disk", reading: hwmonTestSample("hba:0", "hba0", 30)},
-		{name: "newline", namespace: "disk", reading: hwmonTestSample("disk:1", "disk1\nbad", 30)},
+		{name: "ID NUL", namespace: "disk", reading: hwmonTestSample("disk:bad\x00id", "disk1", 30)},
+		{name: "label newline", namespace: "disk", reading: hwmonTestSample("disk:1", "disk1\nbad", 30)},
 		{name: "NaN", namespace: "disk", reading: hwmonTestSample("disk:1", "disk1", math.NaN())},
 		{name: "huge", namespace: "disk", reading: hwmonTestSample("disk:1", "disk1", 1e300)},
 	}
@@ -276,6 +277,17 @@ func TestValidateHWMonSamplesRejectsInvalidFields(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestValidateHWMonSamplesAllowsControlCharactersInIDs(t *testing.T) {
+	readings := []hwmonSample{
+		hwmonTestSample("disk:tab\tid", "Tab ID", 30),
+		hwmonTestSample("disk:carriage\rreturn", "Carriage return ID", 31),
+		hwmonTestSample("disk:new\nline", "Newline ID", 32),
+	}
+	if _, err := validateHWMonSamples("disk", readings); err != nil {
+		t.Fatalf("control characters rejected from encoded sensor IDs: %v", err)
 	}
 }
 

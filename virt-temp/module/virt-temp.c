@@ -335,7 +335,7 @@ static ssize_t sensor_label_store(struct config_item *item, const char *page,
 		rollback_err = register_hwmon(sensor);
 		if (rollback_err)
 			pr_err("failed to restore hwmon sensor %s after label update: %d\n",
-			       sensor->id, rollback_err);
+			       sensor->device_name, rollback_err);
 	}
 out:
 	mutex_unlock(&sensor->lock);
