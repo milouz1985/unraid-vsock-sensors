@@ -85,10 +85,7 @@ func TestVMHWMon(t *testing.T) {
 	}
 
 	t.Log("an invalid direct write does not replace the previous temperature")
-	device, err := hwmonTemperatureDevicePath(virtTempDeviceDir, "disk", "disk:vm-a")
-	if err != nil {
-		t.Fatal(err)
-	}
+	device := hwmonTemperatureDevicePath(virtTempDeviceDir, "disk:vm-a")
 	if err := os.WriteFile(device, []byte("not-a-temperature\n"), 0200); err == nil {
 		t.Fatal("invalid temperature write unexpectedly succeeded")
 	}
@@ -111,19 +108,12 @@ func TestVMHWMon(t *testing.T) {
 	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
 
 	t.Log("an open temperature fd remains memory-safe across sensor removal")
-	heldDevice, err := hwmonTemperatureDevicePath(virtTempDeviceDir, "disk", "disk:vm-a")
-	if err != nil {
-		t.Fatal(err)
-	}
+	heldDevice := hwmonTemperatureDevicePath(virtTempDeviceDir, "disk:vm-a")
 	held, err := os.OpenFile(heldDevice, os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := hwmonSensorKey("disk", "disk:vm-a")
-	if err != nil {
-		held.Close()
-		t.Fatal(err)
-	}
+	key := hwmonSensorKey("disk", "disk:vm-a")
 	if err := os.Remove(filepath.Join(virtTempConfigPath, "disk", key)); err != nil {
 		held.Close()
 		t.Fatal(err)

@@ -75,10 +75,7 @@ func TestUpdateHWMonFamilySkipsUnavailableSensors(t *testing.T) {
 	}})
 	prepareFakeHWMonKernel(t, t.TempDir(), deviceRoot, "disk", readings)
 	for _, reading := range readings {
-		path, err := hwmonTemperatureDevicePath(deviceRoot, "disk", reading.sensor.id)
-		if err != nil {
-			t.Fatal(err)
-		}
+		path := hwmonTemperatureDevicePath(deviceRoot, reading.sensor.id)
 		if err := os.WriteFile(path, []byte("unchanged\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -87,11 +84,11 @@ func TestUpdateHWMonFamilySkipsUnavailableSensors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := updateHWMonFamily(deviceRoot, "disk", readings, values); err != nil {
+	if err := updateHWMonFamily(deviceRoot, readings, values); err != nil {
 		t.Fatal(err)
 	}
 	for _, reading := range readings {
-		path, _ := hwmonTemperatureDevicePath(deviceRoot, "disk", reading.sensor.id)
+		path := hwmonTemperatureDevicePath(deviceRoot, reading.sensor.id)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -116,7 +113,7 @@ func TestUpdateHWMonFamilyDetectsMissingUnavailableSensor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = updateHWMonFamily(deviceRoot, "disk", readings, values)
+	err = updateHWMonFamily(deviceRoot, readings, values)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing unavailable sensor error = %v, want os.ErrNotExist", err)
 	}
@@ -145,10 +142,7 @@ func TestReconcileHWMonFamilyInitializesTemperatureBeforeLabel(t *testing.T) {
 				t.Fatal(err)
 			}
 			reading := test.reading
-			devicePath, err := hwmonTemperatureDevicePath(deviceRoot, "disk", reading.sensor.id)
-			if err != nil {
-				t.Fatal(err)
-			}
+			devicePath := hwmonTemperatureDevicePath(deviceRoot, reading.sensor.id)
 			if err := os.MkdirAll(filepath.Dir(devicePath), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -187,10 +181,7 @@ func TestPublishHWMonFamilyPreservesLastValidInventoryAfterReconciliationFailure
 	if _, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current); err == nil {
 		t.Fatal("expected partial reconciliation failure")
 	}
-	key, err := hwmonSensorKey("disk", "disk:new")
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := hwmonSensorKey("disk", "disk:new")
 	if _, err := os.Stat(filepath.Join(configRoot, "disk", key)); err != nil {
 		t.Fatalf("expected partially created sensor: %v", err)
 	}
@@ -336,17 +327,11 @@ func TestValidateHWMonSamplesRejectsDuplicateIDs(t *testing.T) {
 }
 
 func TestHWMonSensorPathsAreDeterministicAndFilesystemSafe(t *testing.T) {
-	key, err := hwmonSensorKey("disk", "disk:group:hdd")
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := hwmonSensorKey("disk", "disk:group:hdd")
 	if key != "67726f75703a686464" {
 		t.Fatalf("key = %q", key)
 	}
-	path, err := hwmonTemperatureDevicePath("/dev", "disk", "disk:group:hdd")
-	if err != nil {
-		t.Fatal(err)
-	}
+	path := hwmonTemperatureDevicePath("/dev", "disk:group:hdd")
 	if got, want := path, filepath.Join("/dev", "virt-temp", "6469736b3a67726f75703a686464"); got != want {
 		t.Fatalf("device path = %q, want %q", got, want)
 	}
@@ -369,10 +354,7 @@ func prepareFakeHWMonKernel(t *testing.T, configRoot, deviceRoot, namespace stri
 		t.Fatal(err)
 	}
 	for _, reading := range readings {
-		key, err := hwmonSensorKey(namespace, reading.sensor.id)
-		if err != nil {
-			t.Fatal(err)
-		}
+		key := hwmonSensorKey(namespace, reading.sensor.id)
 		directory := filepath.Join(configRoot, namespace, key)
 		if err := os.MkdirAll(directory, 0700); err != nil {
 			t.Fatal(err)
@@ -383,10 +365,7 @@ func prepareFakeHWMonKernel(t *testing.T, configRoot, deviceRoot, namespace stri
 				t.Fatal(err)
 			}
 		}
-		device, err := hwmonTemperatureDevicePath(deviceRoot, namespace, reading.sensor.id)
-		if err != nil {
-			t.Fatal(err)
-		}
+		device := hwmonTemperatureDevicePath(deviceRoot, reading.sensor.id)
 		if err := os.MkdirAll(filepath.Dir(device), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -400,10 +379,7 @@ func prepareFakeHWMonKernel(t *testing.T, configRoot, deviceRoot, namespace stri
 
 func prepareFakeStaleSensor(t *testing.T, configRoot, namespace, id string) {
 	t.Helper()
-	key, err := hwmonSensorKey(namespace, id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := hwmonSensorKey(namespace, id)
 	if err := os.MkdirAll(filepath.Join(configRoot, namespace, key), 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -35,7 +35,7 @@ func publishHWMonFamily(
 	reconcileImmediately := inventory.needsReconcile || inventory.sensors == nil ||
 		!sameHWMonConfiguration(inventory.sensors, current)
 	if !reconcileImmediately {
-		err = updateHWMonFamily(deviceRoot, namespace, current, milliCelsius)
+		err = updateHWMonFamily(deviceRoot, current, milliCelsius)
 		if err == nil {
 			return false, nil
 		}
@@ -102,19 +102,13 @@ func reconcileHWMonFamily(
 	familyPath := filepath.Join(configRoot, namespace)
 	desired := make(map[string]struct{}, len(readings))
 	for index, reading := range readings {
-		key, err := hwmonSensorKey(namespace, reading.sensor.id)
-		if err != nil {
-			return err
-		}
+		key := hwmonSensorKey(namespace, reading.sensor.id)
 		desired[key] = struct{}{}
 		sensorPath := filepath.Join(familyPath, key)
 		if err := os.Mkdir(sensorPath, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("create hwmon sensor %q: %w", reading.sensor.id, err)
 		}
-		devicePath, err := hwmonTemperatureDevicePath(deviceRoot, namespace, reading.sensor.id)
-		if err != nil {
-			return err
-		}
+		devicePath := hwmonTemperatureDevicePath(deviceRoot, reading.sensor.id)
 		// The first label write registers hwmon, so initialize its value first.
 		if err := writeKernelAttribute(devicePath, strconv.FormatInt(milliCelsius[index], 10)); err != nil {
 			return fmt.Errorf("initialize hwmon sensor %q: %w", reading.sensor.id, err)
@@ -143,15 +137,12 @@ func reconcileHWMonFamily(
 }
 
 func updateHWMonFamily(
-	deviceRoot, namespace string,
+	deviceRoot string,
 	readings []hwmonSample,
 	milliCelsius []int64,
 ) error {
 	for index, reading := range readings {
-		path, err := hwmonTemperatureDevicePath(deviceRoot, namespace, reading.sensor.id)
-		if err != nil {
-			return err
-		}
+		path := hwmonTemperatureDevicePath(deviceRoot, reading.sensor.id)
 		if reading.skipRefresh {
 			if _, err := os.Stat(path); err != nil {
 				return fmt.Errorf("check hwmon sensor %q: %w", reading.sensor.id, err)
@@ -165,19 +156,12 @@ func updateHWMonFamily(
 	return nil
 }
 
-func hwmonSensorKey(namespace, id string) (string, error) {
-	prefix := namespace + ":"
-	if !strings.HasPrefix(id, prefix) || len(id) == len(prefix) {
-		return "", fmt.Errorf("hwmon sensor %q is outside %s namespace", id, namespace)
-	}
-	return hex.EncodeToString([]byte(strings.TrimPrefix(id, prefix))), nil
+func hwmonSensorKey(namespace, id string) string {
+	return hex.EncodeToString([]byte(id[len(namespace)+1:]))
 }
 
-func hwmonTemperatureDevicePath(deviceRoot, namespace, id string) (string, error) {
-	if _, err := hwmonSensorKey(namespace, id); err != nil {
-		return "", err
-	}
-	return filepath.Join(deviceRoot, "virt-temp", hex.EncodeToString([]byte(id))), nil
+func hwmonTemperatureDevicePath(deviceRoot, id string) string {
+	return filepath.Join(deviceRoot, "virt-temp", hex.EncodeToString([]byte(id)))
 }
 
 func writeKernelAttribute(path, value string) (err error) {
