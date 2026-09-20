@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "unraid-vsock-sensors">
 <!ENTITY author "François HOYEZ">
-<!ENTITY version "2.0.0">
+<!ENTITY version "2.1.0">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/milouz1985/unraid-vsock-sensors/main/unraid-plugin/unraid-vsock-sensors.plg">
-<!ENTITY package "unraid-vsock-sensors-2.0.0-x86_64-1.txz">
-<!ENTITY packageURL "https://github.com/milouz1985/unraid-vsock-sensors/releases/download/v2.0.0/unraid-vsock-sensors-2.0.0-x86_64-1.txz">
-<!ENTITY packageMD5 "298fcb63198b8e2531207b45890be1c5">
-<!ENTITY packageSHA256 "26d762563d80b56ca5154ce2119e00890786f75e57bd20a452094ec8e601654c">
+<!ENTITY package "unraid-vsock-sensors-2.1.0-x86_64-1.txz">
+<!ENTITY packageURL "https://github.com/milouz1985/unraid-vsock-sensors/releases/download/v2.1.0/unraid-vsock-sensors-2.1.0-x86_64-1.txz">
+<!ENTITY packageMD5 "0303478498b0fe83b58e6412ac442cf4">
+<!ENTITY packageSHA256 "ce497e555cf56f7d6aed53b413efa8ddbcd2de3b16e1a87631568ca02a432782">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
 ]>
 
@@ -21,6 +21,14 @@ Pushes disk temperatures from Unraid's disks.ini and devs.ini, and HBA
 temperatures over AF_VSOCK to Proxmox as native hwmon sensors.
 </DESCRIPTION>
 <CHANGES>
+### 2.1.0 - 2026-09-19
+
+- Add a read-only Diagnostics page that displays the daemon's runtime state: VSOCK link, emhttpd polling and fallback, per-disk thermal status and HBA readings.
+- Keep invalid disks visible in the management inventory so they can be identified and excluded without blocking policy management.
+- Keep the last valid poll_attributes and disk policies in effect when a transient read or parse error occurs, so a temporary failure no longer drops the effective configuration.
+- Report a stale control-socket shutdown when an accepted policy mutation is still in flight after the stop deadline.
+- Preserve the Unraid configuration on plugin removal, and harden the control API request decoding (bounded bodies, rejection of non-scalar fields).
+
 ### 2.0.0 - 2026-09-13
 
 - Push persistent disk and HBA snapshots over VSOCK to Proxmox hwmon sensors, with saved topology and a stale-data failsafe.
@@ -46,7 +54,7 @@ set -e
 name="unraid-vsock-sensors"
 cfgdir="/boot/config/plugins/$name"
 mkdir -p "$cfgdir"
-find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-2.0.0-x86_64-1.txz" -delete 2>/dev/null || true
+find "$cfgdir" -maxdepth 1 -name "$name-*.txz" ! -name "unraid-vsock-sensors-2.1.0-x86_64-1.txz" -delete 2>/dev/null || true
 if [[ ! -f "$cfgdir/$name.cfg" ]]; then
     install -m 0644 "/usr/local/emhttp/plugins/$name/default.cfg" "$cfgdir/$name.cfg"
 fi
