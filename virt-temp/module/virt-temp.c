@@ -323,6 +323,10 @@ static ssize_t sensor_label_store(struct config_item *item, const char *page,
 		goto out;
 	}
 	strscpy(previous, sensor->label, sizeof(previous));
+	/*
+	 * read_label() returns this storage without taking the lock. Keep hwmon
+	 * unregistered while the label changes so readers only see stable data.
+	 */
 	unregister_hwmon(sensor);
 	strscpy(sensor->label, trimmed, sizeof(sensor->label));
 	err = register_hwmon(sensor);
