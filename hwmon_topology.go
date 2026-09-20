@@ -22,9 +22,9 @@ type hwmonSensor struct {
 }
 
 type hwmonSample struct {
-	sensor       hwmonSensor
-	temperature  float64
-	omitOnCommit bool
+	sensor      hwmonSensor
+	temperature float64
+	skipRefresh bool
 }
 
 type hwmonInventory struct {
@@ -62,14 +62,14 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 		}
 		// If any member is unavailable, the true maximum is unknown. Keep the
 		// group in the topology but stop refreshing it so virt_temp applies its
-		// stale timeout. A configure still starts it at the failsafe temperature.
+		// stale timeout. A reconciliation still starts it at the failsafe temperature.
 		if unavailable {
 			maximum = hwmonFailsafeTemp
 		}
 		diskSamples = append(diskSamples, hwmonSample{
-			sensor:       hwmonSensor{id: "disk:group:" + string(group.kind), label: group.label},
-			temperature:  maximum,
-			omitOnCommit: unavailable,
+			sensor:      hwmonSensor{id: "disk:group:" + string(group.kind), label: group.label},
+			temperature: maximum,
+			skipRefresh: unavailable,
 		})
 	}
 
@@ -83,8 +83,8 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 			sensor: hwmonSensor{
 				id: id, label: sanitizeHWMonLabel(disk.Name, id),
 			},
-			temperature:  temperature,
-			omitOnCommit: disk.Unavailable,
+			temperature: temperature,
+			skipRefresh: disk.Unavailable,
 		})
 	}
 	for _, hba := range state.HBAs {
@@ -106,10 +106,9 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 }
 
 // sanitizeHWMonLabel keeps presentation metadata from invalidating an otherwise
-// usable temperature sample. The virt_temp text protocol reserves control
-// characters and limits labels to maxHWMonLabelSize bytes. Keep the encoder's
-// strict validation as a final guard, but normalize dynamic labels before they
-// reach it.
+// usable temperature sample. The virt_temp interface rejects control characters
+// and limits labels to maxHWMonLabelSize bytes. Keep strict validation as a
+// final guard, but normalize dynamic labels before they reach it.
 func sanitizeHWMonLabel(label, fallback string) string {
 	label = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -132,8 +131,8 @@ func sanitizeHWMonLabel(label, fallback string) string {
 	return label[:limit]
 }
 
-// Labels are configuration data: virt_temp commit updates temperatures only,
-// so changing a label requires a full configure operation.
+// Labels are topology metadata. Temperature refreshes do not update them, so a
+// label change requires reconciliation.
 func sameHWMonConfiguration(expected []hwmonSensor, current []hwmonSample) bool {
 	if len(expected) != len(current) {
 		return false

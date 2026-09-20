@@ -48,15 +48,15 @@ func TestMakeHWMonSamplesFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 	}}
 	want := []hwmonSample{
 		{
-			sensor:       hwmonSensor{id: "disk:group:hdd", label: "HDD maximum"},
-			temperature:  hwmonFailsafeTemp,
-			omitOnCommit: true,
+			sensor:      hwmonSensor{id: "disk:group:hdd", label: "HDD maximum"},
+			temperature: hwmonFailsafeTemp,
+			skipRefresh: true,
 		},
 		hwmonTestSample("disk:1", "disk1", 35),
 		{
-			sensor:       hwmonSensor{id: "disk:2", label: "disk2"},
-			temperature:  hwmonFailsafeTemp,
-			omitOnCommit: true,
+			sensor:      hwmonSensor{id: "disk:2", label: "disk2"},
+			temperature: hwmonFailsafeTemp,
+			skipRefresh: true,
 		},
 		hwmonTestSample("disk:3", "cache", 46),
 	}
@@ -86,7 +86,7 @@ func TestUpdateHWMonFamilySkipsUnavailableSensors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := updateHWMonFamily(deviceRoot, "disk", readings, values, true); err != nil {
+	if err := updateHWMonFamily(deviceRoot, "disk", readings, values); err != nil {
 		t.Fatal(err)
 	}
 	for _, reading := range readings {
@@ -95,9 +95,9 @@ func TestUpdateHWMonFamilySkipsUnavailableSensors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if reading.omitOnCommit {
+		if reading.skipRefresh {
 			if !strings.HasPrefix(string(data), "unchanged") {
-				t.Fatalf("%s was refreshed despite omitOnCommit: %q", reading.sensor.id, data)
+				t.Fatalf("%s was refreshed despite skipRefresh: %q", reading.sensor.id, data)
 			}
 		} else if strings.HasPrefix(string(data), "unchanged") {
 			t.Fatalf("%s was not refreshed", reading.sensor.id)
@@ -115,13 +115,13 @@ func TestUpdateHWMonFamilyDetectsMissingUnavailableSensor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = updateHWMonFamily(deviceRoot, "disk", readings, values, true)
+	err = updateHWMonFamily(deviceRoot, "disk", readings, values)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing unavailable sensor error = %v, want os.ErrNotExist", err)
 	}
 }
 
-func TestConfigureHWMonFamilyInitializesTemperatureBeforeLabel(t *testing.T) {
+func TestReconcileHWMonFamilyInitializesTemperatureBeforeLabel(t *testing.T) {
 	tests := []struct {
 		name    string
 		reading hwmonSample
@@ -159,8 +159,8 @@ func TestConfigureHWMonFamilyInitializesTemperatureBeforeLabel(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := configureHWMonFamily(configRoot, deviceRoot, "disk", []hwmonSample{reading}, values); err == nil {
-				t.Fatal("expected missing label attribute to fail configuration")
+			if err := reconcileHWMonFamily(configRoot, deviceRoot, "disk", []hwmonSample{reading}, values); err == nil {
+				t.Fatal("expected missing label attribute to fail reconciliation")
 			}
 			got, err := os.ReadFile(devicePath)
 			if err != nil {
@@ -173,7 +173,7 @@ func TestConfigureHWMonFamilyInitializesTemperatureBeforeLabel(t *testing.T) {
 	}
 }
 
-func TestPublishHWMonFamilyInvalidatesInventoryAfterConfigurationFailure(t *testing.T) {
+func TestPublishHWMonFamilyInvalidatesInventoryAfterReconciliationFailure(t *testing.T) {
 	configRoot := t.TempDir()
 	deviceRoot := t.TempDir()
 	if err := os.Mkdir(filepath.Join(configRoot, "disk"), 0700); err != nil {
@@ -183,7 +183,7 @@ func TestPublishHWMonFamilyInvalidatesInventoryAfterConfigurationFailure(t *test
 	inventory := hwmonInventory{sensors: []hwmonSensor{{id: "disk:old", label: "Old disk"}}}
 
 	if _, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current); err == nil {
-		t.Fatal("expected partial configuration failure")
+		t.Fatal("expected partial reconciliation failure")
 	}
 	key, err := hwmonSensorKey("disk", "disk:new")
 	if err != nil {
@@ -193,11 +193,11 @@ func TestPublishHWMonFamilyInvalidatesInventoryAfterConfigurationFailure(t *test
 		t.Fatalf("expected partially created sensor: %v", err)
 	}
 	if inventory.sensors != nil {
-		t.Fatalf("inventory after failed configuration = %#v, want unknown", inventory.sensors)
+		t.Fatalf("inventory after failed reconciliation = %#v, want unknown", inventory.sensors)
 	}
 }
 
-func TestPublishHWMonFamilyRetriesAfterStaleReconfigurationFailure(t *testing.T) {
+func TestPublishHWMonFamilyRetriesAfterStaleReconciliationFailure(t *testing.T) {
 	configRoot := t.TempDir()
 	deviceRoot := t.TempDir()
 	if err := os.Mkdir(filepath.Join(configRoot, "disk"), 0700); err != nil {
@@ -207,10 +207,10 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconfigurationFailure(t *testing.T)
 	inventory := hwmonInventory{sensors: sensorsFromSamples(current)}
 
 	if _, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current); err == nil {
-		t.Fatal("expected stale inventory reconfiguration failure")
+		t.Fatal("expected stale inventory reconciliation failure")
 	}
 	if inventory.sensors != nil {
-		t.Fatalf("inventory after failed stale reconfiguration = %#v, want unknown", inventory.sensors)
+		t.Fatalf("inventory after failed stale reconciliation = %#v, want unknown", inventory.sensors)
 	}
 
 	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", current)
@@ -219,7 +219,7 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconfigurationFailure(t *testing.T)
 		t.Fatal(err)
 	}
 	if !reconfigured {
-		t.Fatal("publish after failed stale reconfiguration did not retry configuration")
+		t.Fatal("publish after failed stale reconciliation did not retry reconciliation")
 	}
 	if !reflect.DeepEqual(inventory.sensors, sensorsFromSamples(current)) {
 		t.Fatalf("inventory after successful retry = %#v, want %#v", inventory.sensors, sensorsFromSamples(current))

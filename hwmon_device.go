@@ -33,20 +33,20 @@ func publishHWMonFamily(
 	}
 	if inventory.sensors == nil || !sameHWMonConfiguration(inventory.sensors, current) {
 		inventory.sensors = nil
-		if err := configureHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); err != nil {
+		if err := reconcileHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); err != nil {
 			return false, err
 		}
 		inventory.sensors = sensorsFromSamples(current)
 		return true, nil
 	}
 
-	if err := updateHWMonFamily(deviceRoot, namespace, current, milliCelsius, true); err != nil {
+	if err := updateHWMonFamily(deviceRoot, namespace, current, milliCelsius); err != nil {
 		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, unix.ENODEV) {
 			return false, err
 		}
 		inventory.sensors = nil
-		if configureErr := configureHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); configureErr != nil {
-			return false, fmt.Errorf("reconfigure stale %s inventory: %w", namespace, configureErr)
+		if reconcileErr := reconcileHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); reconcileErr != nil {
+			return false, fmt.Errorf("reconcile stale %s inventory: %w", namespace, reconcileErr)
 		}
 		inventory.sensors = sensorsFromSamples(current)
 		return true, nil
@@ -88,7 +88,7 @@ func validateHWMonSamples(namespace string, readings []hwmonSample) ([]int64, er
 	return milliCelsius, nil
 }
 
-func configureHWMonFamily(
+func reconcileHWMonFamily(
 	configRoot, deviceRoot, namespace string,
 	readings []hwmonSample,
 	milliCelsius []int64,
@@ -140,14 +140,13 @@ func updateHWMonFamily(
 	deviceRoot, namespace string,
 	readings []hwmonSample,
 	milliCelsius []int64,
-	skipUnavailable bool,
 ) error {
 	for index, reading := range readings {
 		path, err := hwmonTemperatureDevicePath(deviceRoot, namespace, reading.sensor.id)
 		if err != nil {
 			return err
 		}
-		if skipUnavailable && reading.omitOnCommit {
+		if reading.skipRefresh {
 			if _, err := os.Stat(path); err != nil {
 				return fmt.Errorf("check hwmon sensor %q: %w", reading.sensor.id, err)
 			}
