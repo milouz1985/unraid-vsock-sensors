@@ -52,7 +52,7 @@ static struct config_group hba_family;
 
 static inline struct virt_temp_sensor *to_sensor(struct config_item *item)
 {
-	return item ? container_of(item, struct virt_temp_sensor, item) : NULL;
+	return container_of(item, struct virt_temp_sensor, item);
 }
 
 static int set_stale_timeout(const char *value,
