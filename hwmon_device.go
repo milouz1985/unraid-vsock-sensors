@@ -31,12 +31,14 @@ func publishHWMonFamily(
 	if err != nil {
 		return false, err
 	}
-	if inventory.sensors == nil || !sameHWMonConfiguration(inventory.sensors, current) {
-		inventory.sensors = nil
+	if inventory.needsReconcile || inventory.sensors == nil ||
+		!sameHWMonConfiguration(inventory.sensors, current) {
 		if err := reconcileHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); err != nil {
+			inventory.needsReconcile = true
 			return false, err
 		}
 		inventory.sensors = sensorsFromSamples(current)
+		inventory.needsReconcile = false
 		return true, nil
 	}
 
@@ -44,11 +46,12 @@ func publishHWMonFamily(
 		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, unix.ENODEV) {
 			return false, err
 		}
-		inventory.sensors = nil
 		if reconcileErr := reconcileHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); reconcileErr != nil {
+			inventory.needsReconcile = true
 			return false, fmt.Errorf("reconcile stale %s inventory: %w", namespace, reconcileErr)
 		}
 		inventory.sensors = sensorsFromSamples(current)
+		inventory.needsReconcile = false
 		return true, nil
 	}
 	return false, nil

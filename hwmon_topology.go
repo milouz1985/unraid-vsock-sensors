@@ -28,7 +28,11 @@ type hwmonSample struct {
 }
 
 type hwmonInventory struct {
+	// sensors is the last topology successfully applied to the kernel.
 	sensors []hwmonSensor
+	// needsReconcile records that a failed reconciliation may have changed the
+	// kernel without changing the last valid topology above.
+	needsReconcile bool
 }
 
 type hwmonDiskGroup struct {

@@ -141,6 +141,54 @@ func TestPublisherCachesChangedLabel(t *testing.T) {
 	}
 }
 
+func TestPublisherKeepsLastValidDiskTopologyWhenHBAReconfigurationSavesCache(t *testing.T) {
+	root := t.TempDir()
+	configRoot := filepath.Join(root, "config")
+	deviceRoot := filepath.Join(root, "dev")
+	if err := os.MkdirAll(filepath.Join(configRoot, "disk"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	state := sensors.Response{
+		Disks: []sensors.Disk{{ID: "new", Name: "disk1", Temp: 35}},
+		HBAs:  []sensors.HBA{{ID: "new", Model: "New HBA", Temp: 50}},
+	}
+	_, hbas := makeHWMonSamples(state)
+	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "hba", hbas)
+	lastValidDisks := []hwmonSensor{{id: "disk:old", label: "Old disk"}}
+	publisher := &hwmonPublisher{
+		cachePath: filepath.Join(root, "inventory.json"),
+		disks:     hwmonInventory{sensors: lastValidDisks},
+		hbas: hwmonInventory{sensors: []hwmonSensor{
+			{id: "hba:old", label: "Old HBA"},
+		}},
+	}
+
+	reconfigured, err := publisher.publish(configRoot, deviceRoot, state)
+	if !reconfigured {
+		t.Fatal("successful HBA reconciliation was not reported")
+	}
+	if err == nil || !strings.Contains(err.Error(), "disks:") {
+		t.Fatalf("publish error = %v, want disk reconciliation failure", err)
+	}
+	if !publisher.disks.needsReconcile {
+		t.Fatal("failed disk reconciliation did not remain pending")
+	}
+	data, err := os.ReadFile(publisher.cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cached cachedHWMonInventory
+	if err := json.Unmarshal(data, &cached); err != nil {
+		t.Fatal(err)
+	}
+	if cached.Disks == nil || !reflect.DeepEqual(cached.Disks.Sensors, sensorsToCache(lastValidDisks)) {
+		t.Fatalf("cached disks = %#v, want last valid topology %#v", cached.Disks, sensorsToCache(lastValidDisks))
+	}
+	if cached.HBAs == nil || !reflect.DeepEqual(cached.HBAs.Sensors, sensorsToCache(sensorsFromSamples(hbas))) {
+		t.Fatalf("cached HBAs = %#v, want current topology %#v", cached.HBAs, sensorsToCache(sensorsFromSamples(hbas)))
+	}
+}
+
 func TestPublisherReportsReconfigurationWhenCacheSaveFails(t *testing.T) {
 	root := t.TempDir()
 	configRoot := filepath.Join(root, "config")
