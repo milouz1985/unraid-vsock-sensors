@@ -121,6 +121,59 @@ func TestUpdateHWMonFamilyDetectsMissingUnavailableSensor(t *testing.T) {
 	}
 }
 
+func TestPublishHWMonFamilyInvalidatesInventoryAfterConfigurationFailure(t *testing.T) {
+	configRoot := t.TempDir()
+	deviceRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(configRoot, "disk"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	current := []hwmonSample{hwmonTestSample("disk:new", "New disk", 35)}
+	inventory := hwmonInventory{sensors: []hwmonSensor{{id: "disk:old", label: "Old disk"}}}
+
+	if _, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current); err == nil {
+		t.Fatal("expected partial configuration failure")
+	}
+	key, err := hwmonSensorKey("disk", "disk:new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(configRoot, "disk", key)); err != nil {
+		t.Fatalf("expected partially created sensor: %v", err)
+	}
+	if inventory.sensors != nil {
+		t.Fatalf("inventory after failed configuration = %#v, want unknown", inventory.sensors)
+	}
+}
+
+func TestPublishHWMonFamilyRetriesAfterStaleReconfigurationFailure(t *testing.T) {
+	configRoot := t.TempDir()
+	deviceRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(configRoot, "disk"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1", 35)}
+	inventory := hwmonInventory{sensors: sensorsFromSamples(current)}
+
+	if _, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current); err == nil {
+		t.Fatal("expected stale inventory reconfiguration failure")
+	}
+	if inventory.sensors != nil {
+		t.Fatalf("inventory after failed stale reconfiguration = %#v, want unknown", inventory.sensors)
+	}
+
+	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", current)
+	reconfigured, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reconfigured {
+		t.Fatal("publish after failed stale reconfiguration did not retry configuration")
+	}
+	if !reflect.DeepEqual(inventory.sensors, sensorsFromSamples(current)) {
+		t.Fatalf("inventory after successful retry = %#v, want %#v", inventory.sensors, sensorsFromSamples(current))
+	}
+}
+
 func TestValidateHWMonSamplesIDSizeBoundary(t *testing.T) {
 	maximumID := "disk:" + strings.Repeat("a", maxHWMonIDSize-len("disk:"))
 	if got := len(maximumID); got != maxHWMonIDSize {

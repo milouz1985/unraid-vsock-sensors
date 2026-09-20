@@ -32,6 +32,7 @@ func publishHWMonFamily(
 		return false, err
 	}
 	if inventory.sensors == nil || !sameHWMonConfiguration(inventory.sensors, current) {
+		inventory.sensors = nil
 		if err := configureHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); err != nil {
 			return false, err
 		}
@@ -43,6 +44,7 @@ func publishHWMonFamily(
 		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, unix.ENODEV) {
 			return false, err
 		}
+		inventory.sensors = nil
 		if configureErr := configureHWMonFamily(configRoot, deviceRoot, namespace, current, milliCelsius); configureErr != nil {
 			return false, fmt.Errorf("reconfigure stale %s inventory: %w", namespace, configureErr)
 		}
