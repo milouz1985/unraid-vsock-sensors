@@ -30,6 +30,12 @@ créée obtient ensuite son propre périphérique caractère, utilisé uniquemen
 pousser sa température courante. Les consommateurs continuent à lire les
 valeurs via le sous-système Linux `hwmon`.
 
+Quand `unraid-vsock-hwmon` fonctionne, il est l'unique writer supporté de
+`/sys/kernel/config/virt_temp`. Ce modèle single-writer est un contrat
+architectural, pas un verrou empêchant `root` de modifier configfs : le module
+n'ajoute ni token d'ownership ni détection périodique des modifications
+extérieures.
+
 ## Interface kernel
 
 Les familles `disk` et `hba` sont indépendantes.
@@ -38,7 +44,8 @@ Une sonde est créée en ajoutant un objet configfs sous la famille correspondan
 Le nom de l'objet est la partie de l'ID stable située après `disk:` ou `hba:`,
 encodée en hexadécimal. Son attribut `label` configure le label hwmon.
 
-Exemple conceptuel :
+Exemple manuel, réservé au développement, au diagnostic ou aux tests avec
+`unraid-vsock-hwmon` arrêté :
 
 ```sh
 mkdir /sys/kernel/config/virt_temp/disk/73657269616c31
