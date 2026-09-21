@@ -22,7 +22,28 @@ config=/etc/default/unraid-vsock-hwmon
 cache=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 saved_sources=/var/lib/unraid-vsock-sensors/dkms-sources
 checkpoint=/var/tmp/uvss-package-pre-reboot
+holder_pid=""
+holder_read_fd=""
+holder_write_fd=""
 trap 'journalctl -u "$service" -n 80 --no-pager >&2' ERR
+
+cleanup_sensor_holder() {
+    if [[ -n "$holder_write_fd" ]]; then
+        printf 'close\n' 1>&"$holder_write_fd" 2>/dev/null || true
+        exec {holder_write_fd}>&- 2>/dev/null || true
+        holder_write_fd=""
+    fi
+    if [[ -n "$holder_pid" ]]; then
+        kill "$holder_pid" 2>/dev/null || true
+        wait "$holder_pid" 2>/dev/null || true
+        holder_pid=""
+    fi
+    if [[ -n "$holder_read_fd" ]]; then
+        exec {holder_read_fd}<&- 2>/dev/null || true
+        holder_read_fd=""
+    fi
+}
+trap cleanup_sensor_holder EXIT
 
 # The receiver can listen locally without adding a VSOCK device to the host.
 # This checks service startup, not guest-to-host transport or sensor traffic.
@@ -289,7 +310,7 @@ phase_remove_after_failed_upgrade() {
 # Final phase, after the third reboot.
 # ---------------------------------------------------------------------------
 phase_final() {
-    local device package_status sensor
+    local device fd_path holder_has_device holder_result package_status sensor
 
     [[ -s "$checkpoint" ]] || die "Missing pre-reboot package checkpoint"
     [[ "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat "$checkpoint")" ]] ||
@@ -308,13 +329,65 @@ phase_final() {
     mkdir -- "$sensor"
     printf '42000\n' > "$device"
     printf 'Package held FD\n' > "$sensor/label"
-    exec 9>"$device"
-    printf '42500\n' >&9
+    # Preserve the coprocess command pipe on fd 3 before the here-doc replaces
+    # Python's stdin with the script source.
+    coproc SENSOR_HOLDER {
+        exec python3 - "$device" 3<&0 <<'PY'
+import errno
+import os
+import sys
+
+device_fd = os.open(sys.argv[1], os.O_WRONLY)
+try:
+    os.write(device_fd, b"42500\n")
+    print("opened", flush=True)
+    with os.fdopen(3) as commands:
+        for command in commands:
+            command = command.strip()
+            if command == "write":
+                try:
+                    os.write(device_fd, b"43000\n")
+                except OSError as error:
+                    print(errno.errorcode.get(error.errno, f"errno:{error.errno}"), flush=True)
+                else:
+                    print("written", flush=True)
+            elif command == "close":
+                os.close(device_fd)
+                device_fd = -1
+                print("closed", flush=True)
+                break
+            else:
+                raise SystemExit(f"unknown holder command: {command!r}")
+finally:
+    if device_fd >= 0:
+        os.close(device_fd)
+PY
+    }
+    holder_pid=$SENSOR_HOLDER_PID
+    holder_read_fd=${SENSOR_HOLDER[0]}
+    holder_write_fd=${SENSOR_HOLDER[1]}
+    read -r -u "$holder_read_fd" holder_result
+    [[ "$holder_result" == opened ]] ||
+        die "Sensor holder reported $holder_result instead of confirming its open fd"
+
+    holder_has_device=0
+    for fd_path in "/proc/$holder_pid/fd"/*; do
+        if [[ "$(readlink "$fd_path")" == "$device" ]]; then
+            holder_has_device=1
+        fi
+    done
+    [[ "$holder_has_device" == 1 ]] ||
+        die "Sensor holder does not own the expected device fd"
+    # apt-get and its dpkg/prerm descendants inherit from this shell, not from
+    # the sibling holder process. The shell must therefore own no sensor fd.
+    for fd_path in "/proc/$$/fd"/*; do
+        [[ "$(readlink "$fd_path")" != "$device" ]] ||
+            die "Main package test shell unexpectedly owns the held sensor fd"
+    done
     [[ "$(awk '$1 == "virt_temp" { print $3 }' /proc/modules)" -ge 1 ]]
 
     if apt_vm remove -y "$package"; then
         echo "Package removal unexpectedly succeeded with an open sensor fd" >&2
-        exec 9>&-
         exit 1
     fi
     package_status="$(dpkg-query -W -f='${Status}' "$package")"
@@ -325,20 +398,20 @@ phase_final() {
     [[ -d /sys/module/virt_temp && -d /sys/kernel/config/virt_temp ]]
     [[ ! -e "$sensor" && ! -e "$device" ]]
     [[ "$(dkms status -m virt-temp -v "$final_version" -k "$kernel")" == *': installed'* ]]
-    python3 - 9 <<'PY'
-import errno
-import os
-import sys
-
-try:
-    os.write(int(sys.argv[1]), b"43000\n")
-except OSError as error:
-    if error.errno != errno.ENODEV:
-        raise SystemExit(f"write through removed sensor fd failed with errno {error.errno}, want ENODEV")
-else:
-    raise SystemExit("write through removed sensor fd unexpectedly succeeded")
-PY
-    exec 9>&-
+    printf 'write\n' >&"$holder_write_fd"
+    read -r -u "$holder_read_fd" holder_result
+    [[ "$holder_result" == ENODEV ]] ||
+        die "Write through removed sensor fd returned $holder_result, want ENODEV"
+    printf 'close\n' >&"$holder_write_fd"
+    read -r -u "$holder_read_fd" holder_result
+    [[ "$holder_result" == closed ]] ||
+        die "Sensor holder returned $holder_result instead of closing its fd"
+    exec {holder_write_fd}>&-
+    holder_write_fd=""
+    wait "$holder_pid"
+    holder_pid=""
+    exec {holder_read_fd}<&- 2>/dev/null || true
+    holder_read_fd=""
 
     echo "Checking package removal preserves configuration and unloads the module"
     apt_vm remove -y "$package"
