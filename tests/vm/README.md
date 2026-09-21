@@ -241,6 +241,8 @@ Elle construit plusieurs versions du `.deb` et vérifie :
 - réinstallation d'une version valide plus récente que la version cassée
   (un downgrade serait refusé par `apt-get`) ;
 - second redémarrage réel depuis le module réparé ;
+- échec récupérable de `remove` lorsqu'un processus extérieur conserve ouvert
+  le FD d'une sonde supprimée, avec `ENODEV` sur cet ancien FD ;
 - `remove` ;
 - `purge`.
 

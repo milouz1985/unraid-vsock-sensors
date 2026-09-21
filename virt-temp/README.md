@@ -244,6 +244,13 @@ ainsi que leurs sources de secours, tout en conservant la configuration
 
 ## Désinstallation
 
+Un processus extérieur qui conserve ouvert le FD d'une sonde retient le module.
+Dans ce cas, la tentative de suppression du paquet retire les objets configfs
+mais échoue proprement au déchargement de `virt_temp` ; l'ancien FD retourne
+`ENODEV`. Après fermeture du FD, relancer la suppression permet de terminer le
+retrait. Les scripts du paquet ne tuent pas le processus extérieur pour forcer
+l'opération.
+
 Conserver la configuration :
 
 ```sh

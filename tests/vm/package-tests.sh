@@ -289,12 +289,56 @@ phase_remove_after_failed_upgrade() {
 # Final phase, after the third reboot.
 # ---------------------------------------------------------------------------
 phase_final() {
+    local device package_status sensor
+
     [[ -s "$checkpoint" ]] || die "Missing pre-reboot package checkpoint"
     [[ "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat "$checkpoint")" ]] ||
         die "Final phase resumed without a VM reboot"
     echo "Checking boot from the repaired module after the final reboot"
     check_installed "$final_version"
     timing "package: final reboot recovery"
+
+    echo "Checking recoverable package removal with an externally held sensor fd"
+    systemctl stop "$service"
+    if systemctl is-active --quiet "$service"; then
+        echo "Service is still active before the manual configfs test" >&2; exit 1
+    fi
+    sensor=/sys/kernel/config/virt_temp/disk/7061636b6167652d68656c64
+    device=/dev/virt-temp/6469736b3a7061636b6167652d68656c64
+    mkdir -- "$sensor"
+    printf '42000\n' > "$device"
+    printf 'Package held FD\n' > "$sensor/label"
+    exec 9>"$device"
+    printf '42500\n' >&9
+    [[ "$(awk '$1 == "virt_temp" { print $3 }' /proc/modules)" -ge 1 ]]
+
+    if apt_vm remove -y "$package"; then
+        echo "Package removal unexpectedly succeeded with an open sensor fd" >&2
+        exec 9>&-
+        exit 1
+    fi
+    package_status="$(dpkg-query -W -f='${Status}' "$package")"
+    [[ "$package_status" == *' installed' ]]
+    [[ -x /usr/bin/unraid-vsock-sensors ]]
+    grep -q '^virt_temp ' /proc/modules
+    [[ "$(awk '$1 == "virt_temp" { print $3 }' /proc/modules)" -ge 1 ]]
+    [[ -d /sys/module/virt_temp && -d /sys/kernel/config/virt_temp ]]
+    [[ ! -e "$sensor" && ! -e "$device" ]]
+    [[ "$(dkms status -m virt-temp -v "$final_version" -k "$kernel")" == *': installed'* ]]
+    python3 - 9 <<'PY'
+import errno
+import os
+import sys
+
+try:
+    os.write(int(sys.argv[1]), b"43000\n")
+except OSError as error:
+    if error.errno != errno.ENODEV:
+        raise SystemExit(f"write through removed sensor fd failed with errno {error.errno}, want ENODEV")
+else:
+    raise SystemExit("write through removed sensor fd unexpectedly succeeded")
+PY
+    exec 9>&-
 
     echo "Checking package removal preserves configuration and unloads the module"
     apt_vm remove -y "$package"
