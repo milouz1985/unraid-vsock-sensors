@@ -49,8 +49,8 @@ Exemple manuel, réservé au développement, au diagnostic ou aux tests avec
 
 ```sh
 mkdir /sys/kernel/config/virt_temp/disk/73657269616c31
-printf '%s\n' 'disk1' > /sys/kernel/config/virt_temp/disk/73657269616c31/label
 printf '%s\n' '42000' > /dev/virt-temp/6469736b3a73657269616c31
+printf '%s\n' 'disk1' > /sys/kernel/config/virt_temp/disk/73657269616c31/label
 ```
 
 Le fichier `/dev/virt-temp/<ID hexadécimal>` accepte uniquement un entier signé
