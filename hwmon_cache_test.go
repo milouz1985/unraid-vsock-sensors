@@ -96,6 +96,82 @@ func TestPublisherReportsPartialCacheRestore(t *testing.T) {
 	}
 }
 
+func TestConsumerRestartWaitsForPendingCacheReconciliation(t *testing.T) {
+	root := t.TempDir()
+	configRoot := filepath.Join(root, "config")
+	deviceRoot := filepath.Join(root, "dev")
+	cachedDisks := []cachedHWMonSensor{{ID: "disk:cached", Label: "Cached disk"}}
+	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", samplesFromCache(cachedDisks))
+	if err := os.MkdirAll(filepath.Join(configRoot, "hba"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(root, "inventory.json")
+	data := `{"version":1,"disks":{"readings":[{"id":"disk:cached","label":"Cached disk"}]},"hbas":{"readings":[{"id":"hba:cached","label":"Cached HBA"}]}}`
+	if err := os.WriteFile(cache, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	publisher := &hwmonPublisher{cachePath: cache}
+	if err := publisher.restore(configRoot, deviceRoot); err == nil || !strings.Contains(err.Error(), "restore HBA") {
+		t.Fatalf("cache restore error = %v, want partial HBA failure", err)
+	}
+	if publisher.disks.sensors == nil {
+		t.Fatal("successful disk cache restore did not initialize the family")
+	}
+	if !publisher.hbas.needsReconcile {
+		t.Fatal("failed HBA cache restore did not remain pending")
+	}
+
+	state := sensors.Response{
+		Disks:    []sensors.Disk{{ID: "cached", Name: "Cached disk", Temp: 35}},
+		HBAError: "temporarily unavailable",
+	}
+	reconfigured, err := publisher.publish(configRoot, deviceRoot, state)
+	if reconfigured {
+		t.Fatal("snapshot with pending HBA reconciliation reported a reconfiguration")
+	}
+	if err == nil || !strings.Contains(err.Error(), "temporarily unavailable") {
+		t.Fatalf("publish error = %v, want unavailable HBA", err)
+	}
+	if !publisher.reconciliationPending() {
+		t.Fatal("publisher did not report the pending HBA reconciliation")
+	}
+	// A pending reconciliation also abandons any previously scheduled restart
+	// retry when its timer expires.
+	// A decoded snapshot still counts as the first guest snapshot when one of
+	// its collectors reports an error.
+	if publisher.shouldRestartConsumers(reconfigured, true) {
+		t.Fatal("first guest snapshot authorized consumer restart during pending HBA reconciliation")
+	}
+	if publisher.shouldRestartConsumers(true, false) {
+		t.Fatal("reconfigured bypassed the pending-family restart barrier")
+	}
+
+	initializedPublisher := &hwmonPublisher{disks: hwmonInventory{sensors: []hwmonSensor{
+		{id: "disk:cached", label: "Cached disk"},
+	}}}
+	if !initializedPublisher.shouldRestartConsumers(false, true) {
+		t.Fatal("first guest snapshot did not restart consumers after a complete cache restore")
+	}
+
+	hbas := []sensors.HBA{{ID: "cached", Model: "Cached HBA", Temp: 50}}
+	_, hbaSamples := makeHWMonSamples(sensors.Response{HBAs: hbas})
+	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "hba", hbaSamples)
+	state.HBAError = ""
+	state.HBAs = hbas
+	reconfigured, err = publisher.publish(configRoot, deviceRoot, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reconfigured || publisher.reconciliationPending() {
+		t.Fatalf("successful HBA retry: reconfigured=%v pending=%v, want true/false",
+			reconfigured, publisher.reconciliationPending())
+	}
+	if !publisher.shouldRestartConsumers(reconfigured, false) {
+		t.Fatal("successful HBA reconciliation did not rearm consumer restart")
+	}
+}
+
 func TestPublisherCachesChangedLabel(t *testing.T) {
 	root := t.TempDir()
 	configRoot := filepath.Join(root, "config")

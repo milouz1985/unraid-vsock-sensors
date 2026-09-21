@@ -110,7 +110,7 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 			return time.After(restartRetryDelay)
 		}
 		if len(config.restartUnits) != 0 {
-			log.Printf("restarted topology consumers: %s", strings.Join(config.restartUnits, ", "))
+			log.Printf("requested restart of topology consumers: %s", strings.Join(config.restartUnits, ", "))
 		}
 		return nil
 	}
@@ -131,10 +131,10 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 			reconfigured, publishErr := publisher.publish(virtTempConfigPath, virtTempDeviceDir, snapshot.response)
 			firstGuestSnapshot := !seenGuestSnapshot
 			seenGuestSnapshot = true
-			familyInitialized := publisher.disks.sensors != nil || publisher.hbas.sensors != nil
 			// The first guest snapshot also restarts consumers when a family
-			// already exists from cache, even if no reconfiguration was needed.
-			if (reconfigured || (firstGuestSnapshot && familyInitialized)) && restartRetry == nil {
+			// already exists from cache, even if no reconfiguration was needed,
+			// but never while another family still needs reconciliation.
+			if publisher.shouldRestartConsumers(reconfigured, firstGuestSnapshot) && restartRetry == nil {
 				restartRetry = tryRestartConsumers()
 			}
 			updateLog.update(publishErr)
@@ -144,11 +144,25 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 			}
 			return err
 		case <-restartRetry:
-			restartRetry = tryRestartConsumers()
+			restartRetry = nil
+			// A successful future reconciliation emits a fresh reconfigured event.
+			if !publisher.reconciliationPending() {
+				restartRetry = tryRestartConsumers()
+			}
 		case <-ctx.Done():
 			return nil
 		}
 	}
+}
+
+func (publisher *hwmonPublisher) reconciliationPending() bool {
+	return publisher.disks.needsReconcile || publisher.hbas.needsReconcile
+}
+
+func (publisher *hwmonPublisher) shouldRestartConsumers(reconfigured, firstGuestSnapshot bool) bool {
+	familyInitialized := publisher.disks.sensors != nil || publisher.hbas.sensors != nil
+	return !publisher.reconciliationPending() &&
+		(reconfigured || firstGuestSnapshot && familyInitialized)
 }
 
 func (publisher *hwmonPublisher) publish(configRoot, deviceRoot string, state sensors.Response) (bool, error) {
@@ -185,8 +199,7 @@ func (publisher *hwmonPublisher) publish(configRoot, deviceRoot string, state se
 	if topologyChanged {
 		publisher.cacheDirty = true
 	}
-	reconfigured := topologyChanged &&
-		!publisher.disks.needsReconcile && !publisher.hbas.needsReconcile
+	reconfigured := topologyChanged && !publisher.reconciliationPending()
 	// Clear cacheDirty only after a durable save. On failure, the next snapshot
 	// retries persistence even if no further topology change occurs.
 	if publisher.cacheDirty {

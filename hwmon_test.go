@@ -39,3 +39,64 @@ func TestParseRestartUnits(t *testing.T) {
 		})
 	}
 }
+
+func TestShouldRestartConsumers(t *testing.T) {
+	tests := []struct {
+		name               string
+		reconfigured       bool
+		firstGuestSnapshot bool
+		familyInitialized  bool
+		diskPending        bool
+		hbaPending         bool
+		want               bool
+	}{
+		{
+			name:              "reconfigured",
+			reconfigured:      true,
+			familyInitialized: true,
+			want:              true,
+		},
+		{
+			name:              "reconfigured with disk reconciliation pending",
+			reconfigured:      true,
+			familyInitialized: true,
+			diskPending:       true,
+		},
+		{
+			name:               "first snapshot with initialized family",
+			firstGuestSnapshot: true,
+			familyInitialized:  true,
+			want:               true,
+		},
+		{
+			name:               "first snapshot with HBA reconciliation pending",
+			firstGuestSnapshot: true,
+			familyInitialized:  true,
+			hbaPending:         true,
+		},
+		{
+			name:               "first snapshot without initialized family",
+			firstGuestSnapshot: true,
+		},
+		{
+			name:              "subsequent unchanged snapshot",
+			familyInitialized: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			publisher := &hwmonPublisher{
+				disks: hwmonInventory{needsReconcile: test.diskPending},
+				hbas:  hwmonInventory{needsReconcile: test.hbaPending},
+			}
+			if test.familyInitialized {
+				// A known, authoritatively empty family is initialized; nil is not.
+				publisher.disks.sensors = []hwmonSensor{}
+			}
+			got := publisher.shouldRestartConsumers(test.reconfigured, test.firstGuestSnapshot)
+			if got != test.want {
+				t.Fatalf("shouldRestartConsumers() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
