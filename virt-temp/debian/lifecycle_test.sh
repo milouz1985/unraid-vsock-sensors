@@ -50,7 +50,9 @@ SH
 cat > "$test_root/bin/systemctl" <<'SH'
 #!/bin/sh
 printf 'systemctl %s\n' "$1" >> "$TEST_EVENTS"
-[ "$1" != is-active ]
+if [ "$1" = is-active ]; then
+    [ "${TEST_SERVICE_ACTIVE:-0}" = 1 ]
+fi
 SH
 cat > "$test_root/bin/deb-systemd-invoke" <<'SH'
 #!/bin/sh
@@ -59,6 +61,7 @@ SH
 cat > "$test_root/bin/modprobe" <<'SH'
 #!/bin/sh
 printf 'modprobe %s\n' "$*" >> "$TEST_EVENTS"
+[ "${TEST_FAIL_MODPROBE:-0}" != 1 ]
 SH
 chmod +x "$test_root/bin/"*
 export PATH="$test_root/bin:$PATH"
@@ -104,6 +107,29 @@ cmp "$TEST_EVENTS" "$test_root/expected"
 echo "DKMS upgrade ordering: OK"
 
 # ---------------------------------------------------------------------------
+# A failed module unload during remove must leave DKMS registered and restart
+# a service that was active before prerm stopped it.
+# ---------------------------------------------------------------------------
+mkdir -p "$test_root/dkms/virt-temp/old"
+ln -s "$test_root/src/virt-temp-old" "$test_root/dkms/virt-temp/old/source"
+mkdir -p "$test_root/configfs/disk/held-sensor"
+printf 'virt_temp 1 1 - Live 0x0\n' > "$test_root/proc_modules"
+: > "$TEST_EVENTS"
+export TEST_SERVICE_ACTIVE=1
+export TEST_FAIL_MODPROBE=1
+render_script prerm old "$test_root/prerm_remove"
+if sh "$test_root/prerm_remove" remove; then
+    echo "prerm accepted a failed module unload" >&2; exit 1
+fi
+unset TEST_FAIL_MODPROBE
+printf 'systemctl is-active\nsystemctl stop\nmodprobe -r virt_temp\nsystemctl start\n' > "$test_root/expected"
+cmp "$TEST_EVENTS" "$test_root/expected"
+[[ ! -d "$test_root/configfs/disk/held-sensor" ]]
+[[ -L "$test_root/dkms/virt-temp/old/source" ]]
+unset TEST_SERVICE_ACTIVE
+echo "Service rollback after failed module unload: OK"
+
+# ---------------------------------------------------------------------------
 # apt remove executed directly after a failed DKMS upgrade (no recovery
 # version in between). The old version is still registered with its preserved
 # sources while the new version is registered but half-configured. prerm
@@ -117,15 +143,18 @@ touch "$test_root/saved/virt-temp-old/dkms.conf" "$test_root/saved/virt-temp-old
 ln -s "$test_root/saved/virt-temp-old" "$test_root/dkms/virt-temp/old/source"
 ln -s "$test_root/src/virt-temp-new" "$test_root/dkms/virt-temp/new/source"
 : > "$TEST_EVENTS"
+: > "$test_root/proc_modules"
 
 render_script prerm new "$test_root/prerm_new"
 sh "$test_root/prerm_new" remove
 # The two DKMS removes happen in glob order; normalise before comparing.
 {
+    grep -F 'systemctl is-active' "$TEST_EVENTS"
     grep -F 'systemctl stop' "$TEST_EVENTS"
     sort <(grep -F 'remove ' "$TEST_EVENTS")
 } > "$test_root/actual"
 {
+    printf 'systemctl is-active\n'
     printf 'systemctl stop\n'
     printf 'remove new\nremove old\n' | sort
 } > "$test_root/expected"

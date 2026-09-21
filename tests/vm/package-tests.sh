@@ -310,7 +310,7 @@ phase_remove_after_failed_upgrade() {
 # Final phase, after the third reboot.
 # ---------------------------------------------------------------------------
 phase_final() {
-    local device fd_path holder_has_device holder_result package_status sensor
+    local deadline device fd_path holder_has_device holder_result package_status sensor
 
     [[ -s "$checkpoint" ]] || die "Missing pre-reboot package checkpoint"
     [[ "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat "$checkpoint")" ]] ||
@@ -321,14 +321,16 @@ phase_final() {
 
     echo "Checking recoverable package removal with an externally held sensor fd"
     systemctl stop "$service"
-    if systemctl is-active --quiet "$service"; then
-        echo "Service is still active before the manual configfs test" >&2; exit 1
-    fi
     sensor=/sys/kernel/config/virt_temp/disk/7061636b6167652d68656c64
     device=/dev/virt-temp/6469736b3a7061636b6167652d68656c64
-    mkdir -- "$sensor"
-    printf '42000\n' > "$device"
-    printf 'Package held FD\n' > "$sensor/label"
+    printf '{"version":1,"disks":{"readings":[{"id":"disk:package-held","label":"Package held FD"}]}}\n' > "$cache"
+    systemctl start "$service"
+    systemctl is-active --quiet "$service"
+    deadline=$((SECONDS + 10))
+    until [[ -d "$sensor" && -c "$device" ]]; do
+        (( SECONDS < deadline )) || die "Receiver did not restore the held sensor from cache"
+        sleep 0.1
+    done
     # Preserve the coprocess command pipe on fd 3 before the here-doc replaces
     # Python's stdin with the script source.
     coproc SENSOR_HOLDER {
@@ -396,7 +398,12 @@ PY
     grep -q '^virt_temp ' /proc/modules
     [[ "$(awk '$1 == "virt_temp" { print $3 }' /proc/modules)" -ge 1 ]]
     [[ -d /sys/module/virt_temp && -d /sys/kernel/config/virt_temp ]]
-    [[ ! -e "$sensor" && ! -e "$device" ]]
+    systemctl is-active --quiet "$service"
+    deadline=$((SECONDS + 10))
+    until [[ -d "$sensor" && -c "$device" ]]; do
+        (( SECONDS < deadline )) || die "Receiver did not restore topology after failed package removal"
+        sleep 0.1
+    done
     [[ "$(dkms status -m virt-temp -v "$final_version" -k "$kernel")" == *': installed'* ]]
     printf 'write\n' >&"$holder_write_fd"
     read -r -u "$holder_read_fd" holder_result
