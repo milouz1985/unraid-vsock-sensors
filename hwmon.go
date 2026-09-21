@@ -154,7 +154,7 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 func (publisher *hwmonPublisher) publish(configRoot, deviceRoot string, state sensors.Response) (bool, error) {
 	disks, hbas := makeHWMonSamples(state)
 	var diskErr, hbaErr error
-	reconfigured := false
+	var disksReconfigured, hbasReconfigured bool
 	// A non-nil empty inventory is authoritative and removes the last cached
 	// family instead of leaving a permanent failsafe device behind.
 	if state.Error != "" {
@@ -164,7 +164,7 @@ func (publisher *hwmonPublisher) publish(configRoot, deviceRoot string, state se
 	} else if changed, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &publisher.disks, disks); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
 	} else {
-		reconfigured = reconfigured || changed
+		disksReconfigured = changed
 		if changed {
 			log.Printf("configured storage hwmon inventory with %d sensors", len(disks))
 		}
@@ -176,14 +176,17 @@ func (publisher *hwmonPublisher) publish(configRoot, deviceRoot string, state se
 	} else if changed, err := publishHWMonFamily(configRoot, deviceRoot, "hba", &publisher.hbas, hbas); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
 	} else {
-		reconfigured = reconfigured || changed
+		hbasReconfigured = changed
 		if changed {
 			log.Printf("configured HBA hwmon inventory with %d sensors", len(hbas))
 		}
 	}
-	if reconfigured {
+	topologyChanged := disksReconfigured || hbasReconfigured
+	if topologyChanged {
 		publisher.cacheDirty = true
 	}
+	reconfigured := topologyChanged &&
+		!publisher.disks.needsReconcile && !publisher.hbas.needsReconcile
 	// Clear cacheDirty only after a durable save. On failure, the next snapshot
 	// retries persistence even if no further topology change occurs.
 	if publisher.cacheDirty {

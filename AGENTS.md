@@ -123,7 +123,9 @@ Ne pas les fusionner dans un état générique pour réduire le nombre de lignes
 - `reconfigured` signifie qu'une réconciliation complète a réussi et qu'une
   redécouverte par les consommateurs est pertinente. Un échec partiel conserve
   le dernier inventaire valide, fixe `needsReconcile=true` et ne déclenche pas
-  leur redémarrage.
+  leur redémarrage. Un succès dans l'autre famille ne doit pas masquer cet état :
+  le signal global `reconfigured` n'est émis que lorsque toutes les familles
+  sont à nouveau réconciliées.
 - À la création, écrire la température avant le premier `label`, car ce dernier
   rend la sonde visible via hwmon.
 - Ne pas réintroduire `sample`/`configure`/`commit`, de staging ou d'inventaire

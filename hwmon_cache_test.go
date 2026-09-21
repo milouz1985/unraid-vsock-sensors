@@ -141,51 +141,95 @@ func TestPublisherCachesChangedLabel(t *testing.T) {
 	}
 }
 
-func TestPublisherKeepsLastValidDiskTopologyWhenHBAReconfigurationSavesCache(t *testing.T) {
-	root := t.TempDir()
-	configRoot := filepath.Join(root, "config")
-	deviceRoot := filepath.Join(root, "dev")
-	if err := os.MkdirAll(filepath.Join(configRoot, "disk"), 0700); err != nil {
-		t.Fatal(err)
+func TestPublisherDefersReconfigurationWhileFamilyNeedsReconcile(t *testing.T) {
+	tests := []struct {
+		name             string
+		failedNamespace  string
+		failedErrorLabel string
+	}{
+		{name: "disk fails", failedNamespace: "disk", failedErrorLabel: "disks:"},
+		{name: "HBA fails", failedNamespace: "hba", failedErrorLabel: "HBA:"},
 	}
-	state := sensors.Response{
-		Disks: []sensors.Disk{{ID: "new", Name: "disk1", Temp: 35}},
-		HBAs:  []sensors.HBA{{ID: "new", Model: "New HBA", Temp: 50}},
-	}
-	_, hbas := makeHWMonSamples(state)
-	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "hba", hbas)
-	lastValidDisks := []hwmonSensor{{id: "disk:old", label: "Old disk"}}
-	publisher := &hwmonPublisher{
-		cachePath: filepath.Join(root, "inventory.json"),
-		disks:     hwmonInventory{sensors: lastValidDisks},
-		hbas: hwmonInventory{sensors: []hwmonSensor{
-			{id: "hba:old", label: "Old HBA"},
-		}},
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			configRoot := filepath.Join(root, "config")
+			deviceRoot := filepath.Join(root, "dev")
+			state := sensors.Response{
+				Disks: []sensors.Disk{{ID: "new", Name: "disk1", Temp: 35}},
+				HBAs:  []sensors.HBA{{ID: "new", Model: "New HBA", Temp: 50}},
+			}
+			disks, hbas := makeHWMonSamples(state)
+			lastValidDisks := []hwmonSensor{{id: "disk:old", label: "Old disk"}}
+			lastValidHBAs := []hwmonSensor{{id: "hba:old", label: "Old HBA"}}
+			publisher := &hwmonPublisher{
+				cachePath: filepath.Join(root, "inventory.json"),
+				disks:     hwmonInventory{sensors: lastValidDisks},
+				hbas:      hwmonInventory{sensors: lastValidHBAs},
+			}
 
-	reconfigured, err := publisher.publish(configRoot, deviceRoot, state)
-	if !reconfigured {
-		t.Fatal("successful HBA reconciliation was not reported")
-	}
-	if err == nil || !strings.Contains(err.Error(), "disks:") {
-		t.Fatalf("publish error = %v, want disk reconciliation failure", err)
-	}
-	if !publisher.disks.needsReconcile {
-		t.Fatal("failed disk reconciliation did not remain pending")
-	}
-	data, err := os.ReadFile(publisher.cachePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cached cachedHWMonInventory
-	if err := json.Unmarshal(data, &cached); err != nil {
-		t.Fatal(err)
-	}
-	if cached.Disks == nil || !reflect.DeepEqual(cached.Disks.Sensors, sensorsToCache(lastValidDisks)) {
-		t.Fatalf("cached disks = %#v, want last valid topology %#v", cached.Disks, sensorsToCache(lastValidDisks))
-	}
-	if cached.HBAs == nil || !reflect.DeepEqual(cached.HBAs.Sensors, sensorsToCache(sensorsFromSamples(hbas))) {
-		t.Fatalf("cached HBAs = %#v, want current topology %#v", cached.HBAs, sensorsToCache(sensorsFromSamples(hbas)))
+			var failedReadings []hwmonSample
+			if test.failedNamespace == "disk" {
+				failedReadings = disks
+				if err := os.MkdirAll(filepath.Join(configRoot, "disk"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				prepareFakeHWMonKernel(t, configRoot, deviceRoot, "hba", hbas)
+			} else {
+				failedReadings = hbas
+				if err := os.MkdirAll(filepath.Join(configRoot, "hba"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", disks)
+			}
+
+			reconfigured, err := publisher.publish(configRoot, deviceRoot, state)
+			if reconfigured {
+				t.Fatal("partial reconciliation authorized consumer restart")
+			}
+			if err == nil || !strings.Contains(err.Error(), test.failedErrorLabel) {
+				t.Fatalf("publish error = %v, want %s reconciliation failure", err, test.failedNamespace)
+			}
+			if test.failedNamespace == "disk" && !publisher.disks.needsReconcile ||
+				test.failedNamespace == "hba" && !publisher.hbas.needsReconcile {
+				t.Fatalf("failed %s reconciliation did not remain pending", test.failedNamespace)
+			}
+
+			data, err := os.ReadFile(publisher.cachePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cached cachedHWMonInventory
+			if err := json.Unmarshal(data, &cached); err != nil {
+				t.Fatal(err)
+			}
+			wantDisks := sensorsToCache(sensorsFromSamples(disks))
+			wantHBAs := sensorsToCache(sensorsFromSamples(hbas))
+			if test.failedNamespace == "disk" {
+				wantDisks = sensorsToCache(lastValidDisks)
+			} else {
+				wantHBAs = sensorsToCache(lastValidHBAs)
+			}
+			if cached.Disks == nil || !reflect.DeepEqual(cached.Disks.Sensors, wantDisks) {
+				t.Fatalf("cached disks = %#v, want %#v", cached.Disks, wantDisks)
+			}
+			if cached.HBAs == nil || !reflect.DeepEqual(cached.HBAs.Sensors, wantHBAs) {
+				t.Fatalf("cached HBAs = %#v, want %#v", cached.HBAs, wantHBAs)
+			}
+
+			prepareFakeHWMonKernel(t, configRoot, deviceRoot, test.failedNamespace, failedReadings)
+			reconfigured, err = publisher.publish(configRoot, deviceRoot, state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reconfigured {
+				t.Fatal("successful retry did not report the deferred reconfiguration")
+			}
+			if publisher.disks.needsReconcile || publisher.hbas.needsReconcile {
+				t.Fatalf("successful retry left reconciliation pending: disks=%v HBA=%v",
+					publisher.disks.needsReconcile, publisher.hbas.needsReconcile)
+			}
+		})
 	}
 }
 
