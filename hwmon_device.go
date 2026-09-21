@@ -20,7 +20,9 @@ const (
 	maxHBAHWMonIDSize  = len("hba:") + maxHBAStableIDSize
 	maxHWMonIDSize     = max(maxDiskHWMonIDSize, maxHBAHWMonIDSize)
 	maxHWMonLabelSize  = 95
-	maxHWMonSensors    = 1024
+	// Guard against corrupt or aberrant inventories creating an unbounded number
+	// of configfs/hwmon objects.
+	maxHWMonSensors = 1024
 )
 
 func publishHWMonFamily(
