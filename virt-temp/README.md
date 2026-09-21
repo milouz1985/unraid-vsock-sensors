@@ -237,6 +237,11 @@ reste disponible sur disque pour le prochain démarrage. Cela ne restaure pas
 les fichiers userspace de l'ancien paquet. Après correction de la cause de
 l'échec, terminer l'installation avec `apt --fix-broken install`.
 
+Le downgrade en place d'une version 3.x vers une version 2.x antérieure à
+l'interface configfs n'est pas supporté. Les anciens scripts de maintenance ne
+savent pas supprimer les objets configfs créés par la version 3.x ; tenter ce
+downgrade peut donc laisser le paquet dans un état half-configured.
+
 Un `apt remove` du paquet half-configured retire toutes les versions DKMS
 `virt-temp` enregistrées (la version cassée et l'ancienne version conservée)
 ainsi que leurs sources de secours, tout en conservant la configuration
