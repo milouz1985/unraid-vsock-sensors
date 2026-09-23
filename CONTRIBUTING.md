@@ -163,7 +163,15 @@ Le récepteur :
 - valide les snapshots ;
 - maintient la topologie hwmon via configfs ;
 - pousse chaque température vers le node `/dev/virt-temp/*` de sa sonde ;
-- persiste uniquement la topologie, jamais les températures.
+- persiste uniquement la topologie, jamais les températures ;
+- publie un événement runtime vide après une réconciliation complète qui
+  modifie la topologie, ainsi qu'au premier snapshot reçu lorsqu'une topologie
+  restaurée depuis le cache est déjà entièrement réconciliée.
+
+Le récepteur ne connaît aucun consommateur et ne communique pas avec le manager
+systemd. Une unité `.path` extérieure au processus transforme l'événement
+runtime en activation de `unraid-vsock-hwmon-topology.service`, auquel les
+consommateurs s'abonnent explicitement.
 
 Le module kernel doit rester simple. La logique métier et la découverte
 matérielle appartiennent autant que possible à l'espace utilisateur.

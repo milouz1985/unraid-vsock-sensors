@@ -244,6 +244,8 @@ Elle construit plusieurs versions du `.deb` et vérifie :
 - échec récupérable de `remove` lorsqu'un processus extérieur conserve ouvert
   le FD d'une sonde supprimée, avec `ENODEV` sur cet ancien FD et restauration
   du service précédemment actif ;
+- conservation d'un abonnement restart créé par l'administrateur après
+  `remove` et `purge` ;
 - `remove` ;
 - `purge`.
 

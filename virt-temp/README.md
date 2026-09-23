@@ -12,6 +12,9 @@ Le paquet Debian installe principalement :
 - `/usr/bin/unraid-vsock-sensors` ;
 - le module DKMS `virt-temp` ;
 - `unraid-vsock-hwmon.service` ;
+- `unraid-vsock-hwmon-topology.path` ;
+- `unraid-vsock-hwmon-topology.service` ;
+- `unraid-vsock-hwmon-restart@.service` ;
 - `/etc/default/unraid-vsock-hwmon`.
 
 Le module expose deux interfaces complémentaires :
@@ -132,28 +135,79 @@ Une création partiellement réussie reste récupérable : l'appel suivant
 réutilise les objets déjà présents, réapplique leur label et recrée les éléments
 manquants.
 
-Les consommateurs qui ne suivent pas correctement les changements hwmon peuvent
-être relancés automatiquement :
+## Notification des changements de topologie
 
-```sh
-UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
+Après une réconciliation complète qui ajoute, retire ou renomme une sonde, le
+récepteur modifie un fichier runtime vide :
+
+```text
+/run/unraid-vsock-sensors/topology-changed
 ```
 
-Le récepteur utilise `systemctl try-restart` et ne démarre jamais une unité
-inactive.
+L'événement est également émis au premier snapshot reçu de la VM lorsqu'une
+topologie a été restaurée depuis le cache, même si aucune sonde n'est ajoutée,
+retirée ou renommée. Il reste différé tant qu'une famille nécessite encore une
+réconciliation.
+
+Ce fichier ne contient ni nom d'unité, ni commande, ni donnée de sonde.
+`unraid-vsock-hwmon-topology.path` transforme sa modification en activation de
+`unraid-vsock-hwmon-topology.service`. Ce oneshot vide constitue le point
+d'abonnement public :
+
+```text
+receiver → topology-changed → topology.path → topology.service → abonnés
+```
+
+Le récepteur ne connaît aucun consommateur. Il ne scanne pas les unités
+installées et ne communique pas avec systemd.
+
+Le fichier d'événement est conservé pendant les arrêts et redémarrages du
+receiver afin que sa suppression ne soit jamais interprétée comme un changement
+de topologie. Il disparaît naturellement avec `/run` au redémarrage de l'hôte,
+ou lors de la purge du paquet après l'arrêt de l'unité `.path`.
+
+Pour redémarrer uniquement s'il est déjà actif un service fictif
+`foo.service`, utiliser son nom simple, sans suffixe de type, comme instance :
+
+```sh
+systemctl enable unraid-vsock-hwmon-restart@foo.service
+```
+
+L'instance `unraid-vsock-hwmon-restart@foo.service` appelle
+`systemctl try-restart --no-block -- foo.service`. Ce template vise les services
+classiques non instanciés. Une unité qui nécessite un nom plus complexe ou une
+autre réaction peut fournir son propre oneshot avec :
+
+```ini
+[Install]
+WantedBy=unraid-vsock-hwmon-topology.service
+```
+
+L'administrateur ou le logiciel concerné choisit ainsi librement un reload,
+rescan, refresh ou restart. Le paquet ne crée aucun abonnement en fonction des
+logiciels détectés.
 
 ## Confinement systemd
 
-Le service reste lancé en `root` pour manipuler configfs et les miscdevices,
-mais son processus principal ne conserve que `CAP_NET_BIND_SERVICE`, nécessaire
-au port VSOCK privilégié `990`. L'unité limite ses familles de sockets à
-`AF_VSOCK` et `AF_UNIX`, rend le système de fichiers globalement accessible en
-lecture seule, masque les répertoires personnels et limite les écritures
-persistantes au répertoire d'état géré par systemd. Les interfaces kernel
-nécessaires restent accessibles sous `/sys/kernel/config/virt_temp` et
-`/dev/virt-temp`, avec un `/tmp` privé. Le `modprobe` exécuté avant le daemon
-reste explicitement privilégié afin que le démarrage à froid continue à charger
-le module.
+Le service reste lancé en `root` parce que l'interface actuelle de `virt-temp`
+réserve à root l'administration complète de configfs et l'écriture des
+miscdevices. Son processus principal ne conserve néanmoins que
+`CAP_NET_BIND_SERVICE`, nécessaire au port VSOCK privilégié `990`.
+
+L'unité limite ses sockets à `AF_VSOCK`. Le receiver ne peut donc ouvrir ni
+socket D-Bus, ni socket privée systemd, et n'invoque jamais `systemctl`. Dans
+`/run`, ses écritures sont limitées au `RuntimeDirectory` que systemd lui
+attribue ; le code n'y modifie que son fichier d'événement. Les abonnements et
+symlinks `.wants` restent définis par root indépendamment du receiver. Un
+receiver compromis peut déclencher répétitivement les abonnés déjà autorisés,
+mais ne peut pas en choisir ou en créer de nouveaux.
+
+`ProtectSystem=strict` rend le reste du système de fichiers non modifiable, les
+répertoires personnels sont masqués et les écritures persistantes sont limitées
+au `StateDirectory`. Les interfaces kernel nécessaires restent accessibles sous
+`/sys/kernel/config/virt_temp` et `/dev/virt-temp`, avec un `/tmp` privé. Le
+`modprobe` exécuté avant le daemon reste explicitement privilégié afin que le
+démarrage à froid continue à charger le module.
 
 Le cache par défaut se trouve dans le répertoire d'état autorisé. Si
 `UNRAID_VSOCK_CACHE` désigne un autre répertoire, celui-ci doit également être
@@ -190,6 +244,19 @@ La configuration existante dans :
 
 est conservée pendant les mises à jour.
 
+`UNRAID_VSOCK_RESTART_UNITS` n'est plus pris en charge. Une ligne existante est
+conservée dans ce fichier mais reste sans effet : le receiver ne contrôle plus
+les unités consommatrices. Après une mise à jour, activer explicitement chaque
+abonnement nécessaire, par exemple :
+
+```sh
+systemctl enable unraid-vsock-hwmon-restart@coolercontrold.service
+```
+
+CoolerControl n'est ici qu'un exemple, pas un consommateur géré par UVSS. Le
+template utilise `try-restart` : lors d'un événement, une unité inactive reste
+inactive.
+
 ## Construction
 
 Depuis la racine du dépôt :
@@ -201,9 +268,9 @@ make hwmon-package
 
 La construction requiert aussi Go 1.27 ou plus récent dans le `PATH`. Le script
 `virt-temp/package.sh` prépare une arborescence source temporaire, puis utilise
-`dpkg-buildpackage` et debhelper 13. `dh_installsystemd` installe et active
-l'unité sans arrêter le service avant une mise à jour. Les scripts de
-maintenance gèrent explicitement DKMS : le `prerm`
+`dpkg-buildpackage` et debhelper 13. `dh_installsystemd` installe et active le
+receiver et l'unité `.path` sans arrêter le service avant une mise à jour. Les
+scripts de maintenance gèrent explicitement DKMS : le `prerm`
 généré par `dh_dkms` retire l'ancienne version dès le début d'une mise à jour,
 ce qui empêcherait de conserver le module opérationnel si la compilation de la
 nouvelle version échouait.
@@ -239,6 +306,7 @@ dist/unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
 dpkg -s unraid-vsock-sensors-hwmon
 dkms status -m virt-temp
 systemctl status unraid-vsock-hwmon.service
+systemctl status unraid-vsock-hwmon-topology.path
 journalctl -u unraid-vsock-hwmon.service -n 100 --no-pager
 find /dev/virt-temp -maxdepth 1 -type c -ls
 sensors
@@ -292,11 +360,20 @@ Conserver la configuration :
 apt remove unraid-vsock-sensors-hwmon
 ```
 
-Tout supprimer :
+Les abonnements créés avec `unraid-vsock-hwmon-restart@.service` appartiennent à
+l'administrateur et sont conservés. Les désactiver explicitement avant la
+désinstallation s'ils ne sont plus nécessaires.
+
+Purger la configuration et le cache :
 
 ```sh
 apt purge unraid-vsock-sensors-hwmon
 ```
+
+La purge retire la configuration et le cache. Elle ne retire spécialement ni
+les abonnements au template UVSS, ni les unités tierces directement abonnées à
+`unraid-vsock-hwmon-topology.service` : ces abonnements explicites restent sous
+la responsabilité de l'administrateur.
 
 ## Tests
 

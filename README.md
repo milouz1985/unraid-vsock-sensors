@@ -18,11 +18,12 @@ utilisables notamment par CoolerControl, fan2go, fancontrol ou lm-sensors.
 VM Unraid                                      Hôte Proxmox
 ┌────────────────────────────┐                 ┌─────────────────────────────┐
 │ emhttpd                    │                 │ unraid-vsock-sensors hwmon  │
-│  └─ disks.ini, devs.ini    │                 │            │                │
-│ /dev/mpt3ctl ou StorCLI    │     AF_VSOCK    │ configfs + /dev/virt-temp/* │
-│            │               │                 │            │                │
-│ unraid-vsock-sensors serve ├────────────────►│            ▼                │
-└────────────────────────────┘                 │ sondes hwmon natives        │
+│  └─ disks.ini, devs.ini    │                 │       │              │      │
+│ /dev/mpt3ctl ou StorCLI    │     AF_VSOCK    │       ▼              ▼      │
+│            │               │                 │ configfs + /dev   événement │
+│ unraid-vsock-sensors serve ├────────────────►│       │           systemd   │
+└────────────────────────────┘                 │       ▼              │      │
+                                               │ sondes hwmon    abonnements │
                                                └─────────────────────────────┘
 ```
 
@@ -131,8 +132,9 @@ apt install "proxmox-headers-$(uname -r)" \
   ./unraid-vsock-sensors-hwmon_X.Y.Z-1_amd64.deb
 ```
 
-Le paquet installe le récepteur, le module DKMS `virt-temp` et le service
-`unraid-vsock-hwmon.service`.
+Le paquet installe le récepteur, le module DKMS `virt-temp`, le service
+`unraid-vsock-hwmon.service` et les unités systemd de notification de
+topologie.
 
 ## Configuration Proxmox
 
@@ -142,7 +144,6 @@ Configuration par défaut :
 UNRAID_VSOCK_CID=3
 UNRAID_VSOCK_PORT=990
 UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
-# UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
 ```
 
 Fichier :
@@ -151,16 +152,73 @@ Fichier :
 /etc/default/unraid-vsock-hwmon
 ```
 
-Pour relancer automatiquement des consommateurs hwmon après une modification
-de topologie :
+### Abonnement aux changements de topologie
 
-```sh
-UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
+Après une réconciliation complète qui modifie la topologie hwmon, le récepteur
+modifie le fichier vide suivant :
+
+```text
+/run/unraid-vsock-sensors/topology-changed
 ```
 
-Seules les unités déjà actives sont relancées.
+L'événement est également émis au premier snapshot reçu de la VM lorsqu'une
+topologie a été restaurée depuis le cache, même si aucune sonde n'est ajoutée,
+retirée ou renommée. Il reste différé tant qu'une famille nécessite encore une
+réconciliation.
 
-Après modification :
+`unraid-vsock-hwmon-topology.path` convertit cet événement en activation de
+`unraid-vsock-hwmon-topology.service`. Le récepteur ne communique pas avec
+systemd et ne connaît aucun consommateur.
+
+Lorsqu'un service doit simplement être redémarré s'il est déjà actif, activer
+une instance du template générique. L'instance est le nom simple du service,
+sans suffixe de type. Pour un service fictif `foo.service` :
+
+```sh
+systemctl enable unraid-vsock-hwmon-restart@foo.service
+```
+
+L'instance `unraid-vsock-hwmon-restart@foo.service` exécute
+`systemctl try-restart --no-block -- foo.service` : un service inactif n'est
+pas démarré. Ce template vise les services classiques non instanciés.
+Désabonnement :
+
+```sh
+systemctl disable unraid-vsock-hwmon-restart@foo.service
+```
+
+Un logiciel peut aussi fournir sa propre unité oneshot pour effectuer un
+reload, rescan ou refresh, puis déclarer :
+
+```ini
+[Unit]
+Description=Refresh foo when the hwmon topology changes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/foo --rescan
+
+[Install]
+WantedBy=unraid-vsock-hwmon-topology.service
+```
+
+L'abonnement est toujours une décision explicite de l'administrateur ou du
+logiciel concerné. Le paquet ne détecte aucun consommateur.
+
+`UNRAID_VSOCK_RESTART_UNITS` n'est plus pris en charge. Une ligne existante dans
+`/etc/default/unraid-vsock-hwmon` est conservée mais reste sans effet : le
+récepteur ne contrôle plus les unités consommatrices. Après une mise à jour,
+activer explicitement chaque abonnement nécessaire, par exemple :
+
+```sh
+systemctl enable unraid-vsock-hwmon-restart@coolercontrold.service
+```
+
+CoolerControl n'est ici qu'un exemple, pas un consommateur géré par UVSS. Le
+template utilise `try-restart` : lors d'un événement, une unité inactive reste
+inactive.
+
+Après une modification du CID, du port ou du chemin de cache :
 
 ```sh
 systemctl restart unraid-vsock-hwmon.service
@@ -400,11 +458,21 @@ Conserver la configuration :
 apt remove unraid-vsock-sensors-hwmon
 ```
 
-Tout supprimer :
+Les abonnements créés avec le template
+`unraid-vsock-hwmon-restart@.service` appartiennent à l'administrateur et sont
+conservés. Les désactiver explicitement avant la désinstallation s'ils ne sont
+plus nécessaires.
+
+Purger la configuration et le cache :
 
 ```sh
 apt purge unraid-vsock-sensors-hwmon
 ```
+
+La purge supprime la configuration et le cache. Elle ne retire spécialement ni
+les abonnements au template UVSS, ni les unités tierces directement abonnées au
+dispatcher de topologie : ces abonnements explicites restent sous la
+responsabilité de l'administrateur.
 
 ## Développement
 

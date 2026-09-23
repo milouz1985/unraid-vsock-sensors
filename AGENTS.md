@@ -26,8 +26,8 @@ Package Go principal :
 - `control_server.go` : API HTTP locale sur socket Unix pour la WebUI ;
 - `hba*.go` : orchestration HBA et backends MPT3/StorCLI ;
 - `publisher.go` : publisher VSOCK persistant ;
-- `hwmon.go` : receiver Proxmox, orchestration des familles et redémarrage des
-  consommateurs ;
+- `hwmon.go` : receiver Proxmox, orchestration des familles, cache et
+  notification des changements de topologie ;
 - `hwmon_topology.go` : modèle et projection de la topologie hwmon ;
 - `hwmon_device.go` : validation, réconciliation configfs et écritures dans les
   miscdevices par sonde ;
@@ -121,11 +121,11 @@ Ne pas les fusionner dans un état générique pour réduire le nombre de lignes
   réconciliée, pas nécessairement cet état kernel intermédiaire.
   `needsReconcile` demande une nouvelle tentative.
 - `reconfigured` signifie qu'une réconciliation complète a réussi et qu'une
-  redécouverte par les consommateurs est pertinente. Un échec partiel conserve
-  le dernier inventaire valide, fixe `needsReconcile=true` et ne déclenche pas
-  leur redémarrage. Un succès dans l'autre famille ne doit pas masquer cet état :
-  le signal global `reconfigured` n'est émis que lorsque toutes les familles
-  sont à nouveau réconciliées.
+  notification de changement de topologie est pertinente. Un échec partiel
+  conserve le dernier inventaire valide, fixe `needsReconcile=true` et ne publie
+  pas cet événement. Un succès dans l'autre famille ne doit pas masquer cet
+  état : le signal global `reconfigured` n'est émis que lorsque toutes les
+  familles sont à nouveau réconciliées.
 - À la création, écrire la température avant le premier `label`, car ce dernier
   rend la sonde visible via hwmon.
 - Ne pas réintroduire `sample`/`configure`/`commit`, de staging ou d'inventaire
