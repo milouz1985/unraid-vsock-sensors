@@ -18,6 +18,9 @@ phase="${1:-}"
 package=unraid-vsock-sensors-hwmon
 debian_revision="${DEBIAN_REVISION:-1}"
 service=unraid-vsock-hwmon.service
+topology_path=unraid-vsock-hwmon-topology.path
+restart_subscription=unraid-vsock-hwmon-restart@foo.service
+restart_subscription_link=/etc/systemd/system/unraid-vsock-hwmon-topology.service.wants/$restart_subscription
 config=/etc/default/unraid-vsock-hwmon
 cache=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
 saved_sources=/var/lib/unraid-vsock-sensors/dkms-sources
@@ -72,16 +75,38 @@ check_installed() {
     [[ "${magic%% *}" == "$kernel" ]]
     [[ -d /sys/kernel/config/virt_temp ]]
     systemctl is-enabled --quiet "$service"
+    systemctl is-enabled --quiet "$topology_path"
     # Wait past RestartSec so a process repeatedly crashing is not a success.
     sleep 3
     systemctl is-active --quiet "$service"
+    systemctl is-active --quiet "$topology_path"
     [[ "$(systemctl show -p NRestarts --value "$service")" == 0 ]]
     [[ "$(systemctl show -p CapabilityBoundingSet --value "$service")" == cap_net_bind_service ]]
     [[ "$(systemctl show -p NoNewPrivileges --value "$service")" == yes ]]
     [[ "$(systemctl show -p ProtectHome --value "$service")" == yes ]]
     [[ "$(systemctl show -p ProtectSystem --value "$service")" == strict ]]
-    [[ "$(systemctl show -p RestrictAddressFamilies --value "$service")" == "AF_UNIX AF_VSOCK" ]]
+    [[ "$(systemctl show -p RestrictAddressFamilies --value "$service")" == AF_VSOCK ]]
+    [[ "$(systemctl show -p RuntimeDirectory --value "$service")" == unraid-vsock-sensors ]]
+    [[ "$(systemctl show -p RuntimeDirectoryPreserve --value "$service")" == yes ]]
 }
+
+check_runtime_directory_lifecycle() {
+    local runtime_dir=/run/unraid-vsock-sensors
+    local event="$runtime_dir/topology-changed"
+
+    : > "$event"
+    systemctl restart "$service"
+    [[ -e "$event" ]] || die "receiver restart removed its topology event"
+
+    systemctl stop "$service"
+    [[ -e "$event" ]] || die "receiver stop removed its topology event"
+
+    systemctl start "$service"
+    systemctl is-active --quiet "$service"
+    systemctl is-active --quiet "$topology_path"
+    [[ -d "$runtime_dir" ]]
+}
+
 install_version() {
     local version="$1" package_file
     package_file="$(package_path "$version")"
@@ -205,6 +230,7 @@ phase_pre_reboot() {
     done
 
     install_version 0.0.0-vmtest.1
+    check_runtime_directory_lifecycle
     timing "package: install"
     printf '\n# VM test: preserve this configuration across upgrades and remove\n' >> "$config"
     cp -- "$config" /var/tmp/uvss-expected-config
@@ -288,6 +314,9 @@ phase_remove_after_failed_upgrade() {
     apt_vm remove -y "$package"
     if systemctl is-active --quiet "$service"; then
         echo "Service is still active after package removal" >&2; exit 1
+    fi
+    if systemctl is-active --quiet "$topology_path"; then
+        echo "Topology path is still active after package removal" >&2; exit 1
     fi
     [[ ! -d /sys/module/virt_temp && ! -d /sys/kernel/config/virt_temp ]]
     [[ ! -e /usr/bin/unraid-vsock-sensors ]]
@@ -425,16 +454,24 @@ PY
     exec {holder_read_fd}<&- 2>/dev/null || true
     holder_read_fd=""
 
+    echo "Checking package removal preserves administrator subscriptions"
+    systemctl enable "$restart_subscription"
+    [[ -L "$restart_subscription_link" ]] || die "Restart subscription was not enabled"
+
     echo "Checking package removal preserves configuration and unloads the module"
     apt_vm remove -y "$package"
     if systemctl is-active --quiet "$service"; then
         echo "Service is still active after package removal" >&2; exit 1
+    fi
+    if systemctl is-active --quiet "$topology_path"; then
+        echo "Topology path is still active after package removal" >&2; exit 1
     fi
     [[ ! -d /sys/module/virt_temp && ! -d /sys/kernel/config/virt_temp ]]
     [[ ! -e /usr/bin/unraid-vsock-sensors ]]
     check_unregistered "$final_version"
     cmp -- "$config" /var/tmp/uvss-expected-config
     [[ -f "$cache" ]]
+    [[ -L "$restart_subscription_link" ]] || die "Package remove deleted an administrator subscription"
     timing "package: remove"
 
     echo "Checking purge removes the preserved configuration"
@@ -445,6 +482,7 @@ PY
         check_unregistered "$version"
     done
     [[ ! -d "$saved_sources" ]]
+    [[ -L "$restart_subscription_link" ]] || die "Package purge deleted an administrator subscription"
     rm -f -- "$checkpoint" /var/tmp/uvss-expected-module.sha256 /var/tmp/uvss-expected-config
     timing "package: purge"
     echo "Package and DKMS lifecycle checks passed on $kernel"

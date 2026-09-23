@@ -96,7 +96,7 @@ func TestPublisherReportsPartialCacheRestore(t *testing.T) {
 	}
 }
 
-func TestConsumerRestartWaitsForPendingCacheReconciliation(t *testing.T) {
+func TestTopologyNotificationWaitsForPendingCacheReconciliation(t *testing.T) {
 	root := t.TempDir()
 	configRoot := filepath.Join(root, "config")
 	deviceRoot := filepath.Join(root, "dev")
@@ -136,22 +136,20 @@ func TestConsumerRestartWaitsForPendingCacheReconciliation(t *testing.T) {
 	if !publisher.reconciliationPending() {
 		t.Fatal("publisher did not report the pending HBA reconciliation")
 	}
-	// A pending reconciliation also abandons any previously scheduled restart
-	// retry when its timer expires.
 	// A decoded snapshot still counts as the first guest snapshot when one of
 	// its collectors reports an error.
-	if publisher.shouldRestartConsumers(reconfigured, true) {
-		t.Fatal("first guest snapshot authorized consumer restart during pending HBA reconciliation")
+	if publisher.shouldNotifyTopologyChanged(reconfigured, true) {
+		t.Fatal("first guest snapshot authorized a topology notification during pending HBA reconciliation")
 	}
-	if publisher.shouldRestartConsumers(true, false) {
-		t.Fatal("reconfigured bypassed the pending-family restart barrier")
+	if publisher.shouldNotifyTopologyChanged(true, false) {
+		t.Fatal("reconfigured bypassed the pending-family notification barrier")
 	}
 
 	initializedPublisher := &hwmonPublisher{disks: hwmonInventory{sensors: []hwmonSensor{
 		{id: "disk:cached", label: "Cached disk"},
 	}}}
-	if !initializedPublisher.shouldRestartConsumers(false, true) {
-		t.Fatal("first guest snapshot did not restart consumers after a complete cache restore")
+	if !initializedPublisher.shouldNotifyTopologyChanged(false, true) {
+		t.Fatal("first guest snapshot did not announce a complete cache restore")
 	}
 
 	hbas := []sensors.HBA{{ID: "cached", Model: "Cached HBA", Temp: 50}}
@@ -167,8 +165,8 @@ func TestConsumerRestartWaitsForPendingCacheReconciliation(t *testing.T) {
 		t.Fatalf("successful HBA retry: reconfigured=%v pending=%v, want true/false",
 			reconfigured, publisher.reconciliationPending())
 	}
-	if !publisher.shouldRestartConsumers(reconfigured, false) {
-		t.Fatal("successful HBA reconciliation did not rearm consumer restart")
+	if !publisher.shouldNotifyTopologyChanged(reconfigured, false) {
+		t.Fatal("successful HBA reconciliation did not authorize a topology notification")
 	}
 }
 
@@ -261,7 +259,7 @@ func TestPublisherDefersReconfigurationWhileFamilyNeedsReconcile(t *testing.T) {
 
 			reconfigured, err := publisher.publish(configRoot, deviceRoot, state)
 			if reconfigured {
-				t.Fatal("partial reconciliation authorized consumer restart")
+				t.Fatal("partial reconciliation authorized a topology notification")
 			}
 			if err == nil || !strings.Contains(err.Error(), test.failedErrorLabel) {
 				t.Fatalf("publish error = %v, want %s reconciliation failure", err, test.failedNamespace)

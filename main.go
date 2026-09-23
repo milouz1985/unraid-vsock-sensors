@@ -71,8 +71,6 @@ Hwmon options:
   --port PORT               AF_VSOCK port (default: 990)
   --cache PATH              Persistent hwmon inventory cache
                             (default: /var/lib/unraid-vsock-sensors/hwmon-inventory.json)
-  --restart-units UNITS     Comma-separated systemd units restarted after a
-                            topology change
 
 Examples:
   %[1]s serve --port 990

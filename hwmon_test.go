@@ -3,44 +3,12 @@
 package main
 
 import (
-	"reflect"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestParseRestartUnits(t *testing.T) {
-	units, err := parseRestartUnits("coolercontrold.service, fan2go.service,coolercontrold.service")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"coolercontrold.service", "fan2go.service"}; !reflect.DeepEqual(units, want) {
-		t.Fatalf("units = %#v, want %#v", units, want)
-	}
-	for _, value := range []string{
-		"--no-block",
-		"coolercontrold*",
-		"fan?go.service",
-		"[cf]an.service",
-	} {
-		t.Run("reject "+value, func(t *testing.T) {
-			if _, err := parseRestartUnits(value); err == nil {
-				t.Fatalf("invalid unit %q accepted", value)
-			}
-		})
-	}
-	for _, value := range []string{
-		"unraid-vsock-hwmon",
-		"unraid-vsock-hwmon.service",
-	} {
-		t.Run("reject self "+value, func(t *testing.T) {
-			if _, err := parseRestartUnits(value); err == nil || !strings.Contains(err.Error(), "cannot restart itself") {
-				t.Fatalf("self-restart unit %q returned %v", value, err)
-			}
-		})
-	}
-}
-
-func TestShouldRestartConsumers(t *testing.T) {
+func TestShouldNotifyTopologyChanged(t *testing.T) {
 	tests := []struct {
 		name               string
 		reconfigured       bool
@@ -93,10 +61,29 @@ func TestShouldRestartConsumers(t *testing.T) {
 				// A known, authoritatively empty family is initialized; nil is not.
 				publisher.disks.sensors = []hwmonSensor{}
 			}
-			got := publisher.shouldRestartConsumers(test.reconfigured, test.firstGuestSnapshot)
+			got := publisher.shouldNotifyTopologyChanged(test.reconfigured, test.firstGuestSnapshot)
 			if got != test.want {
-				t.Fatalf("shouldRestartConsumers() = %v, want %v", got, test.want)
+				t.Fatalf("shouldNotifyTopologyChanged() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestNotifyTopologyChanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "topology-changed")
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := notifyTopologyChanged(path); err != nil {
+			t.Fatalf("notification %d: %v", attempt, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat notification %d: %v", attempt, err)
+		}
+		if info.Size() != 0 {
+			t.Fatalf("notification %d size = %d, want an empty event file", attempt, info.Size())
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("notification %d mode = %o, want 600", attempt, got)
+		}
 	}
 }

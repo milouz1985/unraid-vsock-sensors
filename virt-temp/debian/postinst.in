@@ -4,6 +4,7 @@ set -e
 module="virt-temp"
 version="@VERSION@"
 service="unraid-vsock-hwmon.service"
+topology_path="unraid-vsock-hwmon-topology.path"
 kernel_release="$(uname -r)"
 config="/etc/default/unraid-vsock-hwmon"
 default_config="/usr/share/unraid-vsock-sensors-hwmon/unraid-vsock-hwmon.default"
@@ -72,6 +73,7 @@ if [ "$1" = "configure" ]; then
     if systemctl is-active --quiet "$service"; then
         was_active=1
     fi
+    systemctl stop "$topology_path" 2>/dev/null || true
     systemctl stop "$service" 2>/dev/null || true
     if grep -q '^virt_temp ' /proc/modules; then
         clear_virt_temp_config
