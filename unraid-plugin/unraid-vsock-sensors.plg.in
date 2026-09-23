@@ -23,11 +23,12 @@ temperatures over AF_VSOCK to Proxmox as native hwmon sensors.
 <CHANGES>
 ### 3.0.0 - 2026-09-21
 
-- Replace the shared /dev/virt-temp text protocol with a configfs topology and one write-only /dev/virt-temp/&lt;hex ID&gt; device per sensor.
-- Reconcile disk and HBA sensors incrementally so unchanged devices keep stable hwmon identities, while module reloads and partial updates are recovered from the last valid topology.
-- Validate complete families before changing the kernel topology, cap each family at 1,024 sensors, reject empty IDs and preserve the previous topology after invalid snapshots or reconciliation failures.
-- Initialize temperatures before exposing new hwmon sensors, preserve stale failsafe behavior for unavailable readings and sanitize fallback labels.
-- Update DKMS and systemd lifecycle handling, documentation and VM coverage for configfs, per-sensor devices, reload recovery and removal with open device descriptors.
+- Replace the legacy virt-temp control interface with per-sensor configfs and miscdevice endpoints.
+- Rework Proxmox hwmon reconciliation to update sensor topology incrementally and preserve restored topology until the Unraid VM reconnects.
+- Decouple hwmon topology notifications from systemd consumers.
+- BREAKING: UNRAID_VSOCK_RESTART_UNITS is no longer supported. Existing users must explicitly enable unraid-vsock-hwmon-restart@SERVICE.service for each consumer that should be restarted after a topology change.
+- Harden the Proxmox receiver systemd service and restrict it to AF_VSOCK.
+- Improve DKMS, systemd lifecycle and package upgrade/remove handling.
 
 ### 2.1.0 - 2026-09-19
 
