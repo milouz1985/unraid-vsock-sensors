@@ -142,6 +142,35 @@ UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
 Le récepteur utilise `systemctl try-restart` et ne démarre jamais une unité
 inactive.
 
+## Confinement systemd
+
+Le service reste lancé en `root` pour manipuler configfs et les miscdevices,
+mais son processus principal ne conserve que `CAP_NET_BIND_SERVICE`, nécessaire
+au port VSOCK privilégié `990`. L'unité limite ses familles de sockets à
+`AF_VSOCK` et `AF_UNIX`, rend le système de fichiers globalement accessible en
+lecture seule, masque les répertoires personnels et limite les écritures
+persistantes au répertoire d'état géré par systemd. Les interfaces kernel
+nécessaires restent accessibles sous `/sys/kernel/config/virt_temp` et
+`/dev/virt-temp`, avec un `/tmp` privé. Le `modprobe` exécuté avant le daemon
+reste explicitement privilégié afin que le démarrage à froid continue à charger
+le module.
+
+Le cache par défaut se trouve dans le répertoire d'état autorisé. Si
+`UNRAID_VSOCK_CACHE` désigne un autre répertoire, celui-ci doit également être
+autorisé dans un drop-in :
+
+```ini
+[Service]
+ReadWritePaths=/chemin/du/cache
+```
+
+Puis appliquer le changement :
+
+```sh
+systemctl daemon-reload
+systemctl restart unraid-vsock-hwmon.service
+```
+
 ## Installation
 
 ```sh

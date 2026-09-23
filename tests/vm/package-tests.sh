@@ -76,6 +76,11 @@ check_installed() {
     sleep 3
     systemctl is-active --quiet "$service"
     [[ "$(systemctl show -p NRestarts --value "$service")" == 0 ]]
+    [[ "$(systemctl show -p CapabilityBoundingSet --value "$service")" == cap_net_bind_service ]]
+    [[ "$(systemctl show -p NoNewPrivileges --value "$service")" == yes ]]
+    [[ "$(systemctl show -p ProtectHome --value "$service")" == yes ]]
+    [[ "$(systemctl show -p ProtectSystem --value "$service")" == strict ]]
+    [[ "$(systemctl show -p RestrictAddressFamilies --value "$service")" == "AF_UNIX AF_VSOCK" ]]
 }
 install_version() {
     local version="$1" package_file
