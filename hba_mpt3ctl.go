@@ -51,19 +51,33 @@ import (
 )
 
 const (
-	mpt3ctlPath               = "/dev/mpt3ctl"
-	mpt3CommandIOCTL          = uintptr(0xc0484c14)
-	mpt3IOCInfoIOCTL          = uintptr(0xc05c4c11)
-	mpt3CommandSize           = 96
-	mpt3ReplyPointerOffset    = 16
-	mpt3DataInPointerOffset   = 24
-	mpt3MaxReplyBytesOffset   = 48
-	mpt3DataInSizeOffset      = 52
-	mpt3SGEOffset             = 64
-	mpt3RequestOffset         = 68
-	mpt3ReplyBufferSize       = 128
-	mpt3MaxIOC                = 31
-	mpt3FirmwareTimeout       = 10
+	mpt3ctlPath         = "/dev/mpt3ctl"
+	mpt3CommandIOCTL    = uintptr(0xc0484c14)
+	mpt3IOCInfoIOCTL    = uintptr(0xc05c4c11)
+	mpt3MaxIOC          = 31
+	mpt3FirmwareTimeout = 10
+)
+
+// MPT3COMMAND layout (96 bytes), from struct mpt3_cmd in mpt3sas_ctl.h.
+// Written at fixed byte offsets because Go struct alignment would not match
+// the kernel's packed ABI. Offsets not listed are zero and unused.
+const (
+	mpt3CommandSize          = 96
+	mpt3CommandIOCOffset     = 0  // uint32 IOC number
+	mpt3CommandLenOffset     = 8  // uint32 total length of data in/out buffers
+	mpt3CommandTimeoutOffset = 12 // uint32 firmware timeout in seconds
+	mpt3CommandReplyPtrOff   = 16 // uint64 pointer to reply buffer
+	mpt3CommandDataInPtrOff  = 24 // uint64 pointer to data-in buffer
+	mpt3CommandMaxReplyOff   = 48 // uint32 maximum reply size
+	mpt3CommandDataInSizeOff = 52 // uint32 data-in buffer size
+	mpt3CommandSGEOffset     = 64 // uint32 number of SGEs (7 = fixed, no SGE list)
+	mpt3CommandRequestOffset = 68 // 28-byte MPI request frame
+)
+
+const mpt3ReplyBufferSize = 128
+
+// MPI CONFIG function and page identifiers (mpi2_cnfg.h).
+const (
 	mpi2FunctionConfig        = 0x04
 	mpi2ConfigPageHeader      = 0x00
 	mpi2ConfigPageReadCurrent = 0x01
@@ -74,17 +88,248 @@ const (
 	mpi2Manufacturing0Version = 0x00
 	mpi2Manufacturing5Version = 0x03
 	mpi2IOUnit7Version        = 0x05
-	mpi2IOCStatusMask         = 0x7fff
-	temperatureNotPresent     = 0x00
-	temperatureFahrenheit     = 0x01
-	temperatureCelsius        = 0x02
-	mpi2ConfigReplySize       = 0x18
-	mpi2ConfigReplyDWords     = mpi2ConfigReplySize / 4
+)
+
+// IO Unit Page 7 temperature unit encoding (mpt3sas_hwmon.c).
+const (
+	temperatureNotPresent = 0x00
+	temperatureFahrenheit = 0x01
+	temperatureCelsius    = 0x02
+)
+
+const (
+	mpi2ConfigReplySize   = 0x18
+	mpi2ConfigReplyDWords = mpi2ConfigReplySize / 4
+	mpi2IOCStatusMask     = 0x7fff
 )
 
 type mpt3Command [mpt3CommandSize]byte
 
+func mpt3ConfigRequest(action, pageType, pageNumber, pageVersion byte, header []byte) [28]byte {
+	var request [28]byte
+	request[0], request[3] = action, mpi2FunctionConfig
+	if header == nil {
+		// Like the in-kernel mpt3sas helpers, PAGE_HEADER requests include the
+		// version expected by the driver instead of relying on a zero-filled
+		// PageVersion. This matters for pages whose declared version is nonzero.
+		request[20], request[22], request[23] = pageVersion, pageNumber, pageType
+	} else {
+		// PAGE_READ_CURRENT must use the complete header returned by the
+		// preceding PAGE_HEADER request, including the firmware's PageVersion
+		// and PageLength.
+		copy(request[20:24], header)
+	}
+	return request
+}
+
+func makeMPT3Command(ioc int, request [28]byte, dataSize int, replyPointer, dataInPointer uintptr) mpt3Command {
+	var command mpt3Command
+	binary.LittleEndian.PutUint32(command[mpt3CommandIOCOffset:], uint32(ioc))
+	binary.LittleEndian.PutUint32(command[mpt3CommandLenOffset:], uint32(max(dataSize, mpt3ReplyBufferSize)))
+	binary.LittleEndian.PutUint32(command[mpt3CommandTimeoutOffset:], mpt3FirmwareTimeout)
+	binary.LittleEndian.PutUint64(command[mpt3CommandReplyPtrOff:], uint64(replyPointer))
+	binary.LittleEndian.PutUint64(command[mpt3CommandDataInPtrOff:], uint64(dataInPointer))
+	binary.LittleEndian.PutUint32(command[mpt3CommandMaxReplyOff:], mpt3ReplyBufferSize)
+	binary.LittleEndian.PutUint32(command[mpt3CommandDataInSizeOff:], uint32(dataSize))
+	binary.LittleEndian.PutUint32(command[mpt3CommandSGEOffset:], 7)
+	copy(command[mpt3CommandRequestOffset:], request[:])
+	return command
+}
+
 type mpt3Device struct{ file *os.File }
+
+func openMPT3() (*mpt3Device, error) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		return nil, fmt.Errorf("%w: mpt3ctl requires linux/amd64", errHBABackendUnavailable)
+	}
+	file, err := os.OpenFile(mpt3ctlPath, os.O_RDWR, 0)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s does not exist", errHBABackendUnavailable, mpt3ctlPath)
+		}
+		return nil, fmt.Errorf("open %s: %w", mpt3ctlPath, err)
+	}
+	return &mpt3Device{file: file}, nil
+}
+
+func mpt3IOCTL(fd, request uintptr, argument unsafe.Pointer) error {
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, fd, request, uintptr(argument))
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func (d *mpt3Device) iocInfo(ioc int) ([]byte, error) {
+	const iocInfoSize = 92
+	buffer := make([]byte, iocInfoSize)
+	binary.LittleEndian.PutUint32(buffer[0:4], uint32(ioc))
+	binary.LittleEndian.PutUint32(buffer[8:12], uint32(len(buffer)))
+	if err := mpt3IOCTL(d.file.Fd(), mpt3IOCInfoIOCTL, unsafe.Pointer(&buffer[0])); err != nil {
+		return nil, err
+	}
+	return buffer, nil
+}
+
+func (d *mpt3Device) command(ioc int, request [28]byte, dataSize int) ([]byte, []byte, error) {
+	reply := make([]byte, mpt3ReplyBufferSize)
+	data := make([]byte, dataSize)
+	dataInPointer := uintptr(0)
+	if dataSize > 0 {
+		dataInPointer = uintptr(unsafe.Pointer(&data[0]))
+	}
+	command := makeMPT3Command(ioc, request, dataSize,
+		uintptr(unsafe.Pointer(&reply[0])), dataInPointer)
+	err := mpt3IOCTL(d.file.Fd(), mpt3CommandIOCTL, unsafe.Pointer(&command[0]))
+	// The command encodes reply and data addresses as integer ABI fields. Keep
+	// them reachable until the ioctl returns, so the GC cannot reclaim the
+	// backing allocations before the kernel has finished with them.
+	runtime.KeepAlive(command)
+	runtime.KeepAlive(reply)
+	runtime.KeepAlive(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	return reply, data, nil
+}
+
+// validateMPT3ConfigReply checks that an MPI CONFIG reply matches the action,
+// page type, and page number the driver asked for. The kernel does not return
+// a byte count, so this also rejects a zero-filled reply buffer via the MPI
+// MsgLength field (in 32-bit words) at offset 2.
+func validateMPT3ConfigReply(reply []byte, action, pageType, pageNumber byte) error {
+	if len(reply) < mpi2ConfigReplySize {
+		return fmt.Errorf("short MPI CONFIG reply: got %d bytes, need %d", len(reply), mpi2ConfigReplySize)
+	}
+	messageBytes := int(reply[0x02]) * 4
+	if messageBytes < mpi2ConfigReplySize || messageBytes > len(reply) {
+		return fmt.Errorf("invalid MPI CONFIG MsgLength: %d bytes", messageBytes)
+	}
+	if reply[0x03] != mpi2FunctionConfig {
+		return fmt.Errorf("unexpected MPI function 0x%02x", reply[0x03])
+	}
+	if reply[0x00] != action {
+		return fmt.Errorf("unexpected MPI CONFIG action 0x%02x, want 0x%02x", reply[0x00], action)
+	}
+	status := binary.LittleEndian.Uint16(reply[0x0e:0x10]) & mpi2IOCStatusMask
+	if status != 0 {
+		logInfo := binary.LittleEndian.Uint32(reply[0x10:0x14])
+		return fmt.Errorf("MPI CONFIG returned IOCStatus 0x%04x, IOCLogInfo 0x%08x", status, logInfo)
+	}
+	if reply[0x17]&0x0f != pageType&0x0f {
+		return fmt.Errorf("unexpected MPI CONFIG page type 0x%02x, want 0x%02x", reply[0x17]&0x0f, pageType&0x0f)
+	}
+	if reply[0x16] != pageNumber {
+		return fmt.Errorf("unexpected MPI CONFIG page number %d, want %d", reply[0x16], pageNumber)
+	}
+	return nil
+}
+
+// readConfigPage performs the two-step MPI CONFIG access pattern from
+// mpt3sas_config.c: PAGE_HEADER to get the page's version and length, then
+// PAGE_READ_CURRENT to read the page using that header.
+func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber, pageVersion byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	reply, _, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageHeader, pageType, pageNumber, pageVersion, nil), 0)
+	if err != nil {
+		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
+	}
+	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageHeader, pageType, pageNumber); err != nil {
+		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
+	}
+	header := reply[0x14:0x18]
+	pageSize := int(header[1]) * 4
+	if pageSize == 0 {
+		return nil, fmt.Errorf("CONFIG type 0x%02x page %d has zero length", pageType, pageNumber)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, pageType, pageNumber, pageVersion, header), pageSize)
+	if err != nil {
+		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
+	}
+	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageReadCurrent, pageType, pageNumber); err != nil {
+		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
+	}
+	return page, nil
+}
+
+func parseMPT3PCIAddress(info []byte) string {
+	const minimum = 92
+	if len(info) < minimum {
+		return ""
+	}
+	pci, segment := binary.LittleEndian.Uint32(info[84:88]), binary.LittleEndian.Uint32(info[88:92])
+	device, function, bus := pci&0x1f, (pci>>5)&0x07, pci>>8
+	if segment > 0xffff || bus > 0xff {
+		return ""
+	}
+	return fmt.Sprintf("%04x:%02x:%02x.%x", segment, bus, device, function)
+}
+
+func parseMPT3Model(page []byte) string {
+	const minimum = 0x2c
+	if len(page) < minimum {
+		return ""
+	}
+	if boardName := cleanMPT3ASCII(page[0x1c:0x2c]); boardName != "" {
+		return boardName
+	}
+	return cleanMPT3ASCII(page[0x04:0x14])
+}
+
+func cleanMPT3ASCII(value []byte) string {
+	if index := strings.IndexByte(string(value), 0); index >= 0 {
+		value = value[:index]
+	}
+	value = []byte(strings.TrimRight(string(value), "\xff \t\r\n"))
+	for _, character := range value {
+		if character < 32 || character >= 127 {
+			return ""
+		}
+	}
+	return strings.TrimSpace(string(value))
+}
+
+func parseMPT3SASAddress(page []byte) string {
+	const minimum = 0x10
+	if len(page) < minimum {
+		return ""
+	}
+	for phy := 0; phy < int(page[4]); phy++ {
+		offset := 0x10 + phy*16
+		if offset+8 > len(page) {
+			break
+		}
+		if address := binary.LittleEndian.Uint64(page[offset : offset+8]); address != 0 {
+			return fmt.Sprintf("%016x", address)
+		}
+	}
+	return ""
+}
+
+func parseMPT3Temperature(page []byte) (float64, error) {
+	const minimum = 0x13
+	if len(page) < minimum {
+		return 0, errors.New("IO Unit Page 7 is shorter than the IOC temperature fields")
+	}
+	raw := int16(binary.LittleEndian.Uint16(page[0x10:0x12]))
+	var temperature float64
+	switch page[0x12] {
+	case temperatureCelsius:
+		temperature = float64(raw)
+	case temperatureFahrenheit:
+		temperature = (float64(raw) - 32) * 5 / 9
+	case temperatureNotPresent:
+		return 0, errors.New("IOC temperature sensor is not present")
+	default:
+		return 0, fmt.Errorf("unsupported IOC temperature unit 0x%02x", page[0x12])
+	}
+	return temperature, nil
+}
 
 type mpt3Reader struct {
 	// Manufacturing Page 5 is optional for a temperature collection. Remember a
@@ -124,183 +369,78 @@ func (r *mpt3Reader) retainSASAddressesFor(presentPCI map[string]struct{}) {
 	}
 }
 
-func openMPT3() (*mpt3Device, error) {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		return nil, fmt.Errorf("%w: mpt3ctl requires linux/amd64", errHBABackendUnavailable)
-	}
-	file, err := os.OpenFile(mpt3ctlPath, os.O_RDWR, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w: %s does not exist", errHBABackendUnavailable, mpt3ctlPath)
-		}
-		return nil, fmt.Errorf("open %s: %w", mpt3ctlPath, err)
-	}
-	return &mpt3Device{file: file}, nil
+type discoveredController struct {
+	ioc         int
+	pci         string
+	model       string
+	sasAddress  string
+	page5Failed bool
 }
 
-func mpt3IOCTL(fd, request uintptr, argument unsafe.Pointer) error {
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, fd, request, uintptr(argument))
-	if errno != 0 {
-		return errno
-	}
-	return nil
-}
-
-func (d *mpt3Device) iocInfo(ioc int) ([]byte, error) {
-	buffer := make([]byte, 92)
-	binary.LittleEndian.PutUint32(buffer[0:4], uint32(ioc))
-	binary.LittleEndian.PutUint32(buffer[8:12], uint32(len(buffer)))
-	if err := mpt3IOCTL(d.file.Fd(), mpt3IOCInfoIOCTL, unsafe.Pointer(&buffer[0])); err != nil {
-		return nil, err
-	}
-	return buffer, nil
-}
-
-func mpt3ConfigRequest(action, pageType, pageNumber, pageVersion byte, header []byte) [28]byte {
-	var request [28]byte
-	request[0], request[3] = action, mpi2FunctionConfig
-	if header == nil {
-		// Like the in-kernel mpt3sas helpers, PAGE_HEADER requests include the
-		// version expected by the driver instead of relying on a zero-filled
-		// PageVersion. This matters for pages whose declared version is nonzero.
-		request[20], request[22], request[23] = pageVersion, pageNumber, pageType
-	} else {
-		// PAGE_READ_CURRENT must use the complete header returned by the
-		// preceding PAGE_HEADER request, including the firmware's PageVersion
-		// and PageLength.
-		copy(request[20:24], header)
-	}
-	return request
-}
-
-func makeMPT3Command(ioc int, request [28]byte, dataSize int, replyPointer, dataInPointer uintptr) mpt3Command {
-	var command mpt3Command
-	binary.LittleEndian.PutUint32(command[0:4], uint32(ioc))
-	binary.LittleEndian.PutUint32(command[8:12], uint32(max(dataSize, mpt3ReplyBufferSize)))
-	binary.LittleEndian.PutUint32(command[12:16], mpt3FirmwareTimeout)
-	binary.LittleEndian.PutUint64(command[mpt3ReplyPointerOffset:], uint64(replyPointer))
-	binary.LittleEndian.PutUint64(command[mpt3DataInPointerOffset:], uint64(dataInPointer))
-	binary.LittleEndian.PutUint32(command[mpt3MaxReplyBytesOffset:], mpt3ReplyBufferSize)
-	binary.LittleEndian.PutUint32(command[mpt3DataInSizeOffset:], uint32(dataSize))
-	binary.LittleEndian.PutUint32(command[mpt3SGEOffset:], 7)
-	copy(command[mpt3RequestOffset:], request[:])
-	return command
-}
-
-func (d *mpt3Device) command(ioc int, request [28]byte, dataSize int) ([]byte, []byte, error) {
-	reply, data := make([]byte, mpt3ReplyBufferSize), make([]byte, dataSize)
-	dataInPointer := uintptr(0)
-	if dataSize > 0 {
-		dataInPointer = uintptr(unsafe.Pointer(&data[0]))
-	}
-	command := makeMPT3Command(ioc, request, dataSize,
-		uintptr(unsafe.Pointer(&reply[0])), dataInPointer)
-	err := mpt3IOCTL(d.file.Fd(), mpt3CommandIOCTL, unsafe.Pointer(&command[0]))
-	// The command stores userspace addresses as ABI integer fields. Keep their
-	// backing allocations live until the kernel has finished the ioctl, even on
-	// its error path.
-	runtime.KeepAlive(command)
-	runtime.KeepAlive(reply)
-	runtime.KeepAlive(data)
-	if err != nil {
-		return nil, nil, err
-	}
-	return reply, data, nil
-}
-
-func validateMPT3ConfigReply(reply []byte, action, pageType, pageNumber byte) error {
-	if len(reply) < mpi2ConfigReplySize {
-		return fmt.Errorf("short MPI CONFIG reply: got %d bytes, need %d", len(reply), mpi2ConfigReplySize)
-	}
-	// The ioctl does not return a byte count, but MPI replies carry their own
-	// length in 32-bit words. This also rejects a zero-filled reply buffer.
-	messageBytes := int(reply[0x02]) * 4
-	if messageBytes < mpi2ConfigReplySize || messageBytes > len(reply) {
-		return fmt.Errorf("invalid MPI CONFIG MsgLength: %d bytes", messageBytes)
-	}
-	if reply[0x03] != mpi2FunctionConfig {
-		return fmt.Errorf("unexpected MPI function 0x%02x", reply[0x03])
-	}
-	if reply[0x00] != action {
-		return fmt.Errorf("unexpected MPI CONFIG action 0x%02x, want 0x%02x", reply[0x00], action)
-	}
-	status := binary.LittleEndian.Uint16(reply[0x0e:0x10]) & mpi2IOCStatusMask
-	if status != 0 {
-		logInfo := binary.LittleEndian.Uint32(reply[0x10:0x14])
-		return fmt.Errorf("MPI CONFIG returned IOCStatus 0x%04x, IOCLogInfo 0x%08x", status, logInfo)
-	}
-	if reply[0x17]&0x0f != pageType&0x0f {
-		return fmt.Errorf("unexpected MPI CONFIG page type 0x%02x, want 0x%02x", reply[0x17]&0x0f, pageType&0x0f)
-	}
-	if reply[0x16] != pageNumber {
-		return fmt.Errorf("unexpected MPI CONFIG page number %d, want %d", reply[0x16], pageNumber)
-	}
-	return nil
-}
-
-func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber, pageVersion byte) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	reply, _, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageHeader, pageType, pageNumber, pageVersion, nil), 0)
-	if err != nil {
-		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
-	}
-	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageHeader, pageType, pageNumber); err != nil {
-		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
-	}
-	header := reply[0x14:0x18]
-	pageSize := int(header[1]) * 4
-	if pageSize == 0 {
-		return nil, fmt.Errorf("CONFIG type 0x%02x page %d has zero length", pageType, pageNumber)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, pageType, pageNumber, pageVersion, header), pageSize)
-	if err != nil {
-		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
-	}
-	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageReadCurrent, pageType, pageNumber); err != nil {
-		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
-	}
-	return page, nil
-}
-
+// collect scans the IOC range, reads the identity and temperature pages for
+// each discovered controller, and returns the readings sorted by stable ID.
+// A collection that ends with zero readings returns errNoHBA.
 func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	device, err := openMPT3()
 	if err != nil {
 		return nil, err
 	}
 	defer device.file.Close()
-	readings, identities := make([]sensors.HBA, 0), make(map[string]int)
-	presentPCI := make(map[string]struct{})
-	// IOC IDs may contain holes, so scan the configured range. Missing IOCINFO
-	// calls do not query firmware; only discovered controllers trigger CONFIG reads.
+
+	controllers, err := r.discoverControllers(ctx, device)
+	if err != nil {
+		return nil, err
+	}
+
+	readings := make([]sensors.HBA, 0, len(controllers))
+	for _, c := range controllers {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		reading, err := r.readController(ctx, device, c)
+		if err != nil {
+			return nil, err
+		}
+		readings = append(readings, reading)
+	}
+
+	// Only prune after the complete IOC range was scanned successfully. An
+	// aborted collection cannot prove that a cached controller disappeared.
+	present := make(map[string]struct{}, len(controllers))
+	for _, c := range controllers {
+		if c.pci != "" {
+			present[c.pci] = struct{}{}
+		}
+	}
+	r.retainSASAddressesFor(present)
+	if len(readings) == 0 {
+		return nil, errNoHBA
+	}
+	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
+	return readings, nil
+}
+
+func (r *mpt3Reader) discoverControllers(ctx context.Context, device *mpt3Device) ([]discoveredController, error) {
+	identities := make(map[string]int)
+	controllers := make([]discoveredController, 0, mpt3MaxIOC+1)
 	for ioc := 0; ioc <= mpt3MaxIOC; ioc++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		info, err := device.iocInfo(ioc)
 		if err != nil {
+			// ENODEV/EINVAL/ENXIO are the expected "no controller at this IOC"
+			// errors; anything else is a real transport failure.
 			if errors.Is(err, unix.ENODEV) || errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENXIO) {
 				continue
 			}
 			return nil, fmt.Errorf("mpt3ctl IOC %d discovery: %w", ioc, err)
 		}
-		pci, model, sasAddress := parseMPT3PCIAddress(info), "", ""
-		if pci != "" {
-			presentPCI[pci] = struct{}{}
-		}
-		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version); pageErr == nil {
-			model = parseMPT3Model(page)
-		}
-		page5Failed := false
-		if page, pageErr := device.readConfigPage(ctx, ioc, mpi2PageTypeManufacturing, 5, mpi2Manufacturing5Version); pageErr == nil {
-			sasAddress = parseMPT3SASAddress(page)
-		} else {
-			page5Failed = true
-		}
+		pci := parseMPT3PCIAddress(info)
+
+		model, _ := r.optionalPage(ctx, device, ioc, mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version, parseMPT3Model)
+		sasAddress, page5Failed := r.optionalPage(ctx, device, ioc, mpi2PageTypeManufacturing, 5, mpi2Manufacturing5Version, parseMPT3SASAddress)
+
 		id := r.stableID(pci, sasAddress, page5Failed)
 		if id == "" {
 			return nil, fmt.Errorf("mpt3ctl IOC %d has no stable identity", ioc)
@@ -309,99 +449,39 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 			return nil, fmt.Errorf("mpt3ctl IOCs %d and %d have duplicate identity %q", previous, ioc, id)
 		}
 		identities[id] = ioc
-		page, err := device.readConfigPage(ctx, ioc, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version)
-		if err != nil {
-			return nil, fmt.Errorf("mpt3ctl IOC %d temperature: %w", ioc, err)
-		}
-		temperature, err := parseMPT3Temperature(page)
-		if err != nil {
-			return nil, fmt.Errorf("mpt3ctl IOC %d temperature: %w", ioc, err)
-		}
-		readings = append(readings, sensors.HBA{ID: id, Model: model, PCIAddress: pci, Temp: temperature})
+
+		controllers = append(controllers, discoveredController{
+			ioc: ioc, pci: pci, model: model,
+			sasAddress: sasAddress, page5Failed: page5Failed,
+		})
 	}
-	// Only prune after the complete IOC range was scanned successfully. An
-	// aborted collection cannot prove that a cached controller disappeared.
-	r.retainSASAddressesFor(presentPCI)
-	if len(readings) == 0 {
-		return nil, errNoHBA
-	}
-	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
-	return readings, nil
+	return controllers, nil
 }
 
-func parseMPT3PCIAddress(info []byte) string {
-	if len(info) < 92 {
-		return ""
+func (r *mpt3Reader) readController(ctx context.Context, device *mpt3Device, c discoveredController) (sensors.HBA, error) {
+	page, err := device.readConfigPage(ctx, c.ioc, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version)
+	if err != nil {
+		return sensors.HBA{}, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
 	}
-	pci, segment := binary.LittleEndian.Uint32(info[84:88]), binary.LittleEndian.Uint32(info[88:92])
-	device, function, bus := pci&0x1f, (pci>>5)&0x07, pci>>8
-	if segment > 0xffff || bus > 0xff {
-		return ""
+	temperature, err := parseMPT3Temperature(page)
+	if err != nil {
+		return sensors.HBA{}, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
 	}
-	return fmt.Sprintf("%04x:%02x:%02x.%x", segment, bus, device, function)
+	return sensors.HBA{
+		ID:         r.stableID(c.pci, c.sasAddress, c.page5Failed),
+		Model:      c.model,
+		PCIAddress: c.pci,
+		Temp:       temperature,
+	}, nil
 }
 
-func parseMPT3Model(page []byte) string {
-	if len(page) < 0x2c {
-		return ""
+// optionalPage reads one configuration page and runs parser on it. A page
+// failure is not fatal: it returns ("", true) so the caller can fall back to
+// a cached identity.
+func (r *mpt3Reader) optionalPage(ctx context.Context, device *mpt3Device, ioc int, pageType, pageNumber, pageVersion byte, parser func([]byte) string) (string, bool) {
+	page, err := device.readConfigPage(ctx, ioc, pageType, pageNumber, pageVersion)
+	if err != nil {
+		return "", true
 	}
-	// Manufacturing Page 0 distinguishes the controller chip from the product
-	// board. Prefer BoardName (for example "INSPUR 3008IT") as the user-facing
-	// model; use ChipName (for example "LSISAS3008") only when OEM firmware
-	// leaves BoardName empty.
-	if boardName := cleanMPT3ASCII(page[0x1c:0x2c]); boardName != "" {
-		return boardName
-	}
-	return cleanMPT3ASCII(page[0x04:0x14])
-}
-
-func cleanMPT3ASCII(value []byte) string {
-	if index := strings.IndexByte(string(value), 0); index >= 0 {
-		value = value[:index]
-	}
-	value = []byte(strings.TrimRight(string(value), "\xff \t\r\n"))
-	for _, character := range value {
-		if character < 32 || character >= 127 {
-			return ""
-		}
-	}
-	return strings.TrimSpace(string(value))
-}
-
-func parseMPT3SASAddress(page []byte) string {
-	if len(page) < 0x10 {
-		return ""
-	}
-	for phy := 0; phy < int(page[4]); phy++ {
-		offset := 0x10 + phy*16
-		if offset+8 > len(page) {
-			break
-		}
-		if address := binary.LittleEndian.Uint64(page[offset : offset+8]); address != 0 {
-			return fmt.Sprintf("%016x", address)
-		}
-	}
-	return ""
-}
-
-func parseMPT3Temperature(page []byte) (float64, error) {
-	// Unlike the fixed reply buffer, this slice is allocated from the firmware's
-	// PageLength. Reject a validly transferred but undersized/garbage Page 7
-	// before accessing the IOC temperature fields.
-	if len(page) < 0x13 {
-		return 0, errors.New("IO Unit Page 7 is shorter than the IOC temperature fields")
-	}
-	raw := int16(binary.LittleEndian.Uint16(page[0x10:0x12]))
-	var temperature float64
-	switch page[0x12] {
-	case temperatureCelsius:
-		temperature = float64(raw)
-	case temperatureFahrenheit:
-		temperature = (float64(raw) - 32) * 5 / 9
-	case temperatureNotPresent:
-		return 0, errors.New("IOC temperature sensor is not present")
-	default:
-		return 0, fmt.Errorf("unsupported IOC temperature unit 0x%02x", page[0x12])
-	}
-	return temperature, nil
+	return parser(page), false
 }
