@@ -131,8 +131,7 @@ func FuzzValidateMPT3ConfigReply(f *testing.F) {
 			return
 		}
 
-		messageBytes := int(reply[0x02]) * 4
-		if messageBytes < mpi2ConfigReplySize || messageBytes > len(reply) ||
+		if reply[0x02] != mpi2ConfigReplyDWords ||
 			reply[0x03] != mpi2FunctionConfig ||
 			reply[0x00] != mpi2ConfigPageHeader ||
 			binary.LittleEndian.Uint16(reply[0x0e:0x10])&mpi2IOCStatusMask != 0 ||

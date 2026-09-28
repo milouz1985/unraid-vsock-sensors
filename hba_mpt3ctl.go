@@ -35,6 +35,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -84,6 +85,7 @@ const (
 	// Keep these values aligned with the MPI2_*_PAGEVERSION definitions in
 	// mpi2_cnfg.h used by the in-kernel mpt3sas CONFIG helpers.
 	mpi2IOUnit7Version = 0x05
+	mpi2IOUnit7DWords  = 10
 )
 
 // IO Unit Page 7 temperature unit encoding (mpt3sas_hwmon.c).
@@ -197,9 +199,8 @@ func validateMPT3ConfigReply(reply []byte, action, pageType, pageNumber byte) er
 	if len(reply) < mpi2ConfigReplySize {
 		return fmt.Errorf("short MPI CONFIG reply: got %d bytes, need %d", len(reply), mpi2ConfigReplySize)
 	}
-	messageBytes := int(reply[0x02]) * 4
-	if messageBytes < mpi2ConfigReplySize || messageBytes > len(reply) {
-		return fmt.Errorf("invalid MPI CONFIG MsgLength: %d bytes", messageBytes)
+	if reply[0x02] != mpi2ConfigReplyDWords {
+		return fmt.Errorf("invalid MPI CONFIG MsgLength: got %d DWORDs, want %d", reply[0x02], mpi2ConfigReplyDWords)
 	}
 	if reply[0x03] != mpi2FunctionConfig {
 		return fmt.Errorf("unexpected MPI function 0x%02x", reply[0x03])
@@ -221,10 +222,39 @@ func validateMPT3ConfigReply(reply []byte, action, pageType, pageNumber byte) er
 	return nil
 }
 
+func validateMPT3ConfigPageHeader(header []byte, pageType, pageNumber, pageVersion, pageDWords byte) error {
+	if len(header) < 4 {
+		return fmt.Errorf("short MPI CONFIG page header: got %d bytes, need 4", len(header))
+	}
+	if header[0] != pageVersion {
+		return fmt.Errorf("unexpected MPI CONFIG PageVersion 0x%02x, want 0x%02x", header[0], pageVersion)
+	}
+	if header[1] != pageDWords {
+		return fmt.Errorf("unexpected MPI CONFIG PageLength %d DWORDs, want %d", header[1], pageDWords)
+	}
+	if header[2] != pageNumber {
+		return fmt.Errorf("unexpected MPI CONFIG page number %d, want %d", header[2], pageNumber)
+	}
+	if header[3]&0x0f != pageType&0x0f {
+		return fmt.Errorf("unexpected MPI CONFIG page type 0x%02x, want 0x%02x", header[3]&0x0f, pageType&0x0f)
+	}
+	return nil
+}
+
+func validateMPT3ConfigPageData(page []byte, header [4]byte) error {
+	if len(page) < len(header) {
+		return fmt.Errorf("short MPI CONFIG page: got %d bytes, need at least %d", len(page), len(header))
+	}
+	if !bytes.Equal(page[:len(header)], header[:]) {
+		return fmt.Errorf("MPI CONFIG page header %x does not match PAGE_HEADER response %x", page[:len(header)], header)
+	}
+	return nil
+}
+
 // readConfigPage performs the two-step MPI CONFIG access pattern from
 // mpt3sas_config.c: PAGE_HEADER to get the page's version and length, then
 // PAGE_READ_CURRENT to read the page using that header.
-func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber, pageVersion byte) ([]byte, error) {
+func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber, pageVersion, pageDWords byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -235,19 +265,26 @@ func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, page
 	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageHeader, pageType, pageNumber); err != nil {
 		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
-	header := reply[0x14:0x18]
-	pageSize := int(header[1]) * 4
-	if pageSize == 0 {
-		return nil, fmt.Errorf("CONFIG type 0x%02x page %d has zero length", pageType, pageNumber)
+	var header [4]byte
+	copy(header[:], reply[0x14:0x18])
+	if err := validateMPT3ConfigPageHeader(header[:], pageType, pageNumber, pageVersion, pageDWords); err != nil {
+		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
+	pageSize := int(pageDWords) * 4
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, pageType, pageNumber, pageVersion, header), pageSize)
+	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, pageType, pageNumber, pageVersion, header[:]), pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
 	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageReadCurrent, pageType, pageNumber); err != nil {
+		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
+	}
+	if !bytes.Equal(reply[0x14:0x18], header[:]) {
+		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d returned header %x, want %x", pageType, pageNumber, reply[0x14:0x18], header)
+	}
+	if err := validateMPT3ConfigPageData(page, header); err != nil {
 		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
 	}
 	return page, nil
@@ -383,7 +420,7 @@ func matchMPT3Controllers(ctx context.Context, identities map[string]hbaMetadata
 }
 
 func (r *mpt3Reader) readController(ctx context.Context, device *mpt3Device, c discoveredController) (sensors.HBA, error) {
-	page, err := device.readConfigPage(ctx, c.ioc, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version)
+	page, err := device.readConfigPage(ctx, c.ioc, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, mpi2IOUnit7DWords)
 	if err != nil {
 		return sensors.HBA{}, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
 	}

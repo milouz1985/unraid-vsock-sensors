@@ -31,6 +31,49 @@ func TestMPT3CommandABI(t *testing.T) {
 	}
 }
 
+func TestValidateMPT3ConfigPageHeader(t *testing.T) {
+	validHeader := func() []byte {
+		return []byte{mpi2IOUnit7Version, mpi2IOUnit7DWords, 7, mpi2PageTypeIOUnit}
+	}
+	if err := validateMPT3ConfigPageHeader(validHeader(), mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, mpi2IOUnit7DWords); err != nil {
+		t.Fatalf("valid IO Unit Page 7 header rejected: %v", err)
+	}
+
+	for name, mutate := range map[string]func([]byte){
+		"wrong version":     func(header []byte) { header[0]-- },
+		"wrong length":      func(header []byte) { header[1]-- },
+		"wrong page number": func(header []byte) { header[2]-- },
+		"wrong page type":   func(header []byte) { header[3] = 0x09 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			header := validHeader()
+			mutate(header)
+			if err := validateMPT3ConfigPageHeader(header, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, mpi2IOUnit7DWords); err == nil {
+				t.Fatal("invalid IO Unit Page 7 header accepted")
+			}
+		})
+	}
+	if err := validateMPT3ConfigPageHeader([]byte{1, 2, 3}, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, mpi2IOUnit7DWords); err == nil {
+		t.Fatal("short IO Unit Page 7 header accepted")
+	}
+}
+
+func TestValidateMPT3ConfigPageData(t *testing.T) {
+	header := [4]byte{mpi2IOUnit7Version, mpi2IOUnit7DWords, 7, mpi2PageTypeIOUnit}
+	page := make([]byte, int(mpi2IOUnit7DWords)*4)
+	copy(page, header[:])
+	if err := validateMPT3ConfigPageData(page, header); err != nil {
+		t.Fatalf("valid IO Unit Page 7 data rejected: %v", err)
+	}
+	page[0]--
+	if err := validateMPT3ConfigPageData(page, header); err == nil {
+		t.Fatal("page data with mismatched header accepted")
+	}
+	if err := validateMPT3ConfigPageData([]byte{1, 2, 3}, header); err == nil {
+		t.Fatal("page data with short header accepted")
+	}
+}
+
 func TestMPT3ConfigRequestPageHeader(t *testing.T) {
 	for _, test := range []struct {
 		name                              string
@@ -79,6 +122,7 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 
 	for name, mutate := range map[string]func([]byte){
 		"zero length":      func(reply []byte) { reply[0x02] = 0 },
+		"short length":     func(reply []byte) { reply[0x02] = mpi2ConfigReplyDWords - 1 },
 		"oversized length": func(reply []byte) { reply[0x02] = 33 },
 		"wrong function":   func(reply []byte) { reply[0x03] = 0xff },
 		"wrong action":     func(reply []byte) { reply[0x00] = mpi2ConfigPageReadCurrent },
