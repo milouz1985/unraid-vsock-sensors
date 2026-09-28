@@ -8,28 +8,37 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 const defaultSCSIHostRoot = "/sys/class/scsi_host"
 
+type sysfsHBAInventory struct {
+	metadataByPCI map[string]hbaMetadata
+	mpt3ByIOC     map[int]hbaMetadata
+}
+
 // discoverSysfsHBAs returns the identity of every supported HBA indexed by its
-// PCI address. The backend-specific controller number is deliberately absent:
-// mpt3ctl and StorCLI only use it to associate temperatures with this inventory.
-func discoverSysfsHBAs(ctx context.Context, root string) (map[string]hbaMetadata, error) {
+// PCI address, plus mpt3sas controllers indexed by the IOC number exposed as
+// unique_id on the same SCSI host.
+func discoverSysfsHBAs(ctx context.Context, root string) (sysfsHBAInventory, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return sysfsHBAInventory{}, err
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil, fmt.Errorf("read SCSI host inventory: %w", err)
+		return sysfsHBAInventory{}, fmt.Errorf("read SCSI host inventory: %w", err)
 	}
 
-	metadata := make(map[string]hbaMetadata)
+	inventory := sysfsHBAInventory{
+		metadataByPCI: make(map[string]hbaMetadata),
+		mpt3ByIOC:     make(map[int]hbaMetadata),
+	}
 	identities := make(map[string]string)
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return sysfsHBAInventory{}, err
 		}
 		if !strings.HasPrefix(entry.Name(), "host") {
 			continue
@@ -37,7 +46,7 @@ func discoverSysfsHBAs(ctx context.Context, root string) (map[string]hbaMetadata
 		host := filepath.Join(root, entry.Name())
 		driver, err := readSysfsHBAAttribute(filepath.Join(host, "proc_name"), false)
 		if err != nil {
-			return nil, fmt.Errorf("read %s driver: %w", entry.Name(), err)
+			return sysfsHBAInventory{}, fmt.Errorf("read %s driver: %w", entry.Name(), err)
 		}
 		if driver != "mpt3sas" && driver != "megaraid_sas" {
 			continue
@@ -45,35 +54,60 @@ func discoverSysfsHBAs(ctx context.Context, root string) (map[string]hbaMetadata
 
 		device, err := filepath.EvalSymlinks(filepath.Join(host, "device"))
 		if err != nil {
-			return nil, fmt.Errorf("resolve %s device: %w", entry.Name(), err)
+			return sysfsHBAInventory{}, fmt.Errorf("resolve %s device: %w", entry.Name(), err)
 		}
 		pci := pciAddressFromSysfsPath(device)
 		if pci == "" {
-			return nil, fmt.Errorf("%s device %q has no PCI address", entry.Name(), device)
+			return sysfsHBAInventory{}, fmt.Errorf("%s device %q has no PCI address", entry.Name(), device)
 		}
-		if previous, duplicate := metadata[pci]; duplicate {
-			return nil, fmt.Errorf("SCSI hosts for PCI controller %s appear more than once (previous identity %q)", pci, previous.id)
+		if previous, duplicate := inventory.metadataByPCI[pci]; duplicate {
+			return sysfsHBAInventory{}, fmt.Errorf("SCSI hosts for PCI controller %s appear more than once (previous identity %q)", pci, previous.id)
 		}
 
 		sas, err := readSysfsHBAAttribute(filepath.Join(host, "host_sas_address"), true)
 		if err != nil {
-			return nil, fmt.Errorf("read %s SAS address: %w", entry.Name(), err)
+			return sysfsHBAInventory{}, fmt.Errorf("read %s SAS address: %w", entry.Name(), err)
 		}
 		model, err := readSysfsHBAAttribute(filepath.Join(host, "board_name"), true)
 		if err != nil {
-			return nil, fmt.Errorf("read %s board name: %w", entry.Name(), err)
+			return sysfsHBAInventory{}, fmt.Errorf("read %s board name: %w", entry.Name(), err)
 		}
 		id := hbaStableID(sas, pci)
 		if previous, duplicate := identities[id]; duplicate {
-			return nil, fmt.Errorf("SCSI hosts at %s and %s have duplicate identity %q", previous, pci, id)
+			return sysfsHBAInventory{}, fmt.Errorf("SCSI hosts at %s and %s have duplicate identity %q", previous, pci, id)
 		}
 		identities[id] = pci
-		metadata[pci] = hbaMetadata{id: id, model: model, pciAddress: pci, driver: driver}
+		metadata := hbaMetadata{id: id, model: model, pciAddress: pci}
+		inventory.metadataByPCI[pci] = metadata
+
+		if driver == "mpt3sas" {
+			ioc, err := readMPT3IOC(filepath.Join(host, "unique_id"))
+			if err != nil {
+				return sysfsHBAInventory{}, fmt.Errorf("read %s unique ID: %w", entry.Name(), err)
+			}
+			if previous, duplicate := inventory.mpt3ByIOC[ioc]; duplicate {
+				return sysfsHBAInventory{}, fmt.Errorf("mpt3sas IOC %d appears more than once at %s and %s", ioc, previous.pciAddress, pci)
+			}
+			inventory.mpt3ByIOC[ioc] = metadata
+		}
 	}
-	if len(metadata) == 0 {
-		return nil, errNoHBA
+	if len(inventory.metadataByPCI) == 0 {
+		return sysfsHBAInventory{}, errNoHBA
 	}
-	return metadata, nil
+	return inventory, nil
+}
+
+func readMPT3IOC(path string) (int, error) {
+	value, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	raw := strings.TrimSpace(string(value))
+	ioc, err := strconv.ParseUint(raw, 10, 8)
+	if err != nil {
+		return 0, fmt.Errorf("invalid decimal IOC %q: %w", raw, err)
+	}
+	return int(ioc), nil
 }
 
 func readSysfsHBAAttribute(path string, optional bool) (string, error) {

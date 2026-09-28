@@ -42,7 +42,6 @@ type hbaMetadata struct {
 	id         string
 	model      string
 	pciAddress string
-	driver     string
 }
 
 const (

@@ -6,14 +6,16 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"unsafe"
-
-	"golang.org/x/sys/unix"
 )
 
+// TestMPT3CommandABI locks UVSS's Linux/amd64 userspace transcription of
+// mpt3_ioctl_command. It does not inspect the ABI of the loaded kernel, so an
+// incompatible field-layout change that preserves the structure size remains
+// a residual risk.
 func TestMPT3CommandABI(t *testing.T) {
 	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, nil)
 	reply, data := new(byte), new(byte)
@@ -145,60 +147,17 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 	}
 }
 
-func mpt3IOCInfoForTest(segment, bus, device, function uint32) []byte {
-	info := make([]byte, 92)
-	binary.LittleEndian.PutUint32(info[84:88], bus<<8|function<<5|device)
-	binary.LittleEndian.PutUint32(info[88:92], segment)
-	return info
-}
+func TestMPT3DiscoveryUsesSysfsIOC(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "scsi_host")
+	addFakeSCSIHost(t, root, "host2", "mpt3sas", "0000:06:10.0", "0x5001", "HBA", fakeSysfsValue("200"))
+	addFakeSCSIHost(t, root, "host3", "megaraid_sas", "0000:07:00.0", "0x5002", "RAID", nil)
 
-func TestMatchMPT3ControllersScansFullU8RangeAndStopsWhenMatched(t *testing.T) {
-	identities := map[string]hbaMetadata{
-		"0000:06:10.0": {id: "sas:56c92bf0002e6705", pciAddress: "0000:06:10.0", driver: "mpt3sas"},
-		"0000:07:00.0": {id: "pci:0000:07:00.0", pciAddress: "0000:07:00.0", driver: "megaraid_sas"},
-	}
-	const wantedIOC = 200
-	calls := 0
-	controllers, err := matchMPT3Controllers(context.Background(), identities, func(ioc int) ([]byte, error) {
-		calls++
-		if ioc == wantedIOC {
-			return mpt3IOCInfoForTest(0, 6, 16, 0), nil
-		}
-		return nil, unix.ENODEV
-	})
+	controllers, err := (&mpt3Reader{sysfsRoot: root}).discoverControllers(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != wantedIOC+1 {
-		t.Fatalf("IOCINFO calls = %d, want %d", calls, wantedIOC+1)
-	}
-	if len(controllers) != 1 || controllers[0].ioc != wantedIOC || controllers[0].metadata.id != identities["0000:06:10.0"].id {
+	if len(controllers) != 1 || controllers[0].ioc != 200 || controllers[0].metadata.id != "sas:0000000000005001" {
 		t.Fatalf("controllers = %#v", controllers)
-	}
-}
-
-func TestMatchMPT3ControllersBoundsMissingIOCScan(t *testing.T) {
-	identities := map[string]hbaMetadata{
-		"0000:06:10.0": {id: "pci:0000:06:10.0", pciAddress: "0000:06:10.0", driver: "mpt3sas"},
-	}
-	calls := 0
-	_, err := matchMPT3Controllers(context.Background(), identities, func(int) ([]byte, error) {
-		calls++
-		return nil, unix.ENODEV
-	})
-	if err == nil || !strings.Contains(err.Error(), "matched 0 of 1") {
-		t.Fatalf("missing IOC returned %v", err)
-	}
-	if calls != mpt3IOCSlots {
-		t.Fatalf("IOCINFO calls = %d, want %d", calls, mpt3IOCSlots)
-	}
-}
-
-func TestParseMPT3Inventory(t *testing.T) {
-	info := make([]byte, 92)
-	binary.LittleEndian.PutUint32(info[84:88], 6<<8|16)
-	if got, want := parseMPT3PCIAddress(info), "0000:06:10.0"; got != want {
-		t.Fatalf("PCI = %q, want %q", got, want)
 	}
 }
 

@@ -139,10 +139,15 @@ L'agent :
 
 Les identités HBA proviennent de `/sys/class/scsi_host` pour les deux backends ;
 les pages Manufacturing MPT3 et les champs d'identité StorCLI ne sont pas des
-sources parallèles. Le backend StorCLI conserve l'association entre ses index
-et cet inventaire tant que la lecture des températures réussit avec le même
-ensemble d'index. Un remplacement à chaud avec index inchangés peut conserver
-une identité périmée jusqu'au redémarrage du daemon.
+sources parallèles. Pour `mpt3sas`, `unique_id` fournit directement le numéro
+IOC attendu par `MPT3COMMAND` ; aucun ioctl de découverte préalable n'est
+utilisé. `TestMPT3CommandABI` verrouille seulement la transcription userspace
+Linux/amd64 de `mpt3_ioctl_command` : il ne vérifie pas l'ABI du noyau chargé.
+Un changement incompatible du layout qui conserverait la même taille reste
+donc un risque résiduel. Le backend StorCLI conserve l'association entre ses
+index et cet inventaire tant que la lecture des températures réussit avec le
+même ensemble d'index. Un remplacement à chaud avec index inchangés peut
+conserver une identité périmée jusqu'au redémarrage du daemon.
 `CommandContext(...).Output()` peut aussi attendre un enfant qui
 garde ses pipes ouverts après l'arrêt du processus principal ; ce cas a été
 reproduit avec un faux StorCLI, pas avec le binaire réel sur Unraid. Le snapshot

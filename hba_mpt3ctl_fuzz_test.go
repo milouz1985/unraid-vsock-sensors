@@ -6,11 +6,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math"
-	"regexp"
 	"testing"
 )
-
-var mpt3PCIAddressPattern = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]$`)
 
 func addMPT3BoundarySeeds(f *testing.F, minimum int) {
 	f.Helper()
@@ -20,43 +17,6 @@ func addMPT3BoundarySeeds(f *testing.F, minimum int) {
 	f.Add(make([]byte, minimum))
 	f.Add(make([]byte, minimum+16))
 	f.Add(bytes.Repeat([]byte{0xff}, minimum+16))
-}
-
-func FuzzParseMPT3PCIAddress(f *testing.F) {
-	const minimum = 92
-	addMPT3BoundarySeeds(f, minimum)
-
-	valid := make([]byte, minimum)
-	binary.LittleEndian.PutUint32(valid[84:88], 0xab<<8|5<<5|0x1c)
-	binary.LittleEndian.PutUint32(valid[88:92], 0x1234)
-	f.Add(valid)
-
-	invalidBus := make([]byte, minimum)
-	binary.LittleEndian.PutUint32(invalidBus[84:88], 0x100<<8)
-	f.Add(invalidBus)
-	invalidSegment := make([]byte, minimum)
-	binary.LittleEndian.PutUint32(invalidSegment[88:92], 0x10000)
-	f.Add(invalidSegment)
-
-	f.Fuzz(func(t *testing.T, info []byte) {
-		got := parseMPT3PCIAddress(info)
-		if len(info) < minimum && got != "" {
-			t.Fatalf("short IOC info returned PCI address %q", got)
-		}
-		if len(info) >= minimum {
-			pci := binary.LittleEndian.Uint32(info[84:88])
-			segment := binary.LittleEndian.Uint32(info[88:92])
-			if (segment > 0xffff || pci>>8 > 0xff) && got != "" {
-				t.Fatalf("out-of-range PCI address fields returned %q", got)
-			}
-		}
-		if got != "" && !mpt3PCIAddressPattern.MatchString(got) {
-			t.Fatalf("PCI address %q does not match dddd:bb:dd.f", got)
-		}
-		if again := parseMPT3PCIAddress(info); again != got {
-			t.Fatalf("non-deterministic PCI address: first %q, then %q", got, again)
-		}
-	})
 }
 
 func mpt3TemperatureSeed(raw int16, units byte) []byte {

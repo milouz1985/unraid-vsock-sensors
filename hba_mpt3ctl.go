@@ -9,7 +9,7 @@
 // definitions:
 //
 //   - drivers/scsi/mpt3sas/mpt3sas_ctl.h
-//     MPT3IOCINFO, MPT3COMMAND and their userspace structure layouts;
+//     MPT3COMMAND and its userspace structure layout;
 //   - drivers/scsi/mpt3sas/mpt3sas_ctl.c
 //     validation and execution of the MPT3COMMAND firmware passthrough;
 //   - drivers/scsi/mpt3sas/mpi/mpi2.h and mpi/mpi2_cnfg.h
@@ -31,7 +31,10 @@
 // diagnostic operation is exposed. The ioctl constants and command layout
 // below are deliberately limited to Linux x86-64, the only architecture Unraid
 // supports. The MPT3 command is encoded at fixed byte offsets instead of using
-// Go struct alignment. TestMPT3CommandABI locks that userspace ABI.
+// Go struct alignment. TestMPT3CommandABI locks UVSS's transcription of that
+// userspace structure; it does not verify the ABI of the loaded kernel. An
+// incompatible mpt3_ioctl_command layout change that preserves its size remains
+// undetectable here.
 package main
 
 import (
@@ -53,8 +56,6 @@ import (
 const (
 	mpt3ctlPath         = "/dev/mpt3ctl"
 	mpt3CommandIOCTL    = uintptr(0xc0484c14)
-	mpt3IOCInfoIOCTL    = uintptr(0xc05c4c11)
-	mpt3IOCSlots        = 1 << 8
 	mpt3FirmwareTimeout = 10
 )
 
@@ -159,17 +160,6 @@ func mpt3IOCTL(fd, request uintptr, argument unsafe.Pointer) error {
 	return nil
 }
 
-func (d *mpt3Device) iocInfo(ioc int) ([]byte, error) {
-	const iocInfoSize = 92
-	buffer := make([]byte, iocInfoSize)
-	binary.LittleEndian.PutUint32(buffer[0:4], uint32(ioc))
-	binary.LittleEndian.PutUint32(buffer[8:12], uint32(len(buffer)))
-	if err := mpt3IOCTL(d.file.Fd(), mpt3IOCInfoIOCTL, unsafe.Pointer(&buffer[0])); err != nil {
-		return nil, err
-	}
-	return buffer, nil
-}
-
 func (d *mpt3Device) command(ioc int, request [28]byte, dataSize int) ([]byte, []byte, error) {
 	reply := make([]byte, mpt3ReplyBufferSize)
 	data := make([]byte, dataSize)
@@ -254,56 +244,42 @@ func validateMPT3ConfigPageData(page []byte, header [4]byte) error {
 	return nil
 }
 
-// readConfigPage performs the two-step MPI CONFIG access pattern from
+// readIOUnitPage7 performs the two-step MPI CONFIG access pattern from
 // mpt3sas_config.c: PAGE_HEADER to get the page's version and length, then
 // PAGE_READ_CURRENT to read the page using that header.
-func (d *mpt3Device) readConfigPage(ctx context.Context, ioc int, pageType, pageNumber, pageVersion, pageDWords byte) ([]byte, error) {
+func (d *mpt3Device) readIOUnitPage7(ctx context.Context, ioc int) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	reply, _, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageHeader, pageType, pageNumber, pageVersion, nil), 0)
+	reply, _, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, nil), 0)
 	if err != nil {
-		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
+		return nil, fmt.Errorf("CONFIG header IO Unit Page 7: %w", err)
 	}
-	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageHeader, pageType, pageNumber); err != nil {
-		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
+	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7); err != nil {
+		return nil, fmt.Errorf("CONFIG header IO Unit Page 7: %w", err)
 	}
 	var header [4]byte
 	copy(header[:], reply[0x14:0x18])
-	if err := validateMPT3ConfigPageHeader(header[:], pageType, pageNumber, pageVersion, pageDWords); err != nil {
-		return nil, fmt.Errorf("CONFIG header type 0x%02x page %d: %w", pageType, pageNumber, err)
+	if err := validateMPT3ConfigPageHeader(header[:], mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, mpi2IOUnit7DWords); err != nil {
+		return nil, fmt.Errorf("CONFIG header IO Unit Page 7: %w", err)
 	}
-	pageSize := int(pageDWords) * 4
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, pageType, pageNumber, pageVersion, header[:]), pageSize)
+	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, header[:]), int(mpi2IOUnit7DWords)*4)
 	if err != nil {
-		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
+		return nil, fmt.Errorf("CONFIG read IO Unit Page 7: %w", err)
 	}
-	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageReadCurrent, pageType, pageNumber); err != nil {
-		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
+	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7); err != nil {
+		return nil, fmt.Errorf("CONFIG read IO Unit Page 7: %w", err)
 	}
 	if !bytes.Equal(reply[0x14:0x18], header[:]) {
-		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d returned header %x, want %x", pageType, pageNumber, reply[0x14:0x18], header)
+		return nil, fmt.Errorf("CONFIG read IO Unit Page 7 returned header %x, want %x", reply[0x14:0x18], header)
 	}
 	if err := validateMPT3ConfigPageData(page, header); err != nil {
-		return nil, fmt.Errorf("CONFIG read type 0x%02x page %d: %w", pageType, pageNumber, err)
+		return nil, fmt.Errorf("CONFIG read IO Unit Page 7: %w", err)
 	}
 	return page, nil
-}
-
-func parseMPT3PCIAddress(info []byte) string {
-	const minimum = 92
-	if len(info) < minimum {
-		return ""
-	}
-	pci, segment := binary.LittleEndian.Uint32(info[84:88]), binary.LittleEndian.Uint32(info[88:92])
-	device, function, bus := pci&0x1f, (pci>>5)&0x07, pci>>8
-	if segment > 0xffff || bus > 0xff {
-		return ""
-	}
-	return fmt.Sprintf("%04x:%02x:%02x.%x", segment, bus, device, function)
 }
 
 func parseMPT3Temperature(page []byte) (float64, error) {
@@ -337,8 +313,8 @@ type discoveredController struct {
 	metadata hbaMetadata
 }
 
-// collect scans the IOC range, associates each controller with its sysfs
-// identity, reads its temperature page, and returns readings sorted by ID.
+// collect discovers IOC numbers and identities from sysfs, reads each
+// controller's temperature page, and returns readings sorted by ID.
 // A collection that ends with zero readings returns errNoHBA.
 func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	device, err := openMPT3()
@@ -347,7 +323,7 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	}
 	defer device.file.Close()
 
-	controllers, err := r.discoverControllers(ctx, device)
+	controllers, err := r.discoverControllers(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -371,59 +347,25 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	return readings, nil
 }
 
-func (r *mpt3Reader) discoverControllers(ctx context.Context, device *mpt3Device) ([]discoveredController, error) {
-	identities, err := discoverSysfsHBAs(ctx, r.sysfsRoot)
+func (r *mpt3Reader) discoverControllers(ctx context.Context) ([]discoveredController, error) {
+	inventory, err := discoverSysfsHBAs(ctx, r.sysfsRoot)
 	if err != nil {
 		return nil, fmt.Errorf("read sysfs HBA identities: %w", err)
 	}
-	return matchMPT3Controllers(ctx, identities, device.iocInfo)
-}
-
-func matchMPT3Controllers(ctx context.Context, identities map[string]hbaMetadata, iocInfo func(int) ([]byte, error)) ([]discoveredController, error) {
-	wanted := 0
-	for _, identity := range identities {
-		if identity.driver == "mpt3sas" {
-			wanted++
-		}
-	}
-	if wanted == 0 {
+	if len(inventory.mpt3ByIOC) == 0 {
 		return nil, errNoHBA
 	}
 
-	matched := make(map[string]int)
-	controllers := make([]discoveredController, 0, wanted)
-	for ioc := 0; ioc < mpt3IOCSlots && len(controllers) < wanted; ioc++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		info, err := iocInfo(ioc)
-		if err != nil {
-			// ENODEV/EINVAL/ENXIO are the expected "no controller at this IOC"
-			// errors; anything else is a real transport failure.
-			if errors.Is(err, unix.ENODEV) || errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENXIO) {
-				continue
-			}
-			return nil, fmt.Errorf("mpt3ctl IOC %d discovery: %w", ioc, err)
-		}
-		pci := parseMPT3PCIAddress(info)
-		identity, found := identities[pci]
-		if !found || identity.driver != "mpt3sas" {
-			return nil, fmt.Errorf("mpt3ctl IOC %d at %s is missing from sysfs HBA inventory", ioc, pci)
-		}
-		if previous, duplicate := matched[identity.id]; duplicate {
-			return nil, fmt.Errorf("mpt3ctl IOCs %d and %d have duplicate identity %q", previous, ioc, identity.id)
-		}
-		matched[identity.id] = ioc
-		controllers = append(controllers, discoveredController{ioc: ioc, metadata: identity})
+	controllers := make([]discoveredController, 0, len(inventory.mpt3ByIOC))
+	for ioc, metadata := range inventory.mpt3ByIOC {
+		controllers = append(controllers, discoveredController{ioc: ioc, metadata: metadata})
 	}
-	if len(controllers) != wanted {
-		return nil, fmt.Errorf("mpt3ctl matched %d of %d mpt3sas controllers from sysfs", len(controllers), wanted)
-	}
+	sort.Slice(controllers, func(i, j int) bool { return controllers[i].ioc < controllers[j].ioc })
 	return controllers, nil
 }
 
 func (r *mpt3Reader) readController(ctx context.Context, device *mpt3Device, c discoveredController) (sensors.HBA, error) {
-	page, err := device.readConfigPage(ctx, c.ioc, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, mpi2IOUnit7DWords)
+	page, err := device.readIOUnitPage7(ctx, c.ioc)
 	if err != nil {
 		return sensors.HBA{}, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
 	}

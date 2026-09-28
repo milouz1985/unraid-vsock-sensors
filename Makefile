@@ -8,8 +8,7 @@ VERSION ?=
 DEBIAN_REVISION ?= 1
 FUZZTIME ?= 30s
 
-MPT3_FUZZ_TARGETS := FuzzParseMPT3PCIAddress \
-	FuzzParseMPT3Temperature \
+MPT3_FUZZ_TARGETS := FuzzParseMPT3Temperature \
 	FuzzValidateMPT3ConfigReply
 
 BASH_SCRIPTS := version.sh \
