@@ -398,13 +398,15 @@ Deux backends sont disponibles :
 - `mpt3ctl` : requêtes MPI CONFIG en lecture seule via `/dev/mpt3ctl` ;
 - StorCLI : température ROC issue de sa sortie JSON.
 
-Le backend natif récupère également le modèle, l'adresse SAS et l'adresse PCI
-lorsqu'elles sont disponibles.
+Pour les deux backends, l'identité vient de `/sys/class/scsi_host` : UVSS relie
+le contrôleur à son adresse PCI, puis lit `host_sas_address` et `board_name`
+lorsqu'ils sont exposés par le pilote. `mpt3ctl` ne lit donc plus les pages
+Manufacturing du firmware ; StorCLI ne fournit plus l'identité publiée.
 
-StorCLI redécouvre l'identité des contrôleurs après une erreur ou un changement
-de l'ensemble de leurs index. Un remplacement ou une reconfiguration à chaud
-qui conserve les mêmes index peut nécessiter un redémarrage d'UVSS pour
-redécouvrir l'identité du matériel.
+StorCLI redécouvre l'association entre ses index et l'inventaire sysfs après une
+erreur ou un changement de l'ensemble de leurs index. Un remplacement ou une
+reconfiguration à chaud qui conserve les mêmes index peut nécessiter un
+redémarrage d'UVSS pour redécouvrir l'identité du matériel.
 
 Une collecte HBA possède un deadline de 15 secondes. Un ioctl natif pouvant
 rester bloqué au-delà de ce délai, le dernier snapshot valide expire
@@ -418,7 +420,7 @@ Chaque sonde possède son propre périphérique hwmon et reste donc toujours
 L'identité stable repose sur :
 
 - l'ID Unraid pour un disque ;
-- l'adresse SAS, PCI ou le numéro de série pour un HBA.
+- l'adresse SAS exposée par sysfs, ou à défaut l'adresse PCI, pour un HBA.
 
 Les noms `hwmonX`, `/dev/sdX` et les index locaux des contrôleurs ne sont pas
 utilisés comme identité.

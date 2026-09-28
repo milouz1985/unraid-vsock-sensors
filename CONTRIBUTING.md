@@ -137,10 +137,13 @@ L'agent :
   transition standby vers actif observée sans erreur d'inventaire intermédiaire ;
 - publie les snapshots via AF_VSOCK.
 
-Le backend StorCLI conserve l'identité des contrôleurs tant que la lecture des
-températures réussit avec le même ensemble d'index. Un remplacement à chaud
-avec index inchangés peut conserver une identité périmée jusqu'au redémarrage
-du daemon. `CommandContext(...).Output()` peut aussi attendre un enfant qui
+Les identités HBA proviennent de `/sys/class/scsi_host` pour les deux backends ;
+les pages Manufacturing MPT3 et les champs d'identité StorCLI ne sont pas des
+sources parallèles. Le backend StorCLI conserve l'association entre ses index
+et cet inventaire tant que la lecture des températures réussit avec le même
+ensemble d'index. Un remplacement à chaud avec index inchangés peut conserver
+une identité périmée jusqu'au redémarrage du daemon.
+`CommandContext(...).Output()` peut aussi attendre un enfant qui
 garde ses pipes ouverts après l'arrêt du processus principal ; ce cas a été
 reproduit avec un faux StorCLI, pas avec le binaire réel sur Unraid. Le snapshot
 HBA expire indépendamment pour protéger le failsafe hwmon. Si le cas est
