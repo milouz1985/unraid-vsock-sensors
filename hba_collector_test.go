@@ -209,16 +209,10 @@ func TestHBASnapshotExpiryMatchesStaleStatus(t *testing.T) {
 }
 
 func TestHBAStableIDPrefersSASAcrossBackends(t *testing.T) {
-	if got, want := hbaStableID("0x56:C9:2B:F0:00:2E:67:05", "0000:06:10.0", "SERIAL"), "sas:56c92bf0002e6705"; got != want {
+	if got, want := hbaStableID("0x56:C9:2B:F0:00:2E:67:05", "0000:06:10.0"), "sas:56c92bf0002e6705"; got != want {
 		t.Fatalf("ID = %q, want %q", got, want)
 	}
-	if got, want := hbaStableID("", "0000:06:10.0", "SERIAL"), "pci:0000:06:10.0"; got != want {
+	if got, want := hbaStableID("", "0000:06:10.0"), "pci:0000:06:10.0"; got != want {
 		t.Fatalf("PCI fallback ID = %q, want %q", got, want)
-	}
-	if got, want := hbaStableID("", "", "SERIAL"), "serial:SERIAL"; got != want {
-		t.Fatalf("serial fallback ID = %q, want %q", got, want)
-	}
-	if upper, lower := hbaStableID("", "", "SERIAL"), hbaStableID("", "", "serial"); upper == lower {
-		t.Fatalf("serial fallback collapsed case-sensitive values to %q", upper)
 	}
 }

@@ -3,10 +3,14 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"math"
 	"slices"
+	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestMPT3CommandABI(t *testing.T) {
@@ -33,8 +37,6 @@ func TestMPT3ConfigRequestPageHeader(t *testing.T) {
 		pageType, pageNumber, pageVersion byte
 		want                              []byte
 	}{
-		{"Manufacturing 0", mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version, []byte{0x00, 0, 0, 0x09}},
-		{"Manufacturing 5", mpi2PageTypeManufacturing, 5, mpi2Manufacturing5Version, []byte{0x03, 0, 5, 0x09}},
 		{"IO Unit 7", mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, []byte{0x05, 0, 7, 0x00}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -84,7 +86,7 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 			binary.LittleEndian.PutUint16(reply[0x0e:0x10], 0x0002)
 			binary.LittleEndian.PutUint32(reply[0x10:0x14], 0x12345678)
 		},
-		"wrong page type":   func(reply []byte) { reply[0x17] = mpi2PageTypeManufacturing },
+		"wrong page type":   func(reply []byte) { reply[0x17] = 0x09 },
 		"wrong page number": func(reply []byte) { reply[0x16] = 6 },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -97,88 +99,60 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 	}
 }
 
+func mpt3IOCInfoForTest(segment, bus, device, function uint32) []byte {
+	info := make([]byte, 92)
+	binary.LittleEndian.PutUint32(info[84:88], bus<<8|function<<5|device)
+	binary.LittleEndian.PutUint32(info[88:92], segment)
+	return info
+}
+
+func TestMatchMPT3ControllersScansFullU8RangeAndStopsWhenMatched(t *testing.T) {
+	identities := map[string]hbaMetadata{
+		"0000:06:10.0": {id: "sas:56c92bf0002e6705", pciAddress: "0000:06:10.0", driver: "mpt3sas"},
+		"0000:07:00.0": {id: "pci:0000:07:00.0", pciAddress: "0000:07:00.0", driver: "megaraid_sas"},
+	}
+	const wantedIOC = 200
+	calls := 0
+	controllers, err := matchMPT3Controllers(context.Background(), identities, func(ioc int) ([]byte, error) {
+		calls++
+		if ioc == wantedIOC {
+			return mpt3IOCInfoForTest(0, 6, 16, 0), nil
+		}
+		return nil, unix.ENODEV
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != wantedIOC+1 {
+		t.Fatalf("IOCINFO calls = %d, want %d", calls, wantedIOC+1)
+	}
+	if len(controllers) != 1 || controllers[0].ioc != wantedIOC || controllers[0].metadata.id != identities["0000:06:10.0"].id {
+		t.Fatalf("controllers = %#v", controllers)
+	}
+}
+
+func TestMatchMPT3ControllersBoundsMissingIOCScan(t *testing.T) {
+	identities := map[string]hbaMetadata{
+		"0000:06:10.0": {id: "pci:0000:06:10.0", pciAddress: "0000:06:10.0", driver: "mpt3sas"},
+	}
+	calls := 0
+	_, err := matchMPT3Controllers(context.Background(), identities, func(int) ([]byte, error) {
+		calls++
+		return nil, unix.ENODEV
+	})
+	if err == nil || !strings.Contains(err.Error(), "matched 0 of 1") {
+		t.Fatalf("missing IOC returned %v", err)
+	}
+	if calls != mpt3IOCSlots {
+		t.Fatalf("IOCINFO calls = %d, want %d", calls, mpt3IOCSlots)
+	}
+}
+
 func TestParseMPT3Inventory(t *testing.T) {
 	info := make([]byte, 92)
 	binary.LittleEndian.PutUint32(info[84:88], 6<<8|16)
 	if got, want := parseMPT3PCIAddress(info), "0000:06:10.0"; got != want {
 		t.Fatalf("PCI = %q, want %q", got, want)
-	}
-	page0 := make([]byte, 0x4c)
-	copy(page0[0x1c:0x2c], "INSPUR 3008IT  ")
-	if got := parseMPT3Model(page0); got != "INSPUR 3008IT" {
-		t.Fatalf("model = %q", got)
-	}
-	copy(page0[0x04:0x14], "LSISAS3008")
-	for i := 0x1c; i < 0x2c; i++ {
-		page0[i] = 0
-	}
-	if got := parseMPT3Model(page0); got != "LSISAS3008" {
-		t.Fatalf("chip fallback model = %q", got)
-	}
-	page5 := make([]byte, 0x20)
-	page5[4] = 1
-	binary.LittleEndian.PutUint64(page5[0x10:0x18], 0x56c92bf0002e6705)
-	if got := parseMPT3SASAddress(page5); got != "56c92bf0002e6705" {
-		t.Fatalf("SAS address = %q", got)
-	}
-}
-
-func TestMPT3ReaderKeepsSASIdentityAfterTransientPageFailure(t *testing.T) {
-	reader := newMPT3Reader()
-	const pci = "0000:06:10.0"
-	if got, want := reader.stableID(pci, "56c92bf0002e6705", false), "sas:56c92bf0002e6705"; got != want {
-		t.Fatalf("initial ID = %q, want %q", got, want)
-	}
-	if got, want := reader.stableID(pci, "", true), "sas:56c92bf0002e6705"; got != want {
-		t.Fatalf("ID after Page 5 failure = %q, want %q", got, want)
-	}
-}
-
-func TestMPT3ReaderDropsSASIdentityAfterPCIDisappears(t *testing.T) {
-	reader := newMPT3Reader()
-	pci := "0000:06:10.0"
-
-	if got, want := reader.stableID(pci, "56c92bf0002e6705", false), "sas:56c92bf0002e6705"; got != want {
-		t.Fatalf("initial ID = %q, want %q", got, want)
-	}
-	reader.retainSASAddressesFor(map[string]struct{}{})
-
-	if got, want := reader.stableID(pci, "", true), "pci:0000:06:10.0"; got != want {
-		t.Fatalf("ID after PCI disappearance = %q, want %q", got, want)
-	}
-	if got, want := reader.stableID(pci, "500605b00abc1234", false), "sas:500605b00abc1234"; got != want {
-		t.Fatalf("replacement ID = %q, want %q", got, want)
-	}
-	if got, want := reader.stableID(pci, "", true), "sas:500605b00abc1234"; got != want {
-		t.Fatalf("replacement cached ID = %q, want %q", got, want)
-	}
-}
-
-func TestMPT3ReaderKeepsSASIdentityForPresentPCI(t *testing.T) {
-	reader := newMPT3Reader()
-	pci := "0000:06:10.0"
-
-	reader.stableID(pci, "56c92bf0002e6705", false)
-	reader.retainSASAddressesFor(map[string]struct{}{pci: {}})
-
-	if got, want := reader.stableID(pci, "", true), "sas:56c92bf0002e6705"; got != want {
-		t.Fatalf("ID after complete scan = %q, want %q", got, want)
-	}
-}
-
-func TestMPT3ReaderUsesPCIUntilSASIdentityIsKnown(t *testing.T) {
-	reader := newMPT3Reader()
-	if got, want := reader.stableID("0000:06:10.0", "", true), "pci:0000:06:10.0"; got != want {
-		t.Fatalf("ID = %q, want %q", got, want)
-	}
-}
-
-func TestMPT3ReaderDoesNotReuseCacheForValidPageWithoutSASAddress(t *testing.T) {
-	reader := newMPT3Reader()
-	const pci = "0000:06:10.0"
-	reader.stableID(pci, "56c92bf0002e6705", false)
-	if got, want := reader.stableID(pci, "", false), "pci:0000:06:10.0"; got != want {
-		t.Fatalf("ID = %q, want %q", got, want)
 	}
 }
 

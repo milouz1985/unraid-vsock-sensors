@@ -42,23 +42,25 @@ type hbaMetadata struct {
 	id         string
 	model      string
 	pciAddress string
+	driver     string
 }
 
 const (
-	maxSASAddressSize           = 16
-	maxPCIAddressSize           = len("0000:00:00.0")
-	maxMegaRAIDControllerSerial = 32 // Firmware controller information uses serial_no[32].
-	maxSASHBAStableIDSize       = len("sas:") + maxSASAddressSize
-	maxPCIHBAStableIDSize       = len("pci:") + maxPCIAddressSize
-	maxSerialHBAStableIDSize    = len("serial:") + maxMegaRAIDControllerSerial
-	maxHBAStableIDSize          = max(maxSASHBAStableIDSize, maxPCIHBAStableIDSize, maxSerialHBAStableIDSize)
+	maxSASAddressSize     = 16
+	maxPCIAddressSize     = len("0000:00:00.0")
+	maxSASHBAStableIDSize = len("sas:") + maxSASAddressSize
+	maxPCIHBAStableIDSize = len("pci:") + maxPCIAddressSize
+	// Keep accepting topology caches created by versions that used a StorCLI
+	// controller serial as a fallback identity.
+	maxLegacySerialHBAStableIDSize = len("serial:") + 32
+	maxHBAStableIDSize             = max(maxSASHBAStableIDSize, maxPCIHBAStableIDSize, maxLegacySerialHBAStableIDSize)
 )
 
-// hbaStableID gives every backend the same stable sensor key. Prefer the SAS
-// address shared by mpt3ctl and StorCLI, then progressively weaker fallbacks.
+// hbaStableID derives the stable sensor key from the sysfs identity. Prefer the
+// SAS address, then fall back to the current PCI location.
 // A pci: fallback identifies the current PCI location, not necessarily the same
 // physical controller after hardware replacement.
-func hbaStableID(sasAddress, pciAddress, serial string) string {
+func hbaStableID(sasAddress, pciAddress string) string {
 	if sasAddress = hbaIdentityValue(sasAddress); sasAddress != "" {
 		if sasAddress = normalizeSASAddress(sasAddress); sasAddress != "" {
 			return "sas:" + sasAddress
@@ -66,10 +68,6 @@ func hbaStableID(sasAddress, pciAddress, serial string) string {
 	}
 	if pciAddress != "" {
 		return "pci:" + pciAddress
-	}
-	if serial = hbaIdentityValue(serial); serial != "" {
-		// Serial numbers are opaque identifiers; preserve their case.
-		return "serial:" + serial
 	}
 	return ""
 }

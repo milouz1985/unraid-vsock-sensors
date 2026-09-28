@@ -42,7 +42,6 @@ import (
 	"os"
 	"runtime"
 	"sort"
-	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -54,7 +53,7 @@ const (
 	mpt3ctlPath         = "/dev/mpt3ctl"
 	mpt3CommandIOCTL    = uintptr(0xc0484c14)
 	mpt3IOCInfoIOCTL    = uintptr(0xc05c4c11)
-	mpt3MaxIOC          = 31
+	mpt3IOCSlots        = 1 << 8
 	mpt3FirmwareTimeout = 10
 )
 
@@ -82,12 +81,9 @@ const (
 	mpi2ConfigPageHeader      = 0x00
 	mpi2ConfigPageReadCurrent = 0x01
 	mpi2PageTypeIOUnit        = 0x00
-	mpi2PageTypeManufacturing = 0x09
 	// Keep these values aligned with the MPI2_*_PAGEVERSION definitions in
 	// mpi2_cnfg.h used by the in-kernel mpt3sas CONFIG helpers.
-	mpi2Manufacturing0Version = 0x00
-	mpi2Manufacturing5Version = 0x03
-	mpi2IOUnit7Version        = 0x05
+	mpi2IOUnit7Version = 0x05
 )
 
 // IO Unit Page 7 temperature unit encoding (mpt3sas_hwmon.c).
@@ -270,47 +266,6 @@ func parseMPT3PCIAddress(info []byte) string {
 	return fmt.Sprintf("%04x:%02x:%02x.%x", segment, bus, device, function)
 }
 
-func parseMPT3Model(page []byte) string {
-	const minimum = 0x2c
-	if len(page) < minimum {
-		return ""
-	}
-	if boardName := cleanMPT3ASCII(page[0x1c:0x2c]); boardName != "" {
-		return boardName
-	}
-	return cleanMPT3ASCII(page[0x04:0x14])
-}
-
-func cleanMPT3ASCII(value []byte) string {
-	if index := strings.IndexByte(string(value), 0); index >= 0 {
-		value = value[:index]
-	}
-	value = []byte(strings.TrimRight(string(value), "\xff \t\r\n"))
-	for _, character := range value {
-		if character < 32 || character >= 127 {
-			return ""
-		}
-	}
-	return strings.TrimSpace(string(value))
-}
-
-func parseMPT3SASAddress(page []byte) string {
-	const minimum = 0x10
-	if len(page) < minimum {
-		return ""
-	}
-	for phy := 0; phy < int(page[4]); phy++ {
-		offset := 0x10 + phy*16
-		if offset+8 > len(page) {
-			break
-		}
-		if address := binary.LittleEndian.Uint64(page[offset : offset+8]); address != 0 {
-			return fmt.Sprintf("%016x", address)
-		}
-	}
-	return ""
-}
-
 func parseMPT3Temperature(page []byte) (float64, error) {
 	const minimum = 0x13
 	if len(page) < minimum {
@@ -331,54 +286,19 @@ func parseMPT3Temperature(page []byte) (float64, error) {
 	return temperature, nil
 }
 
-type mpt3Reader struct {
-	// Manufacturing Page 5 is optional for a temperature collection. Remember a
-	// SAS identity once observed so a transient page failure cannot rename the
-	// same PCI controller to its weaker pci: fallback.
-	sasAddressByPCI map[string]string
-}
+type mpt3Reader struct{ sysfsRoot string }
 
 func newMPT3Reader() *mpt3Reader {
-	return &mpt3Reader{sasAddressByPCI: make(map[string]string)}
-}
-
-func (r *mpt3Reader) stableID(pci, sasAddress string, page5Failed bool) string {
-	if sasAddress = normalizeSASAddress(sasAddress); sasAddress != "" {
-		if pci != "" {
-			r.sasAddressByPCI[pci] = sasAddress
-		}
-		return hbaStableID(sasAddress, pci, "")
-	}
-	if page5Failed {
-		if cached := r.sasAddressByPCI[pci]; cached != "" {
-			return hbaStableID(cached, pci, "")
-		}
-	}
-	return hbaStableID("", pci, "")
-}
-
-// retainSASAddressesFor drops cached identities for PCI controllers that were
-// absent from a complete IOC discovery pass. A controller later appearing at
-// the same PCI address must not inherit the SAS identity of hardware that was
-// observed to have disappeared.
-func (r *mpt3Reader) retainSASAddressesFor(presentPCI map[string]struct{}) {
-	for pci := range r.sasAddressByPCI {
-		if _, present := presentPCI[pci]; !present {
-			delete(r.sasAddressByPCI, pci)
-		}
-	}
+	return &mpt3Reader{sysfsRoot: defaultSCSIHostRoot}
 }
 
 type discoveredController struct {
-	ioc         int
-	pci         string
-	model       string
-	sasAddress  string
-	page5Failed bool
+	ioc      int
+	metadata hbaMetadata
 }
 
-// collect scans the IOC range, reads the identity and temperature pages for
-// each discovered controller, and returns the readings sorted by stable ID.
+// collect scans the IOC range, associates each controller with its sysfs
+// identity, reads its temperature page, and returns readings sorted by ID.
 // A collection that ends with zero readings returns errNoHBA.
 func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	device, err := openMPT3()
@@ -404,15 +324,6 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 		readings = append(readings, reading)
 	}
 
-	// Only prune after the complete IOC range was scanned successfully. An
-	// aborted collection cannot prove that a cached controller disappeared.
-	present := make(map[string]struct{}, len(controllers))
-	for _, c := range controllers {
-		if c.pci != "" {
-			present[c.pci] = struct{}{}
-		}
-	}
-	r.retainSASAddressesFor(present)
 	if len(readings) == 0 {
 		return nil, errNoHBA
 	}
@@ -421,13 +332,31 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 }
 
 func (r *mpt3Reader) discoverControllers(ctx context.Context, device *mpt3Device) ([]discoveredController, error) {
-	identities := make(map[string]int)
-	controllers := make([]discoveredController, 0, mpt3MaxIOC+1)
-	for ioc := 0; ioc <= mpt3MaxIOC; ioc++ {
+	identities, err := discoverSysfsHBAs(ctx, r.sysfsRoot)
+	if err != nil {
+		return nil, fmt.Errorf("read sysfs HBA identities: %w", err)
+	}
+	return matchMPT3Controllers(ctx, identities, device.iocInfo)
+}
+
+func matchMPT3Controllers(ctx context.Context, identities map[string]hbaMetadata, iocInfo func(int) ([]byte, error)) ([]discoveredController, error) {
+	wanted := 0
+	for _, identity := range identities {
+		if identity.driver == "mpt3sas" {
+			wanted++
+		}
+	}
+	if wanted == 0 {
+		return nil, errNoHBA
+	}
+
+	matched := make(map[string]int)
+	controllers := make([]discoveredController, 0, wanted)
+	for ioc := 0; ioc < mpt3IOCSlots && len(controllers) < wanted; ioc++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		info, err := device.iocInfo(ioc)
+		info, err := iocInfo(ioc)
 		if err != nil {
 			// ENODEV/EINVAL/ENXIO are the expected "no controller at this IOC"
 			// errors; anything else is a real transport failure.
@@ -437,23 +366,18 @@ func (r *mpt3Reader) discoverControllers(ctx context.Context, device *mpt3Device
 			return nil, fmt.Errorf("mpt3ctl IOC %d discovery: %w", ioc, err)
 		}
 		pci := parseMPT3PCIAddress(info)
-
-		model, _ := r.optionalPage(ctx, device, ioc, mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version, parseMPT3Model)
-		sasAddress, page5Failed := r.optionalPage(ctx, device, ioc, mpi2PageTypeManufacturing, 5, mpi2Manufacturing5Version, parseMPT3SASAddress)
-
-		id := r.stableID(pci, sasAddress, page5Failed)
-		if id == "" {
-			return nil, fmt.Errorf("mpt3ctl IOC %d has no stable identity", ioc)
+		identity, found := identities[pci]
+		if !found || identity.driver != "mpt3sas" {
+			return nil, fmt.Errorf("mpt3ctl IOC %d at %s is missing from sysfs HBA inventory", ioc, pci)
 		}
-		if previous, duplicate := identities[id]; duplicate {
-			return nil, fmt.Errorf("mpt3ctl IOCs %d and %d have duplicate identity %q", previous, ioc, id)
+		if previous, duplicate := matched[identity.id]; duplicate {
+			return nil, fmt.Errorf("mpt3ctl IOCs %d and %d have duplicate identity %q", previous, ioc, identity.id)
 		}
-		identities[id] = ioc
-
-		controllers = append(controllers, discoveredController{
-			ioc: ioc, pci: pci, model: model,
-			sasAddress: sasAddress, page5Failed: page5Failed,
-		})
+		matched[identity.id] = ioc
+		controllers = append(controllers, discoveredController{ioc: ioc, metadata: identity})
+	}
+	if len(controllers) != wanted {
+		return nil, fmt.Errorf("mpt3ctl matched %d of %d mpt3sas controllers from sysfs", len(controllers), wanted)
 	}
 	return controllers, nil
 }
@@ -468,20 +392,9 @@ func (r *mpt3Reader) readController(ctx context.Context, device *mpt3Device, c d
 		return sensors.HBA{}, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
 	}
 	return sensors.HBA{
-		ID:         r.stableID(c.pci, c.sasAddress, c.page5Failed),
-		Model:      c.model,
-		PCIAddress: c.pci,
+		ID:         c.metadata.id,
+		Model:      c.metadata.model,
+		PCIAddress: c.metadata.pciAddress,
 		Temp:       temperature,
 	}, nil
-}
-
-// optionalPage reads one configuration page and runs parser on it. A page
-// failure is not fatal: it returns ("", true) so the caller can fall back to
-// a cached identity.
-func (r *mpt3Reader) optionalPage(ctx context.Context, device *mpt3Device, ioc int, pageType, pageNumber, pageVersion byte, parser func([]byte) string) (string, bool) {
-	page, err := device.readConfigPage(ctx, ioc, pageType, pageNumber, pageVersion)
-	if err != nil {
-		return "", true
-	}
-	return parser(page), false
 }

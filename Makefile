@@ -9,8 +9,6 @@ DEBIAN_REVISION ?= 1
 FUZZTIME ?= 30s
 
 MPT3_FUZZ_TARGETS := FuzzParseMPT3PCIAddress \
-	FuzzParseMPT3Model \
-	FuzzParseMPT3SASAddress \
 	FuzzParseMPT3Temperature \
 	FuzzValidateMPT3ConfigReply
 

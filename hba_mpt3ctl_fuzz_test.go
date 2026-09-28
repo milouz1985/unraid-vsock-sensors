@@ -7,14 +7,10 @@ import (
 	"encoding/binary"
 	"math"
 	"regexp"
-	"strings"
 	"testing"
 )
 
-var (
-	mpt3PCIAddressPattern = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]$`)
-	mpt3SASAddressPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
-)
+var mpt3PCIAddressPattern = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]$`)
 
 func addMPT3BoundarySeeds(f *testing.F, minimum int) {
 	f.Helper()
@@ -59,99 +55,6 @@ func FuzzParseMPT3PCIAddress(f *testing.F) {
 		}
 		if again := parseMPT3PCIAddress(info); again != got {
 			t.Fatalf("non-deterministic PCI address: first %q, then %q", got, again)
-		}
-	})
-}
-
-func FuzzParseMPT3Model(f *testing.F) {
-	const minimum = 0x2c
-	addMPT3BoundarySeeds(f, minimum)
-
-	boardName := make([]byte, minimum)
-	copy(boardName[0x1c:0x2c], "INSPUR 3008IT  ")
-	f.Add(boardName)
-
-	chipFallback := make([]byte, minimum)
-	copy(chipFallback[0x04:0x14], "LSISAS3008")
-	f.Add(chipFallback)
-
-	nonASCIIBoard := make([]byte, minimum)
-	copy(nonASCIIBoard[0x04:0x14], "LSISAS3008")
-	copy(nonASCIIBoard[0x1c:0x2c], "BOARD")
-	nonASCIIBoard[0x21] = 0x80
-	f.Add(nonASCIIBoard)
-
-	ffPadding := bytes.Repeat([]byte{0xff}, minimum)
-	copy(ffPadding[0x1c:0x2c], "MPT3 BOARD")
-	f.Add(ffPadding)
-
-	spaceAndNULPadding := bytes.Repeat([]byte{' '}, minimum)
-	copy(spaceAndNULPadding[0x1c:0x2c], []byte{' ', 'M', 'P', 'T', '3', ' ', 'B', 'O', 'A', 'R', 'D', ' ', 0, 'X'})
-	f.Add(spaceAndNULPadding)
-
-	f.Fuzz(func(t *testing.T, page []byte) {
-		model := parseMPT3Model(page)
-		if model == "" {
-			return
-		}
-		if strings.TrimSpace(model) != model {
-			t.Fatalf("model has surrounding whitespace: %q", model)
-		}
-		for _, character := range []byte(model) {
-			if character < 32 || character >= 127 {
-				t.Fatalf("model contains non-printable ASCII byte 0x%02x: %q", character, model)
-			}
-		}
-		if strings.IndexByte(model, 0) >= 0 {
-			t.Fatalf("model contains a NUL byte: %q", model)
-		}
-	})
-}
-
-func FuzzParseMPT3SASAddress(f *testing.F) {
-	const minimum = 0x10
-	addMPT3BoundarySeeds(f, minimum)
-
-	noPHY := make([]byte, minimum)
-	noPHY[4] = 0
-	f.Add(noPHY)
-	oneMissingPHY := make([]byte, minimum)
-	oneMissingPHY[4] = 1
-	f.Add(oneMissingPHY)
-	tooManyPHYs := make([]byte, 0x18)
-	tooManyPHYs[4] = 2
-	f.Add(tooManyPHYs)
-	maximumPHYs := make([]byte, minimum)
-	maximumPHYs[4] = 255
-	f.Add(maximumPHYs)
-	truncatedPHY := make([]byte, 0x14)
-	truncatedPHY[4] = 1
-	f.Add(truncatedPHY)
-
-	zeroAddress := make([]byte, 0x20)
-	zeroAddress[4] = 1
-	f.Add(zeroAddress)
-
-	validAddress := make([]byte, 0x20)
-	validAddress[4] = 1
-	binary.LittleEndian.PutUint64(validAddress[0x10:0x18], 0x56c92bf0002e6705)
-	f.Add(validAddress)
-
-	secondAddress := make([]byte, 0x28)
-	secondAddress[4] = 2
-	binary.LittleEndian.PutUint64(secondAddress[0x20:0x28], 0x500605b00abcdef0)
-	f.Add(secondAddress)
-
-	f.Fuzz(func(t *testing.T, page []byte) {
-		address := parseMPT3SASAddress(page)
-		if address == "" {
-			return
-		}
-		if !mpt3SASAddressPattern.MatchString(address) {
-			t.Fatalf("invalid SAS address %q", address)
-		}
-		if address == "0000000000000000" {
-			t.Fatal("zero SAS address was returned")
 		}
 	})
 }

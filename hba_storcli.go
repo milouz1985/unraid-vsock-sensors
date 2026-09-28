@@ -122,7 +122,31 @@ func discoverStorCLIHBAs(ctx context.Context) (map[int]hbaMetadata, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseStorCLIMetadata(out)
+	controllers, err := parseStorCLIControllers(out)
+	if err != nil {
+		return nil, err
+	}
+	identities, err := discoverSysfsHBAs(ctx, defaultSCSIHostRoot)
+	if err != nil {
+		return nil, fmt.Errorf("read sysfs HBA identities: %w", err)
+	}
+	return matchStorCLIControllers(controllers, identities)
+}
+
+func matchStorCLIControllers(controllers map[int]string, identities map[string]hbaMetadata) (map[int]hbaMetadata, error) {
+	metadata := make(map[int]hbaMetadata, len(controllers))
+	ids := make(map[string]int, len(controllers))
+	for controller, pci := range controllers {
+		identity, found := identities[pci]
+		if !found {
+			return nil, fmt.Errorf("storcli controller %d at %s is missing from sysfs HBA inventory", controller, pci)
+		}
+		if previous, duplicate := ids[identity.id]; duplicate {
+			return nil, fmt.Errorf("storcli controllers %d and %d have duplicate identity %q", previous, controller, identity.id)
+		}
+		ids[identity.id], metadata[controller] = controller, identity
+	}
+	return metadata, nil
 }
 
 func storcliContextError(operation string, err error) error {
@@ -143,14 +167,10 @@ func storcliCommandError(operation string, err error) error {
 }
 
 type storCLIBasics struct {
-	Model        string `json:"Model"`
-	ProductName  string `json:"Product Name"`
-	SerialNumber string `json:"Serial Number"`
-	SASAddress   string `json:"SAS Address"`
-	PCIAddress   string `json:"PCI Address"`
+	PCIAddress string `json:"PCI Address"`
 }
 
-func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
+func parseStorCLIControllers(data []byte) (map[int]string, error) {
 	var root struct {
 		Controllers []struct {
 			CommandStatus struct {
@@ -159,10 +179,6 @@ func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
 			} `json:"Command Status"`
 			ResponseData struct {
 				Basics     storCLIBasics `json:"Basics"`
-				Model      string        `json:"Model"`
-				Product    string        `json:"Product Name"`
-				Serial     string        `json:"Serial Number"`
-				SASAddress string        `json:"SAS Address"`
 				PCIAddress string        `json:"PCI Address"`
 			} `json:"Response Data"`
 		} `json:"Controllers"`
@@ -173,30 +189,23 @@ func parseStorCLIMetadata(data []byte) (map[int]hbaMetadata, error) {
 	if len(root.Controllers) == 0 {
 		return nil, errNoHBA
 	}
-	metadata, ids := make(map[int]hbaMetadata), make(map[string]int)
+	controllers := make(map[int]string, len(root.Controllers))
 	for _, controller := range root.Controllers {
 		number := controller.CommandStatus.Controller
-		if _, duplicate := metadata[number]; duplicate {
+		if _, duplicate := controllers[number]; duplicate {
 			return nil, fmt.Errorf("storcli controller %d appears more than once", number)
 		}
 		if controller.CommandStatus.Status != "Success" {
 			return nil, fmt.Errorf("storcli controller %d status is %q", number, controller.CommandStatus.Status)
 		}
 		d := controller.ResponseData
-		serial := firstHBAValue(d.Basics.SerialNumber, d.Serial)
-		sas := firstHBAValue(d.Basics.SASAddress, d.SASAddress)
 		pci := normalizePCIAddress(firstHBAValue(d.Basics.PCIAddress, d.PCIAddress))
-		model := firstHBAValue(d.Basics.Model, d.Basics.ProductName, d.Model, d.Product)
-		id := hbaStableID(sas, pci, serial)
-		if id == "" {
-			return nil, fmt.Errorf("storcli controller %d has no stable identity", number)
+		if pci == "" {
+			return nil, fmt.Errorf("storcli controller %d has no valid PCI address", number)
 		}
-		if previous, duplicate := ids[id]; duplicate {
-			return nil, fmt.Errorf("storcli controllers %d and %d have duplicate identity %q", previous, number, id)
-		}
-		ids[id], metadata[number] = number, hbaMetadata{id: id, model: model, pciAddress: pci}
+		controllers[number] = pci
 	}
-	return metadata, nil
+	return controllers, nil
 }
 
 func firstHBAValue(values ...string) string {
@@ -209,7 +218,11 @@ func firstHBAValue(values ...string) string {
 }
 
 func normalizePCIAddress(address string) string {
-	parts := strings.Split(strings.TrimSpace(address), ":")
+	address = strings.TrimSpace(address)
+	if dot := strings.LastIndexByte(address, '.'); dot > strings.LastIndexByte(address, ':') {
+		address = address[:dot] + ":" + address[dot+1:]
+	}
+	parts := strings.Split(address, ":")
 	if len(parts) != 4 {
 		return ""
 	}

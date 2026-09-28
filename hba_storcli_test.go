@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -125,32 +126,44 @@ func storCLIResponseWithTemperature(temperature string) string {
 	return `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"` + temperature + `"}]}}]}`
 }
 
-func TestStorCLIDiscoveryRequiresStableIdentity(t *testing.T) {
+func TestStorCLIDiscoveryRequiresPCIAddress(t *testing.T) {
 	data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Model":"SAS3008"}}]}`)
-	if _, err := parseStorCLIMetadata(data); err == nil {
-		t.Fatal("StorCLI controller without stable identity accepted")
+	if _, err := parseStorCLIControllers(data); err == nil {
+		t.Fatal("StorCLI controller without PCI address accepted")
 	}
 }
 
-func TestParseStorCLIMetadataVariants(t *testing.T) {
+func TestParseStorCLIControllerPCIVariants(t *testing.T) {
 	data := []byte(`{"Controllers":[
 		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Basics":{"Model":"SAS3008","Serial Number":"ignored","SAS Address":"0x56C92BF0002E6705","PCI Address":"0000:06:10:0"}}},
-		{"Command Status":{"Controller":4,"Status":"Success"},"Response Data":{"Product Name":"OEM HBA","Serial Number":"SERIAL-4"}}
+		{"Command Status":{"Controller":4,"Status":"Success"},"Response Data":{"Product Name":"OEM HBA","PCI Address":"0000:07:00:0"}}
 	]}`)
-	metadata, err := parseStorCLIMetadata(data)
+	controllers, err := parseStorCLIControllers(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := metadata[0], (hbaMetadata{id: "sas:56c92bf0002e6705", model: "SAS3008", pciAddress: "0000:06:10.0"}); got != want {
-		t.Fatalf("Basics metadata = %#v, want %#v", got, want)
+	want := map[int]string{0: "0000:06:10.0", 4: "0000:07:00.0"}
+	if !reflect.DeepEqual(controllers, want) {
+		t.Fatalf("controllers = %#v, want %#v", controllers, want)
 	}
-	if got, want := metadata[4], (hbaMetadata{id: "serial:SERIAL-4", model: "OEM HBA"}); got != want {
-		t.Fatalf("flat metadata = %#v, want %#v", got, want)
+}
+
+func TestMatchStorCLIControllersToSysfs(t *testing.T) {
+	identities := map[string]hbaMetadata{
+		"0000:06:10.0": {id: "sas:5000", model: "HBA", pciAddress: "0000:06:10.0"},
+	}
+	got, err := matchStorCLIControllers(map[int]string{4: "0000:06:10.0"}, identities)
+	if err != nil || !reflect.DeepEqual(got, map[int]hbaMetadata{4: identities["0000:06:10.0"]}) {
+		t.Fatalf("matched controllers = %#v, %v", got, err)
+	}
+	if _, err := matchStorCLIControllers(map[int]string{4: "0000:07:00.0"}, identities); err == nil {
+		t.Fatal("controller missing from sysfs was accepted")
 	}
 }
 
 func TestNormalizePCIAddress(t *testing.T) {
 	for input, want := range map[string]string{
+		"0000:06:10.0": "0000:06:10.0",
 		"0000:06:10:0": "0000:06:10.0",
 		"0:6:10:0":     "0000:06:10.0",
 		"0000:06:20:0": "",
@@ -164,10 +177,10 @@ func TestNormalizePCIAddress(t *testing.T) {
 
 func TestStorCLIParsersRejectDuplicateControllerNumbers(t *testing.T) {
 	discovery := []byte(`{"Controllers":[
-		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"SAS Address":"1"}},
-		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"SAS Address":"2"}}
+		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"PCI Address":"0000:06:00:0"}},
+		{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"PCI Address":"0000:07:00:0"}}
 	]}`)
-	if _, err := parseStorCLIMetadata(discovery); err == nil || !strings.Contains(err.Error(), "appears more than once") {
+	if _, err := parseStorCLIControllers(discovery); err == nil || !strings.Contains(err.Error(), "appears more than once") {
 		t.Fatalf("duplicate discovery controllers returned %v", err)
 	}
 
