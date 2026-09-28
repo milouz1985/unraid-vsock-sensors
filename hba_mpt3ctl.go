@@ -58,19 +58,21 @@ const (
 	mpt3FirmwareTimeout = 10
 )
 
-// MPT3COMMAND layout (96 bytes), from struct mpt3_cmd in mpt3sas_ctl.h.
-// Written at fixed byte offsets because Go struct alignment would not match
-// the kernel's packed ABI. Offsets not listed are zero and unused.
+// MPT3COMMAND buffer layout, from struct mpt3_ioctl_command in mpt3sas_ctl.h.
+// The ioctl encodes the 72-byte x86-64 struct size, but mf[1] starts at offset
+// 68 and data_sge_offset makes the kernel copy a 28-byte MPI request frame from
+// there. The userspace allocation must therefore be 68 + 28 = 96 bytes.
+// Fixed byte offsets avoid relying on Go struct alignment. Unlisted fields are
+// zero and unused by MPT3COMMAND.
 const (
 	mpt3CommandSize          = 96
 	mpt3CommandIOCOffset     = 0  // uint32 IOC number
-	mpt3CommandLenOffset     = 8  // uint32 total length of data in/out buffers
 	mpt3CommandTimeoutOffset = 12 // uint32 firmware timeout in seconds
 	mpt3CommandReplyPtrOff   = 16 // uint64 pointer to reply buffer
 	mpt3CommandDataInPtrOff  = 24 // uint64 pointer to data-in buffer
 	mpt3CommandMaxReplyOff   = 48 // uint32 maximum reply size
 	mpt3CommandDataInSizeOff = 52 // uint32 data-in buffer size
-	mpt3CommandSGEOffset     = 64 // uint32 number of SGEs (7 = fixed, no SGE list)
+	mpt3CommandSGEOffset     = 64 // uint32 word offset to the first SGL (7 = 28 bytes)
 	mpt3CommandRequestOffset = 68 // 28-byte MPI request frame
 )
 
@@ -120,13 +122,12 @@ func mpt3ConfigRequest(action, pageType, pageNumber, pageVersion byte, header []
 	return request
 }
 
-func makeMPT3Command(ioc int, request [28]byte, dataSize int, replyPointer, dataInPointer uintptr) mpt3Command {
+func makeMPT3Command(ioc int, request [28]byte, dataSize int, replyPointer, dataInPointer unsafe.Pointer) mpt3Command {
 	var command mpt3Command
 	binary.LittleEndian.PutUint32(command[mpt3CommandIOCOffset:], uint32(ioc))
-	binary.LittleEndian.PutUint32(command[mpt3CommandLenOffset:], uint32(max(dataSize, mpt3ReplyBufferSize)))
 	binary.LittleEndian.PutUint32(command[mpt3CommandTimeoutOffset:], mpt3FirmwareTimeout)
-	binary.LittleEndian.PutUint64(command[mpt3CommandReplyPtrOff:], uint64(replyPointer))
-	binary.LittleEndian.PutUint64(command[mpt3CommandDataInPtrOff:], uint64(dataInPointer))
+	binary.LittleEndian.PutUint64(command[mpt3CommandReplyPtrOff:], uint64(uintptr(replyPointer)))
+	binary.LittleEndian.PutUint64(command[mpt3CommandDataInPtrOff:], uint64(uintptr(dataInPointer)))
 	binary.LittleEndian.PutUint32(command[mpt3CommandMaxReplyOff:], mpt3ReplyBufferSize)
 	binary.LittleEndian.PutUint32(command[mpt3CommandDataInSizeOff:], uint32(dataSize))
 	binary.LittleEndian.PutUint32(command[mpt3CommandSGEOffset:], 7)
@@ -172,19 +173,21 @@ func (d *mpt3Device) iocInfo(ioc int) ([]byte, error) {
 func (d *mpt3Device) command(ioc int, request [28]byte, dataSize int) ([]byte, []byte, error) {
 	reply := make([]byte, mpt3ReplyBufferSize)
 	data := make([]byte, dataSize)
-	dataInPointer := uintptr(0)
+	// These pointers are encoded as integers inside command rather than passed
+	// directly to the syscall. Pin their backing arrays until the ioctl returns
+	// so the encoded addresses remain valid independently of GC movement.
+	var pinner runtime.Pinner
+	pinner.Pin(&reply[0])
+	defer pinner.Unpin()
+
+	var dataInPointer unsafe.Pointer
 	if dataSize > 0 {
-		dataInPointer = uintptr(unsafe.Pointer(&data[0]))
+		pinner.Pin(&data[0])
+		dataInPointer = unsafe.Pointer(&data[0])
 	}
 	command := makeMPT3Command(ioc, request, dataSize,
-		uintptr(unsafe.Pointer(&reply[0])), dataInPointer)
+		unsafe.Pointer(&reply[0]), dataInPointer)
 	err := mpt3IOCTL(d.file.Fd(), mpt3CommandIOCTL, unsafe.Pointer(&command[0]))
-	// The command encodes reply and data addresses as integer ABI fields. Keep
-	// them reachable until the ioctl returns, so the GC cannot reclaim the
-	// backing allocations before the kernel has finished with them.
-	runtime.KeepAlive(command)
-	runtime.KeepAlive(reply)
-	runtime.KeepAlive(data)
 	if err != nil {
 		return nil, nil, err
 	}

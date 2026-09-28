@@ -9,19 +9,21 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
 func TestMPT3CommandABI(t *testing.T) {
 	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, nil)
-	got := makeMPT3Command(3, request, 256, 0x11223344, 0x55667788)
+	reply, data := new(byte), new(byte)
+	replyPointer, dataPointer := unsafe.Pointer(reply), unsafe.Pointer(data)
+	got := makeMPT3Command(3, request, 256, replyPointer, dataPointer)
 	var want [96]byte
 	binary.LittleEndian.PutUint32(want[0:4], 3)
-	binary.LittleEndian.PutUint32(want[8:12], 256)
 	binary.LittleEndian.PutUint32(want[12:16], mpt3FirmwareTimeout)
-	binary.LittleEndian.PutUint64(want[16:24], 0x11223344)
-	binary.LittleEndian.PutUint64(want[24:32], 0x55667788)
+	binary.LittleEndian.PutUint64(want[16:24], uint64(uintptr(replyPointer)))
+	binary.LittleEndian.PutUint64(want[24:32], uint64(uintptr(dataPointer)))
 	binary.LittleEndian.PutUint32(want[48:52], mpt3ReplyBufferSize)
 	binary.LittleEndian.PutUint32(want[52:56], 256)
 	binary.LittleEndian.PutUint32(want[64:68], 7)
