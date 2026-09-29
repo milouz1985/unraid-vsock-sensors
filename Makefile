@@ -99,6 +99,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	done
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
 	php -l unraid-plugin/UnraidVsockSensorsDiagnostics.page >/dev/null
+	php -l unraid-plugin/diagnostics_page_test.php >/dev/null
 	php -l unraid-plugin/uvss_control.php >/dev/null
 	php -l unraid-plugin/uvss_action.php >/dev/null
 	bash version_test.sh
@@ -107,6 +108,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/uvss_action_test.sh
 	bash unraid-plugin/rc_test.sh
+	php unraid-plugin/diagnostics_page_test.php >/dev/null
 	php unraid-plugin/uvss_control_test.php >/dev/null
 
 check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts

@@ -26,6 +26,17 @@ function uvssDiagState($state): string {
     }
     return '<span class="uvssdiag-status ' . $class . '">' . uvssDiagEsc(ucfirst($state)) . '</span>';
 }
+function uvssDiagHBATemperatures(array $hba): array {
+    $ioc = $hba['ioc_temp_c'] ?? null;
+    $board = $hba['board_temp_c'] ?? null;
+    if ($ioc === null && $board === null) {
+        $ioc = $hba['temp_c'] ?? null;
+    }
+    return [$ioc, $board];
+}
+function uvssDiagTemperature($temperature): string {
+    return $temperature === null ? '—' : uvssDiagEsc($temperature) . ' °C';
+}
 $diagnosticsPath = '/run/unraid-vsock-sensors/diagnostics.json';
 $diagnostics = null;
 $error = '';
@@ -80,7 +91,7 @@ if ($data === false) {
 $vsock = $diagnostics['vsock'] ?? [];
 $emhttpd = $diagnostics['emhttpd'] ?? [];
 $disks = $diagnostics['disks'] ?? [];
-$hba = $diagnostics['hba'] ?? [];
+$hbaDiagnostics = $diagnostics['hba'] ?? [];
 ?>
 
 <h3>Overall status</h3>
@@ -89,7 +100,7 @@ $hba = $diagnostics['hba'] ?? [];
 <tr><td>VSOCK</td><td><?=uvssDiagState($vsock['status'] ?? 'error')?></td><td>Last successful publish: <?=uvssDiagEsc(uvssDiagAge($vsock['last_published_age_seconds'] ?? null))?></td></tr>
 <tr><td>emhttpd SMART</td><td><?=uvssDiagState($emhttpd['status'] ?? 'error')?></td><td><?=uvssDiagEsc($emhttpd['temperature_source'] ?? null)?></td></tr>
 <tr><td>Disk collector</td><td><?=uvssDiagState($disks['status'] ?? 'error')?></td><td><?=uvssDiagEsc($disks['error'] ?? '')?></td></tr>
-<tr><td>HBA collector</td><td><?=uvssDiagState($hba['status'] ?? 'error')?></td><td><?=uvssDiagEsc($hba['last_error'] ?? '')?></td></tr>
+<tr><td>HBA collector</td><td><?=uvssDiagState($hbaDiagnostics['status'] ?? 'error')?></td><td><?=uvssDiagEsc($hbaDiagnostics['last_error'] ?? '')?></td></tr>
 </tbody></table>
 
 <h3>emhttpd / SMART</h3>
@@ -112,11 +123,15 @@ $hba = $diagnostics['hba'] ?? [];
 <?php endif; ?>
 
 <h3>HBA</h3>
-<p>Mode: <?=uvssDiagEsc($hba['mode'] ?? null)?> · Backend: <?=uvssDiagEsc($hba['backend'] ?? null)?> · Interval: <?=uvssDiagEsc($hba['interval'] ?? null)?> · Controllers: <?=uvssDiagEsc($hba['count'] ?? null)?> · Last successful collection: <?=uvssDiagEsc($hba['last_successful_at'] ?? null)?> (<?=uvssDiagEsc(uvssDiagAge($hba['snapshot_age_seconds'] ?? null))?>)</p>
-<?php if (!empty($hba['last_error'])): ?><p class="red">HBA collector: <?=uvssDiagEsc($hba['last_error'])?> (<?=uvssDiagEsc($hba['last_error_at'] ?? null)?>)</p><?php endif; ?>
-<?php if (!empty($hba['items'])): ?>
-<table><thead><tr><th>ID</th><th>Model</th><th>PCI address</th><th>Temperature</th></tr></thead><tbody>
-<?php foreach ($hba['items'] as $controller): ?><tr><td><?=uvssDiagEsc($controller['id'] ?? null)?></td><td><?=uvssDiagEsc($controller['model'] ?? null)?></td><td><?=uvssDiagEsc($controller['pci_address'] ?? null)?></td><td><?=uvssDiagEsc($controller['temp_c'] ?? null)?> °C</td></tr><?php endforeach; ?>
+<p>Mode: <?=uvssDiagEsc($hbaDiagnostics['mode'] ?? null)?> · Backend: <?=uvssDiagEsc($hbaDiagnostics['backend'] ?? null)?> · Interval: <?=uvssDiagEsc($hbaDiagnostics['interval'] ?? null)?> · Controllers: <?=uvssDiagEsc($hbaDiagnostics['count'] ?? null)?> · Last successful collection: <?=uvssDiagEsc($hbaDiagnostics['last_successful_at'] ?? null)?> (<?=uvssDiagEsc(uvssDiagAge($hbaDiagnostics['snapshot_age_seconds'] ?? null))?>)</p>
+<?php if (!empty($hbaDiagnostics['last_error'])): ?><p class="red">HBA collector: <?=uvssDiagEsc($hbaDiagnostics['last_error'])?> (<?=uvssDiagEsc($hbaDiagnostics['last_error_at'] ?? null)?>)</p><?php endif; ?>
+<?php if (!empty($hbaDiagnostics['items'])): ?>
+<table><thead><tr><th>ID</th><th>Model</th><th>PCI address</th><th>IOC temperature</th><th>Board temperature</th></tr></thead><tbody>
+<?php foreach ($hbaDiagnostics['items'] as $hba):
+[$iocTemperature, $boardTemperature] = uvssDiagHBATemperatures($hba);
+?>
+<tr><td><?=uvssDiagEsc($hba['id'] ?? null)?></td><td><?=uvssDiagEsc($hba['model'] ?? null)?></td><td><?=uvssDiagEsc($hba['pci_address'] ?? null)?></td><td><?=uvssDiagTemperature($iocTemperature)?></td><td><?=uvssDiagTemperature($boardTemperature)?></td></tr>
+<?php endforeach; ?>
 </tbody></table>
 <?php endif; ?>
 
