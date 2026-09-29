@@ -148,12 +148,12 @@ donc un risque résiduel. Le backend StorCLI conserve l'association entre ses
 index et cet inventaire tant que la lecture des températures réussit avec le
 même ensemble d'index. Un remplacement à chaud avec index inchangés peut
 conserver une identité périmée jusqu'au redémarrage du daemon.
-`CommandContext(...).Output()` peut aussi attendre un enfant qui
-garde ses pipes ouverts après l'arrêt du processus principal ; ce cas a été
-reproduit avec un faux StorCLI, pas avec le binaire réel sur Unraid. Le snapshot
-HBA expire indépendamment pour protéger le failsafe hwmon. Si le cas est
-confirmé sur le vrai chemin StorCLI, traiter localement groupe de processus,
-annulation et attente bornée.
+StorCLI est exécuté directement avec un délai bornant l'attente de ses pipes.
+Une annulation termine le processus principal et `WaitDelay` empêche un
+descendant conservant stdout ou stderr ouvert de bloquer indéfiniment la
+collecte. UVSS ne garantit pas la terminaison d'un descendant détaché, notamment
+s'il a créé sa propre session. Le snapshot HBA expire indépendamment pour
+protéger le failsafe hwmon.
 
 Les températures des disques proviennent de :
 

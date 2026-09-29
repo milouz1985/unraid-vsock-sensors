@@ -6,9 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHBAReaderCachesDiscovery(t *testing.T) {
@@ -165,6 +170,77 @@ func TestBuildHBAReadingsPreservesLegacyProjection(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunStorCLI(t *testing.T) {
+	installTestStorCLI(t, `printf 'normal output'`)
+	output, err := runStorCLI(context.Background(), "discovery", "show")
+	if err != nil || string(output) != "normal output" {
+		t.Fatalf("output = %q, error = %v", output, err)
+	}
+}
+
+func TestRunStorCLIPreservesCommandError(t *testing.T) {
+	installTestStorCLI(t, `printf 'firmware error\n' >&2; exit 7`)
+	_, err := runStorCLI(context.Background(), "discovery", "show")
+	if err == nil || !strings.Contains(err.Error(), "storcli discovery: exit status 7: firmware error") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunStorCLITimeout(t *testing.T) {
+	installTestStorCLI(t, `exec sleep 10`)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := runStorCLI(ctx, "temperature", "show")
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "storcli temperature timeout") {
+		t.Fatalf("error = %v, want storcli timeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("timeout returned after %v", elapsed)
+	}
+}
+
+func TestRunStorCLIBoundsChildHoldingOutputPipe(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "child.pid")
+	installTestStorCLI(t, "sleep 10 &\nprintf '%s\\n' \"$!\" > '"+pidPath+"'\nexit 0")
+	started := time.Now()
+	_, err := runStorCLI(context.Background(), "temperature", "show")
+	child, findErr := os.FindProcess(readTestPID(t, pidPath))
+	if findErr != nil {
+		t.Fatal(findErr)
+	}
+	t.Cleanup(func() { _ = child.Kill() })
+	if !errors.Is(err, exec.ErrWaitDelay) {
+		t.Fatalf("error = %v, want WaitDelay expiry", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("child holding output pipe delayed return by %v", elapsed)
+	}
+}
+
+func installTestStorCLI(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "storcli")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func readTestPID(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse PID %q: %v", data, err)
+	}
+	return pid
 }
 
 func TestParseStorCLIRejectsUnexpectedOutput(t *testing.T) {

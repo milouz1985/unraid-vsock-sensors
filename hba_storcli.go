@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"unraid-vsock-sensors/internal/sensors"
 )
@@ -99,6 +100,9 @@ func runStorCLI(ctx context.Context, operation string, args ...string) ([]byte, 
 		return nil, fmt.Errorf("%w: storcli is not installed", errHBABackendUnavailable)
 	}
 	command := exec.CommandContext(ctx, path, args...)
+	// StorCLI is executed directly. WaitDelay bounds pipe draining if a
+	// descendant keeps stdout or stderr open after the main process exits.
+	command.WaitDelay = time.Second
 	out, err := command.Output()
 	if ctx.Err() != nil {
 		return nil, storcliContextError(operation, ctx.Err())

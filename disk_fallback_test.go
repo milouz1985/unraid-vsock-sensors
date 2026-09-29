@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -708,6 +710,91 @@ func TestFallbackCommandCancellation(t *testing.T) {
 	if _, err := runFallbackCommand(ctx, command); err == nil || time.Since(start) > time.Second {
 		t.Fatalf("canceled command was not bounded: %v", err)
 	}
+}
+
+func TestFallbackCommandSuccess(t *testing.T) {
+	command := fallbackTestCommand(t, `printf 'normal output'`)
+	output, err := runFallbackCommand(context.Background(), command)
+	if err != nil || string(output) != "normal output" {
+		t.Fatalf("output = %q, error = %v", output, err)
+	}
+}
+
+func TestFallbackCommandTerminatesWrapperProcessGroup(t *testing.T) {
+	directory := t.TempDir()
+	wrapperPIDPath := filepath.Join(directory, "wrapper.pid")
+	childPIDPath := filepath.Join(directory, "child.pid")
+	command := fallbackTestCommand(t,
+		"printf '%s\n' \"$$\" > '"+wrapperPIDPath+"'\n"+
+			"sleep 10 &\n"+
+			"printf '%s\n' \"$!\" > '"+childPIDPath+"'\n"+
+			"wait \"$!\"")
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := runFallbackCommand(ctx, command)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("timeout returned after %v", elapsed)
+	}
+	requireFallbackTestProcessGone(t, readFallbackTestPID(t, wrapperPIDPath))
+	requireFallbackTestProcessGone(t, readFallbackTestPID(t, childPIDPath))
+}
+
+func TestFallbackCommandBoundsChildHoldingOutputPipe(t *testing.T) {
+	childPIDPath := filepath.Join(t.TempDir(), "child.pid")
+	command := fallbackTestCommand(t,
+		"sleep 10 &\n"+
+			"printf '%s\n' \"$!\" > '"+childPIDPath+"'\n"+
+			"exit 0")
+	started := time.Now()
+	_, err := runFallbackCommand(context.Background(), command)
+	child := findFallbackTestProcess(t, readFallbackTestPID(t, childPIDPath))
+	t.Cleanup(func() { _ = child.Kill() })
+	if !errors.Is(err, exec.ErrWaitDelay) {
+		t.Fatalf("error = %v, want WaitDelay expiry", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("child holding output pipe delayed return by %v", elapsed)
+	}
+}
+
+func readFallbackTestPID(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse PID %q: %v", data, err)
+	}
+	return pid
+}
+
+func findFallbackTestProcess(t *testing.T, pid int) *os.Process {
+	t.Helper()
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatalf("find process %d: %v", pid, err)
+	}
+	return process
+}
+
+func requireFallbackTestProcessGone(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		} else if err != nil {
+			t.Fatalf("inspect process %d: %v", pid, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("process %d is still running", pid)
 }
 
 func TestFallbackConcurrencyIsBounded(t *testing.T) {
