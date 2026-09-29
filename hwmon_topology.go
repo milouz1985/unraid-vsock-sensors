@@ -92,21 +92,35 @@ func makeHWMonSamples(state sensors.Response) (diskSamples, hbaSamples []hwmonSa
 		})
 	}
 	for _, hba := range state.HBAs {
-		id := "hba:" + hba.ID
-		label := hba.ID
-		if hba.Model != "" && hba.PCIAddress != "" {
-			label = fmt.Sprintf("%s (%s)", hba.Model, hba.PCIAddress)
-		} else if hba.Model != "" {
-			label = hba.Model
-		} else if hba.PCIAddress != "" {
-			label = hba.PCIAddress
+		if hba.IOCTemp == nil && hba.BoardTemp == nil {
+			hbaSamples = append(hbaSamples, makeHBASample(hba, "hba:"+hba.ID, "", hba.Temp))
+			continue
 		}
-		hbaSamples = append(hbaSamples, hwmonSample{
-			sensor:      hwmonSensor{id: id, label: sanitizeHWMonLabel(label, id)},
-			temperature: hba.Temp,
-		})
+		if hba.IOCTemp != nil {
+			hbaSamples = append(hbaSamples, makeHBASample(hba, "hba:"+hba.ID, "IOC", *hba.IOCTemp))
+		}
+		if hba.BoardTemp != nil {
+			hbaSamples = append(hbaSamples, makeHBASample(hba, "hba:board:"+hba.ID, "Board", *hba.BoardTemp))
+		}
 	}
 	return diskSamples, hbaSamples
+}
+
+func makeHBASample(hba sensors.HBA, id, probe string, temperature float64) hwmonSample {
+	label := hba.ID
+	if hba.Model != "" {
+		label = hba.Model
+	}
+	if probe != "" {
+		label += " " + probe
+	}
+	if hba.PCIAddress != "" {
+		label = fmt.Sprintf("%s (%s)", label, hba.PCIAddress)
+	}
+	return hwmonSample{
+		sensor:      hwmonSensor{id: id, label: sanitizeHWMonLabel(label, id)},
+		temperature: temperature,
+	}
 }
 
 // sanitizeHWMonLabel keeps presentation metadata from invalidating an otherwise

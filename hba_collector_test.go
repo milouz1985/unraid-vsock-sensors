@@ -36,7 +36,7 @@ func TestHBACollectorSnapshotDoesNotWaitForRefresh(t *testing.T) {
 func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 	collector := newTestHBACollector(time.Minute, hbaModeEnabled)
 	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
-		return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
+		return []sensors.HBA{{ID: "sas:1234", Temp: 42, IOCTemp: float64Pointer(42)}}, nil
 	})
 	collector.refresh(context.Background())
 	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
@@ -60,7 +60,7 @@ func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 func TestHBACollectorSnapshotReturnsDefensiveCopy(t *testing.T) {
 	collector := newTestHBACollector(time.Minute, hbaModeEnabled)
 	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
-		return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
+		return []sensors.HBA{{ID: "sas:1234", Temp: 42, IOCTemp: float64Pointer(42)}}, nil
 	})
 	collector.refresh(context.Background())
 	readings, err := collector.snapshot()
@@ -68,7 +68,8 @@ func TestHBACollectorSnapshotReturnsDefensiveCopy(t *testing.T) {
 		t.Fatalf("snapshot = %#v, %v", readings, err)
 	}
 	readings[0].Temp = 99
-	if fresh, err := collector.snapshot(); err != nil || fresh[0].Temp != 42 {
+	*readings[0].IOCTemp = 99
+	if fresh, err := collector.snapshot(); err != nil || fresh[0].Temp != 42 || *fresh[0].IOCTemp != 42 {
 		t.Fatalf("snapshot mutation reached collector: %#v, %v", fresh, err)
 	}
 }

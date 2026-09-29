@@ -105,7 +105,7 @@ func TestMPT3ParsersRejectUndersizedBuffers(t *testing.T) {
 	if err := validateMPT3ConfigReply(make([]byte, 0x17), mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7); err == nil {
 		t.Fatal("undersized CONFIG reply accepted")
 	}
-	if _, err := parseMPT3Temperature(make([]byte, 0x12)); err == nil {
+	if _, err := parseMPT3Temperatures(make([]byte, 0x16)); err == nil {
 		t.Fatal("undersized IO Unit Page 7 accepted")
 	}
 }
@@ -161,38 +161,77 @@ func TestMPT3DiscoveryUsesSysfsIOC(t *testing.T) {
 	}
 }
 
-func TestParseMPT3Temperature(t *testing.T) {
-	for name, test := range map[string]struct {
-		raw     int16
-		units   byte
-		want    float64
-		invalid bool
+func TestParseMPT3Temperatures(t *testing.T) {
+	tests := []struct {
+		name       string
+		iocRaw     int16
+		iocUnits   byte
+		boardRaw   int16
+		boardUnits byte
+		wantIOC    *float64
+		wantBoard  *float64
 	}{
-		"Celsius":         {raw: 42, units: temperatureCelsius, want: 42},
-		"Celsius -1":      {raw: -1, units: temperatureCelsius, want: -1},
-		"Celsius -40":     {raw: -40, units: temperatureCelsius, want: -40},
-		"Celsius 151":     {raw: 151, units: temperatureCelsius, want: 151},
-		"Celsius 200":     {raw: 200, units: temperatureCelsius, want: 200},
-		"Celsius maximum": {raw: math.MaxInt16, units: temperatureCelsius, want: math.MaxInt16},
-		"Fahrenheit 32":   {raw: 32, units: temperatureFahrenheit, want: 0},
-		"Fahrenheit -40":  {raw: -40, units: temperatureFahrenheit, want: -40},
-		"Fahrenheit 104":  {raw: 104, units: temperatureFahrenheit, want: 40},
-		"Fahrenheit 212":  {raw: 212, units: temperatureFahrenheit, want: 100},
-		"Fahrenheit high": {raw: 1000, units: temperatureFahrenheit, want: 537.7777777777778},
-		"not present":     {units: temperatureNotPresent, invalid: true},
-		"unknown units":   {raw: 51, units: 3, invalid: true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			page := make([]byte, 0x17)
-			binary.LittleEndian.PutUint16(page[0x10:0x12], uint16(test.raw))
-			page[0x12] = test.units
-			got, err := parseMPT3Temperature(page)
-			if test.invalid && err == nil {
-				t.Fatalf("got %v, expected error", got)
+		{name: "IOC only", iocRaw: 42, iocUnits: temperatureCelsius, boardUnits: temperatureNotPresent, wantIOC: float64Pointer(42)},
+		{name: "board only", iocUnits: temperatureNotPresent, boardRaw: 43, boardUnits: temperatureCelsius, wantBoard: float64Pointer(43)},
+		{name: "IOC and board", iocRaw: 42, iocUnits: temperatureCelsius, boardRaw: 43, boardUnits: temperatureCelsius, wantIOC: float64Pointer(42), wantBoard: float64Pointer(43)},
+		{name: "no probes", iocUnits: temperatureNotPresent, boardUnits: temperatureNotPresent},
+		{name: "unknown IOC unit", iocRaw: 51, iocUnits: 0xff, boardRaw: 43, boardUnits: temperatureCelsius, wantBoard: float64Pointer(43)},
+		{name: "unknown board unit", iocRaw: 42, iocUnits: temperatureCelsius, boardRaw: 51, boardUnits: 0xff, wantIOC: float64Pointer(42)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			page := mpt3TemperaturePage(test.iocRaw, test.iocUnits, test.boardRaw, test.boardUnits)
+			got, err := parseMPT3Temperatures(page)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if !test.invalid && (err != nil || math.Abs(got-test.want) > 1e-12) {
-				t.Fatalf("got %v, %v; want %v", got, err, test.want)
+			if !equalOptionalTemperature(got.ioc, test.wantIOC) || !equalOptionalTemperature(got.board, test.wantBoard) {
+				t.Fatalf("temperatures = IOC %v, board %v; want IOC %v, board %v", got.ioc, got.board, test.wantIOC, test.wantBoard)
 			}
 		})
 	}
+}
+
+func TestDecodeMPT3Temperature(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   int16
+		units byte
+		want  *float64
+	}{
+		{name: "Celsius", raw: 42, units: temperatureCelsius, want: float64Pointer(42)},
+		{name: "negative Celsius", raw: -40, units: temperatureCelsius, want: float64Pointer(-40)},
+		{name: "high Celsius", raw: math.MaxInt16, units: temperatureCelsius, want: float64Pointer(math.MaxInt16)},
+		{name: "freezing Fahrenheit", raw: 32, units: temperatureFahrenheit, want: float64Pointer(0)},
+		{name: "negative Fahrenheit", raw: -40, units: temperatureFahrenheit, want: float64Pointer(-40)},
+		{name: "high Fahrenheit", raw: 1000, units: temperatureFahrenheit, want: float64Pointer(537.7777777777778)},
+		{name: "not present", units: temperatureNotPresent},
+		{name: "unknown units", raw: 51, units: 3},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := make([]byte, 2)
+			binary.LittleEndian.PutUint16(raw, uint16(test.raw))
+			got := decodeMPT3Temperature(raw, test.units)
+			if !equalOptionalTemperature(got, test.want) {
+				t.Fatalf("temperature = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func mpt3TemperaturePage(iocRaw int16, iocUnits byte, boardRaw int16, boardUnits byte) []byte {
+	page := make([]byte, 0x17)
+	binary.LittleEndian.PutUint16(page[0x10:0x12], uint16(iocRaw))
+	page[0x12] = iocUnits
+	binary.LittleEndian.PutUint16(page[0x14:0x16], uint16(boardRaw))
+	page[0x16] = boardUnits
+	return page
+}
+
+func equalOptionalTemperature(got, want *float64) bool {
+	if got == nil || want == nil {
+		return got == nil && want == nil
+	}
+	return math.Abs(*got-*want) <= 1e-12
 }

@@ -396,7 +396,15 @@ configuration Unraid.
 Deux backends sont disponibles :
 
 - `mpt3ctl` : requêtes MPI CONFIG en lecture seule via `/dev/mpt3ctl` ;
-- StorCLI : température ROC issue de sa sortie JSON.
+- StorCLI : température ROC et, lorsqu'elle existe, température du contrôleur
+  issues de sa sortie JSON.
+
+Un HBA peut exposer deux sondes distinctes : `IOC` et `Board`. Le backend
+`mpt3ctl` suit les unités et indicateurs de présence de la page IO Unit 7 ;
+StorCLI associe `ROC temperature` à IOC et `Ctrl temperature` (ou
+`Controller temperature`) à Board. Une sonde absente ou dont l'unité n'est pas
+supportée n'est pas créée. L'identité du contrôleur reste commune aux deux
+sondes, dont les labels indiquent explicitement le type.
 
 Pour les deux backends, l'identité vient de `/sys/class/scsi_host` : UVSS relie
 le contrôleur à son adresse PCI, puis lit `host_sas_address` et `board_name`

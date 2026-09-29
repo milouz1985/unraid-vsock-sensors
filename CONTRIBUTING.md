@@ -164,6 +164,25 @@ Les températures des disques proviennent de :
 
 La collecte HBA reste séparée de la collecte disque.
 
+### Politique des températures
+
+Les collecteurs ne décident pas si une température est physiquement plausible.
+Ils publient fidèlement une mesure lorsque la source indique qu'elle existe,
+que son unité est supportée et que sa valeur peut être décodée et représentée
+correctement. Ils la rejettent uniquement lorsque la source ou le protocole la
+marque absente ou invalide, lorsque son unité n'est pas supportée, ou lorsque
+sa représentation est invalide ou impossible à décoder.
+
+Il ne faut donc pas ajouter de plage arbitraire telle que `0..120 °C`, clamper
+les températures, ni supprimer les tests de valeurs négatives ou élevées qui
+vérifient le décodage correct d'un protocole.
+
+La sentinelle `0 °C` publiée pendant l'état disque `waking` est volontaire. Elle
+évite qu'une indisponibilité transitoire au réveil déclenche le failsafe hwmon à
+`100 °C`, puis revienne immédiatement à la température physique, ce qui
+provoquerait un yoyo inutile des ventilateurs. Elle ne doit pas être remplacée
+par `Unavailable`.
+
 ### Côté Proxmox
 
 Le récepteur :

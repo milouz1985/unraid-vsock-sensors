@@ -23,6 +23,13 @@ func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 			Protocol: ProtocolVersion, Disks: []Disk{},
 			HBAs: []HBA{{ID: "sas:1234", Temp: 51}},
 		},
+		{
+			Protocol: ProtocolVersion, Disks: []Disk{},
+			HBAs: []HBA{{
+				ID: "sas:5678", Temp: 52,
+				IOCTemp: float64Pointer(52), BoardTemp: float64Pointer(48),
+			}},
+		},
 	}
 	for _, response := range want {
 		if err := WriteFrame(&stream, response); err != nil {
@@ -42,6 +49,10 @@ func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 	if _, err := reader.Read(); err != io.EOF {
 		t.Fatalf("end of stream error = %v, want EOF", err)
 	}
+}
+
+func float64Pointer(value float64) *float64 {
+	return &value
 }
 
 func TestStreamRejectsIncompatibleProtocol(t *testing.T) {

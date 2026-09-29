@@ -17,7 +17,7 @@ import (
 
 const (
 	maxDiskHWMonIDSize = len("disk:") + maxUnraidDiskIDSize
-	maxHBAHWMonIDSize  = len("hba:") + maxHBAStableIDSize
+	maxHBAHWMonIDSize  = len("hba:board:") + maxHBAStableIDSize
 	maxHWMonIDSize     = max(maxDiskHWMonIDSize, maxHBAHWMonIDSize)
 	maxHWMonLabelSize  = 95
 	// Guard against corrupt or aberrant inventories creating an unbounded number

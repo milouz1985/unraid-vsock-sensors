@@ -20,14 +20,11 @@ func addMPT3BoundarySeeds(f *testing.F, minimum int) {
 }
 
 func mpt3TemperatureSeed(raw int16, units byte) []byte {
-	page := make([]byte, 0x17)
-	binary.LittleEndian.PutUint16(page[0x10:0x12], uint16(raw))
-	page[0x12] = units
-	return page
+	return mpt3TemperaturePage(raw, units, 0, temperatureNotPresent)
 }
 
-func FuzzParseMPT3Temperature(f *testing.F) {
-	const minimum = 0x13
+func FuzzParseMPT3Temperatures(f *testing.F) {
+	const minimum = 0x17
 	addMPT3BoundarySeeds(f, minimum)
 
 	f.Add(mpt3TemperatureSeed(51, temperatureCelsius))
@@ -40,29 +37,37 @@ func FuzzParseMPT3Temperature(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, page []byte) {
-		temperature, err := parseMPT3Temperature(page)
+		temperatures, err := parseMPT3Temperatures(page)
 		if len(page) < minimum && err == nil {
-			t.Fatalf("short page returned temperature %v", temperature)
-		}
-		if len(page) >= minimum && page[0x12] != temperatureCelsius && page[0x12] != temperatureFahrenheit && err == nil {
-			t.Fatalf("unsupported temperature unit 0x%02x was accepted", page[0x12])
+			t.Fatalf("short page returned temperatures %#v", temperatures)
 		}
 		if err != nil {
 			return
 		}
-		if math.IsNaN(temperature) || math.IsInf(temperature, 0) {
-			t.Fatalf("non-finite temperature: %v", temperature)
-		}
-
-		raw := int16(binary.LittleEndian.Uint16(page[0x10:0x12]))
-		want := float64(raw)
-		if page[0x12] == temperatureFahrenheit {
-			want = (float64(raw) - 32) * 5 / 9
-		}
-		if temperature != want {
-			t.Fatalf("decoded temperature = %v, want %v for raw %d and unit 0x%02x", temperature, want, raw, page[0x12])
-		}
+		checkMPT3FuzzTemperature(t, temperatures.ioc, page[0x10:0x12], page[0x12])
+		checkMPT3FuzzTemperature(t, temperatures.board, page[0x14:0x16], page[0x16])
 	})
+}
+
+func checkMPT3FuzzTemperature(t *testing.T, got *float64, rawBytes []byte, units byte) {
+	t.Helper()
+	if units != temperatureCelsius && units != temperatureFahrenheit {
+		if got != nil {
+			t.Fatalf("unsupported temperature unit 0x%02x returned %v", units, *got)
+		}
+		return
+	}
+	if got == nil || math.IsNaN(*got) || math.IsInf(*got, 0) {
+		t.Fatalf("supported temperature unit 0x%02x returned %v", units, got)
+	}
+	raw := int16(binary.LittleEndian.Uint16(rawBytes))
+	want := float64(raw)
+	if units == temperatureFahrenheit {
+		want = (float64(raw) - 32) * 5 / 9
+	}
+	if *got != want {
+		t.Fatalf("decoded temperature = %v, want %v for raw %d and unit 0x%02x", *got, want, raw, units)
+	}
 }
 
 func validMPT3ConfigReplySeed() []byte {

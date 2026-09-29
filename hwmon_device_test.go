@@ -41,6 +41,26 @@ func TestMakeHWMonSamples(t *testing.T) {
 	}
 }
 
+func TestMakeHWMonSamplesCreatesSeparateHBAProbes(t *testing.T) {
+	state := sensors.Response{HBAs: []sensors.HBA{{
+		ID:         "sas:1234",
+		Model:      "SAS3008",
+		PCIAddress: "0000:06:10.0",
+		Temp:       51,
+		IOCTemp:    float64Pointer(51),
+		BoardTemp:  float64Pointer(47),
+	}}}
+
+	_, got := makeHWMonSamples(state)
+	want := []hwmonSample{
+		hwmonTestSample("hba:sas:1234", "SAS3008 IOC (0000:06:10.0)", 51),
+		hwmonTestSample("hba:board:sas:1234", "SAS3008 Board (0000:06:10.0)", 47),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("HBA readings = %#v, want %#v", got, want)
+	}
+}
+
 func TestMakeHWMonSamplesFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 	state := sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},

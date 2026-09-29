@@ -18,8 +18,8 @@ func TestHBAReaderCachesDiscovery(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{2: {id: "sas:1234", model: "SAS3008"}}, nil
 		},
-		readTemperatures: func(context.Context) (map[int]float64, error) {
-			return map[int]float64{2: 51}, nil
+		readTemperatures: func(context.Context) (map[int]hbaTemperatures, error) {
+			return map[int]hbaTemperatures{2: {ioc: float64Pointer(51)}}, nil
 		},
 	}
 	for range 2 {
@@ -40,12 +40,12 @@ func TestHBAReaderRediscoversAndRetriesAfterReadError(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{discoveries: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
 		},
-		readTemperatures: func(context.Context) (map[int]float64, error) {
+		readTemperatures: func(context.Context) (map[int]hbaTemperatures, error) {
 			reads++
 			if reads == 2 {
 				return nil, errors.New("controller changed")
 			}
-			return map[int]float64{discoveries: 51}, nil
+			return map[int]hbaTemperatures{discoveries: {ioc: float64Pointer(51)}}, nil
 		},
 	}
 	if _, err := reader.collect(context.Background()); err != nil {
@@ -64,12 +64,12 @@ func TestHBAReaderRediscoversOnControllerSetMismatch(t *testing.T) {
 			discoveries++
 			return map[int]hbaMetadata{discoveries - 1: {id: fmt.Sprintf("sas:%d", discoveries)}}, nil
 		},
-		readTemperatures: func(context.Context) (map[int]float64, error) {
+		readTemperatures: func(context.Context) (map[int]hbaTemperatures, error) {
 			reads++
 			if reads == 2 {
-				return map[int]float64{1: 52}, nil
+				return map[int]hbaTemperatures{1: {ioc: float64Pointer(52)}}, nil
 			}
-			return map[int]float64{discoveries - 1: 51}, nil
+			return map[int]hbaTemperatures{discoveries - 1: {ioc: float64Pointer(51)}}, nil
 		},
 	}
 	if _, err := reader.collect(context.Background()); err != nil {
@@ -87,16 +87,83 @@ func TestParseStorCLI(t *testing.T) {
 			property := "ROC temperature(Degree " + spelling + ")"
 			data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"` + property + `","Value":"49"}]}}]}`)
 			readings, err := parseStorCLI(data)
-			if err != nil || len(readings) != 1 || readings[0] != 49 {
+			if err != nil || len(readings) != 1 || readings[0].ioc == nil || *readings[0].ioc != 49 || readings[0].board != nil {
 				t.Fatalf("got %#v, %v", readings, err)
 			}
 		})
 	}
 	for raw, want := range map[string]float64{"0": 0, "-40": -40, "151": 151, "255": 255} {
 		readings, err := parseStorCLI([]byte(storCLIResponseWithTemperature(raw)))
-		if err != nil || readings[0] != want {
+		if err != nil || readings[0].ioc == nil || *readings[0].ioc != want {
 			t.Errorf("temperature %q = %#v, %v; want %v", raw, readings, err, want)
 		}
+	}
+}
+
+func TestParseStorCLITemperatureProbes(t *testing.T) {
+	tests := []struct {
+		name       string
+		properties string
+		wantIOC    *float64
+		wantBoard  *float64
+	}{
+		{
+			name:       "ROC only",
+			properties: `{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"}`,
+			wantIOC:    float64Pointer(49),
+		},
+		{
+			name: "ROC and Ctrl",
+			properties: `{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"},` +
+				`{"Ctrl_Prop":"Ctrl temperature(Degree Celsius)","Value":"45"}`,
+			wantIOC:   float64Pointer(49),
+			wantBoard: float64Pointer(45),
+		},
+		{
+			name:       "controller temperature only",
+			properties: `{"Ctrl_Prop":"Controller temperature(Degree Celsius)","Value":"45"}`,
+			wantBoard:  float64Pointer(45),
+		},
+		{name: "no supported probe", properties: `{"Ctrl_Prop":"Ambient temperature","Value":"25"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[` + test.properties + `]}}]}`)
+			readings, err := parseStorCLI(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := readings[0]
+			if !equalOptionalTemperature(got.ioc, test.wantIOC) || !equalOptionalTemperature(got.board, test.wantBoard) {
+				t.Fatalf("temperatures = IOC %v, board %v; want IOC %v, board %v", got.ioc, got.board, test.wantIOC, test.wantBoard)
+			}
+		})
+	}
+}
+
+func TestBuildHBAReadingsPreservesLegacyProjection(t *testing.T) {
+	metadata := map[int]hbaMetadata{0: {id: "sas:1234", model: "SAS3008"}}
+	tests := []struct {
+		name         string
+		temperatures hbaTemperatures
+		wantCount    int
+		wantLegacy   float64
+	}{
+		{name: "IOC only", temperatures: hbaTemperatures{ioc: float64Pointer(49)}, wantCount: 1, wantLegacy: 49},
+		{name: "board only", temperatures: hbaTemperatures{board: float64Pointer(45)}, wantCount: 1, wantLegacy: 45},
+		{name: "IOC and board", temperatures: hbaTemperatures{ioc: float64Pointer(49), board: float64Pointer(45)}, wantCount: 1, wantLegacy: 49},
+		{name: "no probes", temperatures: hbaTemperatures{}, wantCount: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := buildHBAReadings(map[int]hbaTemperatures{0: test.temperatures}, metadata)
+			if len(got) != test.wantCount {
+				t.Fatalf("readings = %#v, want %d", got, test.wantCount)
+			}
+			if test.wantCount != 0 && got[0].Temp != test.wantLegacy {
+				t.Fatalf("legacy temperature = %v, want %v", got[0].Temp, test.wantLegacy)
+			}
+		})
 	}
 }
 
@@ -108,7 +175,6 @@ func TestParseStorCLIRejectsUnexpectedOutput(t *testing.T) {
 	}{
 		{name: "malformed JSON", data: `{`, want: "parse storcli JSON"},
 		{name: "failed status", data: `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Failure"},"Response Data":{}}]}`, want: `status is "Failure"`},
-		{name: "missing temperature", data: `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[]}}]}`, want: "has no ROC temperature"},
 		{name: "not a number", data: storCLIResponseWithTemperature("broken"), want: `invalid temperature "broken"`},
 		{name: "NaN", data: storCLIResponseWithTemperature("NaN"), want: `invalid temperature "NaN"`},
 		{name: "infinity", data: storCLIResponseWithTemperature("Inf"), want: `invalid temperature "Inf"`},

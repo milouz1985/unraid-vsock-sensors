@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +41,48 @@ type hbaMetadata struct {
 	id         string
 	model      string
 	pciAddress string
+}
+
+type hbaTemperatures struct {
+	ioc   *float64
+	board *float64
+}
+
+func makeHBAReading(metadata hbaMetadata, temperatures hbaTemperatures) (sensors.HBA, bool) {
+	legacy := temperatures.ioc
+	if legacy == nil {
+		legacy = temperatures.board
+	}
+	if legacy == nil {
+		return sensors.HBA{}, false
+	}
+	return sensors.HBA{
+		ID:         metadata.id,
+		Model:      metadata.model,
+		PCIAddress: metadata.pciAddress,
+		Temp:       *legacy,
+		IOCTemp:    temperatures.ioc,
+		BoardTemp:  temperatures.board,
+	}, true
+}
+
+func cloneHBAReadings(readings []sensors.HBA) []sensors.HBA {
+	if readings == nil {
+		return nil
+	}
+	cloned := make([]sensors.HBA, len(readings))
+	for index, reading := range readings {
+		cloned[index] = reading
+		if reading.IOCTemp != nil {
+			temperature := *reading.IOCTemp
+			cloned[index].IOCTemp = &temperature
+		}
+		if reading.BoardTemp != nil {
+			temperature := *reading.BoardTemp
+			cloned[index].BoardTemp = &temperature
+		}
+	}
+	return cloned
 }
 
 const (
@@ -193,7 +234,7 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	}
 	c.lastSuccessfulAt = finishedAt
 	c.lastErrorAt = time.Time{}
-	c.lastSuccessfulSnapshot = slices.Clone(readings)
+	c.lastSuccessfulSnapshot = cloneHBAReadings(readings)
 }
 
 // stale reports whether the last successful HBA snapshot has outlived the
@@ -216,7 +257,7 @@ func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	if c.stale() {
 		return nil, errors.New("HBA temperature snapshot expired")
 	}
-	return slices.Clone(c.lastSuccessfulSnapshot), nil
+	return cloneHBAReadings(c.lastSuccessfulSnapshot), nil
 }
 
 func (c *hbaCollector) status() hbaCollectorStatus {
@@ -225,6 +266,6 @@ func (c *hbaCollector) status() hbaCollectorStatus {
 	return hbaCollectorStatus{
 		interval: c.interval, mode: c.mode, backend: c.backend,
 		lastSuccessfulAt: c.lastSuccessfulAt, lastErrorAt: c.lastErrorAt, err: c.err,
-		lastSuccessfulSnapshot: slices.Clone(c.lastSuccessfulSnapshot), stale: c.stale(),
+		lastSuccessfulSnapshot: cloneHBAReadings(c.lastSuccessfulSnapshot), stale: c.stale(),
 	}
 }

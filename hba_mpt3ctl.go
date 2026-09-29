@@ -282,24 +282,29 @@ func (d *mpt3Device) readIOUnitPage7(ctx context.Context, ioc int) ([]byte, erro
 	return page, nil
 }
 
-func parseMPT3Temperature(page []byte) (float64, error) {
-	const minimum = 0x13
+func parseMPT3Temperatures(page []byte) (hbaTemperatures, error) {
+	const minimum = 0x17
 	if len(page) < minimum {
-		return 0, errors.New("IO Unit Page 7 is shorter than the IOC temperature fields")
+		return hbaTemperatures{}, errors.New("IO Unit Page 7 is shorter than the temperature fields")
 	}
-	raw := int16(binary.LittleEndian.Uint16(page[0x10:0x12]))
+	return hbaTemperatures{
+		ioc:   decodeMPT3Temperature(page[0x10:0x12], page[0x12]),
+		board: decodeMPT3Temperature(page[0x14:0x16], page[0x16]),
+	}, nil
+}
+
+func decodeMPT3Temperature(rawBytes []byte, units byte) *float64 {
+	raw := int16(binary.LittleEndian.Uint16(rawBytes))
 	var temperature float64
-	switch page[0x12] {
+	switch units {
 	case temperatureCelsius:
 		temperature = float64(raw)
 	case temperatureFahrenheit:
 		temperature = (float64(raw) - 32) * 5 / 9
-	case temperatureNotPresent:
-		return 0, errors.New("IOC temperature sensor is not present")
 	default:
-		return 0, fmt.Errorf("unsupported IOC temperature unit 0x%02x", page[0x12])
+		return nil
 	}
-	return temperature, nil
+	return &temperature
 }
 
 type mpt3Reader struct{ sysfsRoot string }
@@ -314,8 +319,8 @@ type discoveredController struct {
 }
 
 // collect discovers IOC numbers and identities from sysfs, reads each
-// controller's temperature page, and returns readings sorted by ID.
-// A collection that ends with zero readings returns errNoHBA.
+// controller's temperature page, and returns readings sorted by ID. A
+// controller without a supported temperature probe is not exposed.
 func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	device, err := openMPT3()
 	if err != nil {
@@ -333,15 +338,13 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		reading, err := r.readController(ctx, device, c)
+		reading, available, err := r.readController(ctx, device, c)
 		if err != nil {
 			return nil, err
 		}
-		readings = append(readings, reading)
-	}
-
-	if len(readings) == 0 {
-		return nil, errNoHBA
+		if available {
+			readings = append(readings, reading)
+		}
 	}
 	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
 	return readings, nil
@@ -364,19 +367,15 @@ func (r *mpt3Reader) discoverControllers(ctx context.Context) ([]discoveredContr
 	return controllers, nil
 }
 
-func (r *mpt3Reader) readController(ctx context.Context, device *mpt3Device, c discoveredController) (sensors.HBA, error) {
+func (r *mpt3Reader) readController(ctx context.Context, device *mpt3Device, c discoveredController) (sensors.HBA, bool, error) {
 	page, err := device.readIOUnitPage7(ctx, c.ioc)
 	if err != nil {
-		return sensors.HBA{}, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
+		return sensors.HBA{}, false, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
 	}
-	temperature, err := parseMPT3Temperature(page)
+	temperatures, err := parseMPT3Temperatures(page)
 	if err != nil {
-		return sensors.HBA{}, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
+		return sensors.HBA{}, false, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
 	}
-	return sensors.HBA{
-		ID:         c.metadata.id,
-		Model:      c.metadata.model,
-		PCIAddress: c.metadata.pciAddress,
-		Temp:       temperature,
-	}, nil
+	reading, available := makeHBAReading(c.metadata, temperatures)
+	return reading, available, nil
 }

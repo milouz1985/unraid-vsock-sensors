@@ -21,7 +21,7 @@ import (
 type storCLIReader struct {
 	metadata         map[int]hbaMetadata
 	discoverMetadata func(context.Context) (map[int]hbaMetadata, error)
-	readTemperatures func(context.Context) (map[int]float64, error)
+	readTemperatures func(context.Context) (map[int]hbaTemperatures, error)
 }
 
 func (r *storCLIReader) collect(ctx context.Context) ([]sensors.HBA, error) {
@@ -69,7 +69,7 @@ func (r *storCLIReader) read(ctx context.Context) ([]sensors.HBA, error) {
 	return buildHBAReadings(temperatures, r.metadata), nil
 }
 
-func validateHBAControllerSet(controllers []int, temperatures map[int]float64) error {
+func validateHBAControllerSet(controllers []int, temperatures map[int]hbaTemperatures) error {
 	actual := sortedIntKeys(temperatures)
 	if !slices.Equal(controllers, actual) {
 		return fmt.Errorf("HBA controller set changed: expected %v, got %v", controllers, actual)
@@ -81,13 +81,13 @@ func sortedIntKeys[V any](values map[int]V) []int {
 	return slices.Sorted(maps.Keys(values))
 }
 
-func buildHBAReadings(temperatures map[int]float64, metadata map[int]hbaMetadata) []sensors.HBA {
+func buildHBAReadings(temperatures map[int]hbaTemperatures, metadata map[int]hbaMetadata) []sensors.HBA {
 	readings := make([]sensors.HBA, 0, len(temperatures))
-	for controller, temperature := range temperatures {
-		identity := metadata[controller]
-		readings = append(readings, sensors.HBA{
-			ID: identity.id, Model: identity.model, PCIAddress: identity.pciAddress, Temp: temperature,
-		})
+	for controller, controllerTemperatures := range temperatures {
+		reading, available := makeHBAReading(metadata[controller], controllerTemperatures)
+		if available {
+			readings = append(readings, reading)
+		}
 	}
 	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
 	return readings
@@ -109,7 +109,7 @@ func runStorCLI(ctx context.Context, operation string, args ...string) ([]byte, 
 	return out, nil
 }
 
-func readStorCLITemperatures(ctx context.Context) (map[int]float64, error) {
+func readStorCLITemperatures(ctx context.Context) (map[int]hbaTemperatures, error) {
 	out, err := runStorCLI(ctx, "temperature", "/cALL", "show", "temperature", "J", "nolog")
 	if err != nil {
 		return nil, err
@@ -240,7 +240,7 @@ func normalizePCIAddress(address string) string {
 	return fmt.Sprintf("%04x:%02x:%02x.%x", values[0], values[1], values[2], values[3])
 }
 
-func parseStorCLI(data []byte) (map[int]float64, error) {
+func parseStorCLI(data []byte) (map[int]hbaTemperatures, error) {
 	var root struct {
 		Controllers []struct {
 			CommandStatus struct {
@@ -261,7 +261,7 @@ func parseStorCLI(data []byte) (map[int]float64, error) {
 	if len(root.Controllers) == 0 {
 		return nil, errNoHBA
 	}
-	temperatures := make(map[int]float64, len(root.Controllers))
+	temperatures := make(map[int]hbaTemperatures, len(root.Controllers))
 	for _, controller := range root.Controllers {
 		id := controller.CommandStatus.Controller
 		if _, duplicate := temperatures[id]; duplicate {
@@ -270,22 +270,29 @@ func parseStorCLI(data []byte) (map[int]float64, error) {
 		if controller.CommandStatus.Status != "Success" {
 			return nil, fmt.Errorf("storcli controller %d status is %q", id, controller.CommandStatus.Status)
 		}
-		found := false
+		controllerTemperatures := hbaTemperatures{}
 		for _, property := range controller.ResponseData.ControllerProperties {
-			if property.Property != "ROC temperature(Degree Celsius)" &&
-				property.Property != "ROC temperature(Degree Celcius)" {
+			var destination **float64
+			switch property.Property {
+			case "ROC temperature(Degree Celsius)", "ROC temperature(Degree Celcius)":
+				destination = &controllerTemperatures.ioc
+			case "Ctrl temperature(Degree Celsius)", "Ctrl temperature(Degree Celcius)",
+				"Controller temperature(Degree Celsius)", "Controller temperature(Degree Celcius)":
+				destination = &controllerTemperatures.board
+			default:
 				continue
+			}
+			if *destination != nil {
+				return nil, fmt.Errorf("storcli controller %d has duplicate temperature property %q", id, property.Property)
 			}
 			temp, err := strconv.ParseFloat(property.Value, 64)
 			if err != nil || math.IsNaN(temp) || math.IsInf(temp, 0) {
 				return nil, fmt.Errorf("storcli controller %d invalid temperature %q", id, property.Value)
 			}
-			temperatures[id], found = temp, true
-			break
+			temperature := temp
+			*destination = &temperature
 		}
-		if !found {
-			return nil, fmt.Errorf("storcli controller %d has no ROC temperature", id)
-		}
+		temperatures[id] = controllerTemperatures
 	}
 	return temperatures, nil
 }

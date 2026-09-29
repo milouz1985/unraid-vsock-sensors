@@ -23,3 +23,7 @@ type hbaSnapshotReaderFunc func(context.Context) ([]sensors.HBA, error)
 func (read hbaSnapshotReaderFunc) collect(ctx context.Context) ([]sensors.HBA, error) {
 	return read(ctx)
 }
+
+func float64Pointer(value float64) *float64 {
+	return &value
+}
