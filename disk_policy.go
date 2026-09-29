@@ -225,6 +225,9 @@ func (s *diskPolicyStore) Reset() error {
 	if err != nil {
 		return fmt.Errorf("remove disk policies %q: %w", s.path, err)
 	}
+	if err := syncDirectory(filepath.Dir(s.path)); err != nil {
+		return fmt.Errorf("sync disk policies directory for %q: %w", s.path, err)
+	}
 	return nil
 }
 
