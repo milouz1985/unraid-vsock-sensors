@@ -38,7 +38,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -85,10 +84,9 @@ const (
 	mpi2ConfigPageHeader      = 0x00
 	mpi2ConfigPageReadCurrent = 0x01
 	mpi2PageTypeIOUnit        = 0x00
-	// Keep these values aligned with the MPI2_*_PAGEVERSION definitions in
-	// mpi2_cnfg.h used by the in-kernel mpt3sas CONFIG helpers.
+	// PAGE_HEADER requests include the version known by the in-kernel mpt3sas
+	// CONFIG helpers. The firmware's returned version and length are authoritative.
 	mpi2IOUnit7Version = 0x05
-	mpi2IOUnit7DWords  = 10
 )
 
 // IO Unit Page 7 temperature unit encoding (mpt3sas_hwmon.c).
@@ -215,35 +213,6 @@ func validateMPT3ConfigReply(reply []byte, action, pageType, pageNumber byte) er
 	return nil
 }
 
-func validateMPT3ConfigPageHeader(header []byte, pageType, pageNumber, pageVersion, pageDWords byte) error {
-	if len(header) < 4 {
-		return fmt.Errorf("short MPI CONFIG page header: got %d bytes, need 4", len(header))
-	}
-	if header[0] != pageVersion {
-		return fmt.Errorf("unexpected MPI CONFIG PageVersion 0x%02x, want 0x%02x", header[0], pageVersion)
-	}
-	if header[1] != pageDWords {
-		return fmt.Errorf("unexpected MPI CONFIG PageLength %d DWORDs, want %d", header[1], pageDWords)
-	}
-	if header[2] != pageNumber {
-		return fmt.Errorf("unexpected MPI CONFIG page number %d, want %d", header[2], pageNumber)
-	}
-	if header[3]&0x0f != pageType&0x0f {
-		return fmt.Errorf("unexpected MPI CONFIG page type 0x%02x, want 0x%02x", header[3]&0x0f, pageType&0x0f)
-	}
-	return nil
-}
-
-func validateMPT3ConfigPageData(page []byte, header [4]byte) error {
-	if len(page) < len(header) {
-		return fmt.Errorf("short MPI CONFIG page: got %d bytes, need at least %d", len(page), len(header))
-	}
-	if !bytes.Equal(page[:len(header)], header[:]) {
-		return fmt.Errorf("MPI CONFIG page header %x does not match PAGE_HEADER response %x", page[:len(header)], header)
-	}
-	return nil
-}
-
 // readIOUnitPage7 performs the two-step MPI CONFIG access pattern from
 // mpt3sas_config.c: PAGE_HEADER to get the page's version and length, then
 // PAGE_READ_CURRENT to read the page using that header.
@@ -260,29 +229,27 @@ func (d *mpt3Device) readIOUnitPage7(ctx context.Context, ioc int) ([]byte, erro
 	}
 	var header [4]byte
 	copy(header[:], reply[0x14:0x18])
-	if err := validateMPT3ConfigPageHeader(header[:], mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, mpi2IOUnit7DWords); err != nil {
-		return nil, fmt.Errorf("CONFIG header IO Unit Page 7: %w", err)
+	if header[1] == 0 {
+		return nil, fmt.Errorf("CONFIG header IO Unit Page 7: invalid PageLength 0 for PageVersion 0x%02x", header[0])
 	}
+	pageSize := int(header[1]) * 4 // PageLength is one byte, so this is at most 1020.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, header[:]), int(mpi2IOUnit7DWords)*4)
+	reply, page, err := d.command(ioc, mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, header[:]), pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("CONFIG read IO Unit Page 7: %w", err)
 	}
 	if err := validateMPT3ConfigReply(reply, mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7); err != nil {
 		return nil, fmt.Errorf("CONFIG read IO Unit Page 7: %w", err)
 	}
-	if !bytes.Equal(reply[0x14:0x18], header[:]) {
-		return nil, fmt.Errorf("CONFIG read IO Unit Page 7 returned header %x, want %x", reply[0x14:0x18], header)
-	}
-	if err := validateMPT3ConfigPageData(page, header); err != nil {
-		return nil, fmt.Errorf("CONFIG read IO Unit Page 7: %w", err)
-	}
 	return page, nil
 }
 
 func parseMPT3Temperatures(page []byte) (hbaTemperatures, error) {
+	// PageLength returned by the firmware sizes IO Unit Page 7. UVSS reads only
+	// its historical temperature offsets and accepts observed additive extensions
+	// without assuming that those offsets can never change.
 	const minimum = 0x17
 	if len(page) < minimum {
 		return hbaTemperatures{}, errors.New("IO Unit Page 7 is shorter than the temperature fields")
