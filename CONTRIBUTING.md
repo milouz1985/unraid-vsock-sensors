@@ -162,6 +162,27 @@ Les températures des disques proviennent de :
 /var/local/emhttp/devs.ini
 ```
 
+#### Invariant d'identité des disques emhttpd
+
+UVSS considère `id` comme obligatoire pour tout périphérique physique présent.
+Cet invariant vient d'emhttpd, pas d'une identité reconstruite par UVSS.
+
+Dans `devs.ini`, emhttpd résout l'identité avant d'intégrer un périphérique
+utilisable. Si cette résolution échoue, il journalise notamment
+`device /dev/%s problem getting id` et ignore le périphérique. Un périphérique
+physique publié dans `devs.ini` possède donc un `id` non vide.
+
+Dans `disks.ini`, un slot avec un périphérique physique présent reçoit l'ID
+correspondant. Les slots sans périphérique conservent un ID vide et utilisent
+les états `DISK_NP` ou `DISK_NP_MISSING`, qu'UVSS élimine avant la validation de
+l'identité.
+
+Une entrée considérée présente mais sans ID constitue donc une violation du
+format attendu, une incohérence temporaire ou un changement du contrat
+emhttpd. Conserver la validation stricte et ses tests défensifs : ne pas
+inventer une identité depuis `/dev/sdX`, ne pas utiliser le nom de section
+comme pseudo-identité et ne pas ignorer silencieusement cette entrée.
+
 La collecte HBA reste séparée de la collecte disque.
 
 ### Politique des températures
