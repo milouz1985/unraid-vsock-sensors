@@ -351,16 +351,20 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 }
 
 func (r *mpt3Reader) discoverControllers(ctx context.Context) ([]discoveredController, error) {
-	inventory, err := discoverSysfsHBAs(ctx, r.sysfsRoot)
+	hbas, err := discoverSysfsHBAs(ctx, r.sysfsRoot)
 	if err != nil {
 		return nil, fmt.Errorf("read sysfs HBA identities: %w", err)
 	}
-	if len(inventory.mpt3ByIOC) == 0 {
+	metadataByIOC, err := mpt3HBAMetadataByIOC(ctx, hbas)
+	if err != nil {
+		return nil, fmt.Errorf("read sysfs mpt3sas controllers: %w", err)
+	}
+	if len(metadataByIOC) == 0 {
 		return nil, errNoHBA
 	}
 
-	controllers := make([]discoveredController, 0, len(inventory.mpt3ByIOC))
-	for ioc, metadata := range inventory.mpt3ByIOC {
+	controllers := make([]discoveredController, 0, len(metadataByIOC))
+	for ioc, metadata := range metadataByIOC {
 		controllers = append(controllers, discoveredController{ioc: ioc, metadata: metadata})
 	}
 	sort.Slice(controllers, func(i, j int) bool { return controllers[i].ioc < controllers[j].ioc })

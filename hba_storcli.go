@@ -130,11 +130,11 @@ func discoverStorCLIHBAs(ctx context.Context) (map[int]hbaMetadata, error) {
 	if err != nil {
 		return nil, err
 	}
-	inventory, err := discoverSysfsHBAs(ctx, defaultSCSIHostRoot)
+	hbas, err := discoverSysfsHBAs(ctx, defaultSCSIHostRoot)
 	if err != nil {
 		return nil, fmt.Errorf("read sysfs HBA identities: %w", err)
 	}
-	return matchStorCLIControllers(controllers, inventory.metadataByPCI)
+	return matchStorCLIControllers(controllers, sysfsHBAMetadataByPCI(hbas))
 }
 
 func matchStorCLIControllers(controllers map[int]string, identities map[string]hbaMetadata) (map[int]hbaMetadata, error) {

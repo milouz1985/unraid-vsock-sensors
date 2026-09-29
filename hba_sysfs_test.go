@@ -49,46 +49,56 @@ func addFakeSCSIHost(t *testing.T, root, name, driver, pci, sas, model string, u
 
 func TestDiscoverSysfsHBAs(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "scsi_host")
-	addFakeSCSIHost(t, root, "host2", "mpt3sas", "0000:06:10.0", "0x56C92BF0002E6705", "INSPUR 3008IT", fakeSysfsValue("0"))
+	addFakeSCSIHost(
+		t,
+		root,
+		"host2",
+		"mpt3sas",
+		"0000:06:10.0",
+		"0x56C92BF0002E6705",
+		"INSPUR 3008IT",
+		fakeSysfsValue("0"),
+	)
 	addFakeSCSIHost(t, root, "host3", "megaraid_sas", "0000:07:00.0", "", "", nil)
 	addFakeSCSIHost(t, root, "host4", "ahci", "0000:08:00.0", "", "", nil)
 
-	got, err := discoverSysfsHBAs(context.Background(), root)
+	hbas, err := discoverSysfsHBAs(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	mpt3 := hbaMetadata{id: "sas:56c92bf0002e6705", model: "INSPUR 3008IT", pciAddress: "0000:06:10.0"}
 	megaRAID := hbaMetadata{id: "pci:0000:07:00.0", pciAddress: "0000:07:00.0"}
-	want := sysfsHBAInventory{
-		metadataByPCI: map[string]hbaMetadata{
-			"0000:06:10.0": mpt3,
-			"0000:07:00.0": megaRAID,
-		},
-		mpt3ByIOC: map[int]hbaMetadata{0: mpt3},
+	want := map[string]hbaMetadata{
+		"0000:06:10.0": mpt3,
+		"0000:07:00.0": megaRAID,
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("sysfs HBA inventory = %#v, want %#v", got, want)
+	if got := sysfsHBAMetadataByPCI(hbas); !reflect.DeepEqual(got, want) {
+		t.Fatalf("sysfs HBA metadata = %#v, want %#v", got, want)
 	}
 }
 
-func TestDiscoverSysfsHBAsAcceptsMPT3IOCRange(t *testing.T) {
+func TestMPT3HBAMetadataByIOCAcceptsRange(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "scsi_host")
 	addFakeSCSIHost(t, root, "host2", "mpt3sas", "0000:06:10.0", "0x5001", "HBA 1", fakeSysfsValue("0"))
 	addFakeSCSIHost(t, root, "host3", "mpt3sas", "0000:07:00.0", "0x5002", "HBA 2", fakeSysfsValue("255"))
 
-	inventory, err := discoverSysfsHBAs(context.Background(), root)
+	hbas, err := discoverSysfsHBAs(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := inventory.mpt3ByIOC[0].model, "HBA 1"; got != want {
+	metadataByIOC, err := mpt3HBAMetadataByIOC(context.Background(), hbas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := metadataByIOC[0].model, "HBA 1"; got != want {
 		t.Fatalf("IOC 0 model = %q, want %q", got, want)
 	}
-	if got, want := inventory.mpt3ByIOC[255].model, "HBA 2"; got != want {
+	if got, want := metadataByIOC[255].model, "HBA 2"; got != want {
 		t.Fatalf("IOC 255 model = %q, want %q", got, want)
 	}
 }
 
-func TestDiscoverSysfsHBAsRejectsInvalidMPT3IOC(t *testing.T) {
+func TestMPT3HBAMetadataByIOCRejectsInvalidValues(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		uniqueID *string
@@ -103,7 +113,12 @@ func TestDiscoverSysfsHBAsRejectsInvalidMPT3IOC(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "scsi_host")
 			addFakeSCSIHost(t, root, "host2", "mpt3sas", "0000:06:10.0", "0x5000", "HBA", test.uniqueID)
-			if _, err := discoverSysfsHBAs(context.Background(), root); err == nil || !strings.Contains(err.Error(), test.want) {
+			hbas, err := discoverSysfsHBAs(context.Background(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = mpt3HBAMetadataByIOC(context.Background(), hbas)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("invalid unique_id returned %v, want error containing %q", err, test.want)
 			}
 		})
@@ -117,22 +132,67 @@ func TestDiscoverSysfsHBAsRejectsDuplicates(t *testing.T) {
 		secondPCI string
 		firstSAS  string
 		secondSAS string
-		firstIOC  string
-		secondIOC string
 		want      string
 	}{
-		{name: "PCI", firstPCI: "0000:06:10.0", secondPCI: "0000:06:10.0", firstSAS: "0x5001", secondSAS: "0x5002", firstIOC: "1", secondIOC: "2", want: "appear more than once"},
-		{name: "identity", firstPCI: "0000:06:10.0", secondPCI: "0000:07:00.0", firstSAS: "0x5001", secondSAS: "0x5001", firstIOC: "1", secondIOC: "2", want: "duplicate identity"},
-		{name: "MPT3 IOC", firstPCI: "0000:06:10.0", secondPCI: "0000:07:00.0", firstSAS: "0x5001", secondSAS: "0x5002", firstIOC: "7", secondIOC: "7", want: "IOC 7 appears more than once"},
+		{
+			name:      "PCI",
+			firstPCI:  "0000:06:10.0",
+			secondPCI: "0000:06:10.0",
+			firstSAS:  "0x5001",
+			secondSAS: "0x5002",
+			want:      "appear more than once",
+		},
+		{
+			name:      "identity",
+			firstPCI:  "0000:06:10.0",
+			secondPCI: "0000:07:00.0",
+			firstSAS:  "0x5001",
+			secondSAS: "0x5001",
+			want:      "duplicate identity",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "scsi_host")
-			addFakeSCSIHost(t, root, "host2", "mpt3sas", test.firstPCI, test.firstSAS, "HBA 1", fakeSysfsValue(test.firstIOC))
-			addFakeSCSIHost(t, root, "host3", "mpt3sas", test.secondPCI, test.secondSAS, "HBA 2", fakeSysfsValue(test.secondIOC))
+			addFakeSCSIHost(t, root, "host2", "mpt3sas", test.firstPCI, test.firstSAS, "HBA 1", fakeSysfsValue("1"))
+			addFakeSCSIHost(t, root, "host3", "mpt3sas", test.secondPCI, test.secondSAS, "HBA 2", fakeSysfsValue("2"))
 			if _, err := discoverSysfsHBAs(context.Background(), root); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("duplicate inventory returned %v, want error containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestMPT3HBAMetadataByIOCRejectsDuplicateIOC(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "scsi_host")
+	addFakeSCSIHost(t, root, "host2", "mpt3sas", "0000:06:10.0", "0x5001", "HBA 1", fakeSysfsValue("7"))
+	addFakeSCSIHost(t, root, "host3", "mpt3sas", "0000:07:00.0", "0x5002", "HBA 2", fakeSysfsValue("7"))
+	hbas, err := discoverSysfsHBAs(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mpt3HBAMetadataByIOC(context.Background(), hbas)
+	if err == nil || !strings.Contains(err.Error(), "IOC 7 appears more than once") {
+		t.Fatalf("duplicate IOC returned %v", err)
+	}
+}
+
+func TestInvalidMPT3IOCDoesNotPreventStorCLIMatching(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "scsi_host")
+	addFakeSCSIHost(t, root, "host2", "mpt3sas", "0000:06:10.0", "0x5001", "HBA", fakeSysfsValue("invalid"))
+	hbas, err := discoverSysfsHBAs(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := hbas[0].metadata
+	got, err := matchStorCLIControllers(
+		map[int]string{0: "0000:06:10.0"},
+		sysfsHBAMetadataByPCI(hbas),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, map[int]hbaMetadata{0: want}) {
+		t.Fatalf("matched controllers = %#v, want metadata %#v", got, want)
 	}
 }
 
@@ -142,7 +202,8 @@ func TestDiscoverSysfsHBAsRejectsIncompleteInventory(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "host2", "device")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := discoverSysfsHBAs(context.Background(), root); err == nil || !strings.Contains(err.Error(), "resolve host2 device") {
+	_, err := discoverSysfsHBAs(context.Background(), root)
+	if err == nil || !strings.Contains(err.Error(), "resolve host2 device") {
 		t.Fatalf("incomplete sysfs inventory returned %v", err)
 	}
 }
