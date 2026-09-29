@@ -128,19 +128,6 @@ func (publisher *hwmonPublisher) saveCache() error {
 	return syncDirectory(directoryPath)
 }
 
-// syncDirectory makes the preceding atomic rename durable on filesystems that
-// require the parent directory itself to be flushed.
-func syncDirectory(path string) (err error) {
-	directory, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		err = errors.Join(err, directory.Close())
-	}()
-	return directory.Sync()
-}
-
 // sensorsToCache projects only the ID and label needed to persist the topology.
 func sensorsToCache(sensors []hwmonSensor) []cachedHWMonSensor {
 	cached := make([]cachedHWMonSensor, 0, len(sensors))
