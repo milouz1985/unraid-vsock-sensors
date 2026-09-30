@@ -172,6 +172,11 @@ réconciliation.
 `unraid-vsock-hwmon-topology.service`. Le récepteur ne communique pas avec
 systemd et ne connaît aucun consommateur.
 
+Le fichier d'événement ne contient ni commande ni donnée de sonde. Il est
+conservé pendant les arrêts et redémarrages du receiver afin que sa suppression
+ne soit jamais interprétée comme un changement de topologie, puis disparaît
+naturellement au redémarrage de l'hôte ou lors de la purge du paquet.
+
 Lorsqu'un service doit simplement être redémarré s'il est déjà actif, activer
 une instance du template générique. L'instance est le nom simple du service,
 sans suffixe de type. Pour un service fictif `foo.service` :
@@ -225,6 +230,16 @@ Après une modification du CID, du port ou du chemin de cache :
 ```sh
 systemctl restart unraid-vsock-hwmon.service
 ```
+
+Si `UNRAID_VSOCK_CACHE` désigne un répertoire extérieur au chemin par défaut,
+l'autoriser également dans un drop-in systemd :
+
+```ini
+[Service]
+ReadWritePaths=/chemin/du/cache
+```
+
+Puis exécuter `systemctl daemon-reload` et redémarrer le service.
 
 ## Vérification
 
@@ -533,6 +548,18 @@ AF_VSOCK n'est pas un mécanisme général d'authentification.
 
 L'agent se connecte au CID hôte standard `2`. Le récepteur n'accepte que le CID
 configuré, vérifie la version du protocole et limite chaque snapshot à 1 Mio.
+
+Le receiver reste lancé en `root` pour administrer configfs et écrire dans les
+miscdevices, mais son processus principal ne conserve que
+`CAP_NET_BIND_SERVICE`, nécessaire au port privilégié `990`. L'unité restreint
+les sockets à `AF_VSOCK`, interdit l'accès D-Bus et systemd, masque les
+répertoires personnels et rend le système de fichiers non modifiable hors de
+son `StateDirectory`, de son `RuntimeDirectory` et des interfaces `virt_temp`.
+Le `modprobe` exécuté avant le daemon reste explicitement privilégié.
+
+Les abonnements de topologie restent créés par root. Un receiver compromis peut
+déclencher répétitivement les abonnés déjà autorisés, mais ne peut ni les
+choisir ni en créer de nouveaux.
 
 ## Licence
 
