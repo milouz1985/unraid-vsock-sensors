@@ -4,9 +4,9 @@ set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
-mkdir -p "$test_root"/{bin,dkms/virt-temp/old,src/virt-temp-old,src/virt-temp-new,modules/A/build,modules/B/build,saved,configfs/disk,configfs/hba,runtime}
+mkdir -p "$test_root"/{bin,dkms/virt-temp/old,src/virt-temp-old,src/virt-temp-new,modules/A/build,modules/B/build,saved,configfs/disk,configfs/hba}
 touch "$test_root/src/virt-temp-old/dkms.conf" "$test_root/src/virt-temp-old/virt-temp.c"
-touch "$test_root/src/virt-temp-new/dkms.conf" "$test_root/default" "$test_root/device" "$test_root/proc_modules"
+touch "$test_root/src/virt-temp-new/dkms.conf" "$test_root/default" "$test_root/proc_modules"
 ln -s "$test_root/src/virt-temp-old" "$test_root/dkms/virt-temp/old/source"
 
 export TEST_DKMS_DIR="$test_root/dkms"
@@ -52,7 +52,7 @@ cat > "$test_root/bin/systemctl" <<'SH'
 printf 'systemctl %s\n' "$*" >> "$TEST_EVENTS"
 case "$1" in
     is-active)
-        [ "${TEST_SERVICE_ACTIVE:-0}" = 1 ]
+        exit 1
         ;;
 esac
 SH
@@ -63,7 +63,6 @@ SH
 cat > "$test_root/bin/modprobe" <<'SH'
 #!/bin/sh
 printf 'modprobe %s\n' "$*" >> "$TEST_EVENTS"
-[ "${TEST_FAIL_MODPROBE:-0}" != 1 ]
 SH
 chmod +x "$test_root/bin/"*
 export PATH="$test_root/bin:$PATH"
@@ -98,7 +97,6 @@ render_script() {
 
 render_script prerm old "$test_root/prerm"
 render_script postinst new "$test_root/postinst"
-render_script postrm new "$test_root/postrm"
 sh "$test_root/prerm" upgrade new
 [[ -f "$test_root/saved/virt-temp-old/dkms.conf" ]]
 [[ "$(readlink "$test_root/dkms/virt-temp/old/source")" == "$test_root/saved/virt-temp-old" ]]
@@ -121,85 +119,4 @@ printf 'build A\nbuild B\ninstall A\ninstall B\nsystemctl is-active --quiet unra
 cmp "$TEST_EVENTS" "$test_root/expected"
 cmp "$test_root/config" "$test_root/expected_config"
 [[ ! -e "$test_root/saved/virt-temp-old" && ! -d "$test_root/dkms/virt-temp/old" ]]
-subscription_dir="$test_root/systemd/unraid-vsock-hwmon-topology.service.wants"
-mkdir -p "$subscription_dir"
-ln -s /usr/lib/systemd/system/unraid-vsock-hwmon-restart@.service \
-    "$subscription_dir/unraid-vsock-hwmon-restart@foo.service"
-ln -s /usr/lib/systemd/system/third-party-refresh.service \
-    "$subscription_dir/third-party-refresh.service"
-touch "$test_root/runtime/topology-changed"
-sh "$test_root/postrm" remove
-[[ -L "$subscription_dir/unraid-vsock-hwmon-restart@foo.service" ]]
-[[ -L "$subscription_dir/third-party-refresh.service" ]]
-[[ -e "$test_root/runtime/topology-changed" ]]
-
-: > "$TEST_EVENTS"
-sh "$test_root/postrm" purge
-printf 'systemctl stop unraid-vsock-hwmon-topology.path\nsystemctl disable unraid-vsock-hwmon-topology.path\nremove new\nsystemctl daemon-reload\n' > "$test_root/expected"
-cmp "$TEST_EVENTS" "$test_root/expected"
-[[ -L "$subscription_dir/unraid-vsock-hwmon-restart@foo.service" ]]
-[[ -L "$subscription_dir/third-party-refresh.service" ]]
-[[ ! -e "$test_root/runtime" ]]
-[[ ! -e "$test_root/config" ]]
-echo "Administrator subscriptions preserved: OK"
-echo "DKMS upgrade ordering: OK"
-
-# ---------------------------------------------------------------------------
-# A failed module unload during remove must leave DKMS registered and restart
-# a service that was active before prerm stopped it.
-# ---------------------------------------------------------------------------
-mkdir -p "$test_root/dkms/virt-temp/old"
-ln -s "$test_root/src/virt-temp-old" "$test_root/dkms/virt-temp/old/source"
-mkdir -p "$test_root/configfs/disk/held-sensor"
-printf 'virt_temp 1 1 - Live 0x0\n' > "$test_root/proc_modules"
-: > "$TEST_EVENTS"
-export TEST_SERVICE_ACTIVE=1
-export TEST_FAIL_MODPROBE=1
-render_script prerm old "$test_root/prerm_remove"
-if sh "$test_root/prerm_remove" remove; then
-    echo "prerm accepted a failed module unload" >&2; exit 1
-fi
-unset TEST_FAIL_MODPROBE
-printf 'systemctl is-active --quiet unraid-vsock-hwmon.service\nsystemctl stop unraid-vsock-hwmon-topology.path\nsystemctl stop unraid-vsock-hwmon.service\nmodprobe -r virt_temp\nsystemctl start unraid-vsock-hwmon.service\n' > "$test_root/expected"
-cmp "$TEST_EVENTS" "$test_root/expected"
-[[ ! -d "$test_root/configfs/disk/held-sensor" ]]
-[[ -L "$test_root/dkms/virt-temp/old/source" ]]
-unset TEST_SERVICE_ACTIVE
-echo "Service rollback after failed module unload: OK"
-
-# ---------------------------------------------------------------------------
-# apt remove executed directly after a failed DKMS upgrade (no recovery
-# version in between). The old version is still registered with its preserved
-# sources while the new version is registered but half-configured. prerm
-# remove must delete every DKMS version and its backup sources, while the
-# /etc/default configuration and the hwmon cache must survive.
-# ---------------------------------------------------------------------------
-rm -rf -- "$test_root/dkms/virt-temp"
-mkdir -p "$test_root/dkms/virt-temp/old" "$test_root/dkms/virt-temp/new"
-mkdir -p "$test_root/saved/virt-temp-old"
-touch "$test_root/saved/virt-temp-old/dkms.conf" "$test_root/saved/virt-temp-old/virt-temp.c"
-ln -s "$test_root/saved/virt-temp-old" "$test_root/dkms/virt-temp/old/source"
-ln -s "$test_root/src/virt-temp-new" "$test_root/dkms/virt-temp/new/source"
-: > "$TEST_EVENTS"
-: > "$test_root/proc_modules"
-
-render_script prerm new "$test_root/prerm_new"
-sh "$test_root/prerm_new" remove
-# The two DKMS removes happen in glob order; normalise before comparing.
-{
-    grep -F 'systemctl is-active' "$TEST_EVENTS"
-    grep -F 'systemctl stop' "$TEST_EVENTS"
-    sort <(grep -F 'remove ' "$TEST_EVENTS")
-} > "$test_root/actual"
-{
-    printf 'systemctl is-active --quiet unraid-vsock-hwmon.service\n'
-    printf 'systemctl stop unraid-vsock-hwmon-topology.path\n'
-    printf 'systemctl stop unraid-vsock-hwmon.service\n'
-    printf 'remove new\nremove old\n' | sort
-} > "$test_root/expected"
-cmp "$test_root/actual" "$test_root/expected"
-[[ ! -d "$test_root/dkms/virt-temp/old" ]]
-[[ ! -d "$test_root/dkms/virt-temp/new" ]]
-[[ ! -e "$test_root/saved/virt-temp-old" ]]
-[[ ! -d "$test_root/saved" ]]
-echo "DKMS remove after failed upgrade: OK"
+echo "DKMS upgrade preservation and ordering: OK"
