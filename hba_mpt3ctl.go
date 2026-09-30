@@ -280,11 +280,6 @@ func newMPT3Reader() *mpt3Reader {
 	return &mpt3Reader{sysfsRoot: defaultSCSIHostRoot}
 }
 
-type discoveredController struct {
-	ioc      int
-	metadata hbaMetadata
-}
-
 // collect discovers IOC numbers and identities from sysfs, reads each
 // controller's temperature page, and returns readings sorted by ID. A
 // controller without a supported temperature probe is not exposed.
@@ -295,29 +290,6 @@ func (r *mpt3Reader) collect(ctx context.Context) ([]sensors.HBA, error) {
 	}
 	defer device.file.Close()
 
-	controllers, err := r.discoverControllers(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	readings := make([]sensors.HBA, 0, len(controllers))
-	for _, c := range controllers {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		reading, available, err := r.readController(ctx, device, c)
-		if err != nil {
-			return nil, err
-		}
-		if available {
-			readings = append(readings, reading)
-		}
-	}
-	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
-	return readings, nil
-}
-
-func (r *mpt3Reader) discoverControllers(ctx context.Context) ([]discoveredController, error) {
 	hbas, err := discoverSysfsHBAs(ctx, r.sysfsRoot)
 	if err != nil {
 		return nil, fmt.Errorf("read sysfs HBA identities: %w", err)
@@ -330,23 +302,24 @@ func (r *mpt3Reader) discoverControllers(ctx context.Context) ([]discoveredContr
 		return nil, errNoHBA
 	}
 
-	controllers := make([]discoveredController, 0, len(metadataByIOC))
+	readings := make([]sensors.HBA, 0, len(metadataByIOC))
 	for ioc, metadata := range metadataByIOC {
-		controllers = append(controllers, discoveredController{ioc: ioc, metadata: metadata})
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		page, err := device.readIOUnitPage7(ctx, ioc)
+		if err != nil {
+			return nil, fmt.Errorf("mpt3ctl IOC %d temperature: %w", ioc, err)
+		}
+		temperatures, err := parseMPT3Temperatures(page)
+		if err != nil {
+			return nil, fmt.Errorf("mpt3ctl IOC %d temperature: %w", ioc, err)
+		}
+		reading, available := makeHBAReading(metadata, temperatures)
+		if available {
+			readings = append(readings, reading)
+		}
 	}
-	sort.Slice(controllers, func(i, j int) bool { return controllers[i].ioc < controllers[j].ioc })
-	return controllers, nil
-}
-
-func (r *mpt3Reader) readController(ctx context.Context, device *mpt3Device, c discoveredController) (sensors.HBA, bool, error) {
-	page, err := device.readIOUnitPage7(ctx, c.ioc)
-	if err != nil {
-		return sensors.HBA{}, false, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
-	}
-	temperatures, err := parseMPT3Temperatures(page)
-	if err != nil {
-		return sensors.HBA{}, false, fmt.Errorf("mpt3ctl IOC %d temperature: %w", c.ioc, err)
-	}
-	reading, available := makeHBAReading(c.metadata, temperatures)
-	return reading, available, nil
+	sort.Slice(readings, func(i, j int) bool { return readings[i].ID < readings[j].ID })
+	return readings, nil
 }

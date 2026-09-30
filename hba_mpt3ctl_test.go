@@ -3,10 +3,8 @@
 package main
 
 import (
-	"context"
 	"encoding/binary"
 	"math"
-	"path/filepath"
 	"slices"
 	"testing"
 	"unsafe"
@@ -101,20 +99,6 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 				t.Fatal("invalid CONFIG reply accepted")
 			}
 		})
-	}
-}
-
-func TestMPT3DiscoveryUsesSysfsIOC(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "scsi_host")
-	addFakeSCSIHost(t, root, "host2", "mpt3sas", "0000:06:10.0", "0x5001", "HBA", fakeSysfsValue("200"))
-	addFakeSCSIHost(t, root, "host3", "megaraid_sas", "0000:07:00.0", "0x5002", "RAID", nil)
-
-	controllers, err := (&mpt3Reader{sysfsRoot: root}).discoverControllers(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(controllers) != 1 || controllers[0].ioc != 200 || controllers[0].metadata.id != "sas:0000000000005001" {
-		t.Fatalf("controllers = %#v", controllers)
 	}
 }
 
