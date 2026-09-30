@@ -22,6 +22,7 @@ BASH_SCRIPTS := version.sh \
 	virt-temp/package.sh \
 	virt-temp/prepare-dkms.sh \
 	virt-temp/debian/lifecycle_test.sh \
+	virt-temp/systemd_hardening_test.sh \
 	tests/vm/build-template.sh \
 	tests/vm/common.sh \
 	tests/vm/run.sh \
@@ -98,6 +99,7 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	php -l unraid-plugin/uvss_action.php >/dev/null
 	bash version_test.sh
 	bash virt-temp/debian/lifecycle_test.sh
+	bash virt-temp/systemd_hardening_test.sh
 	bash unraid-plugin/package_test.sh
 	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/uvss_action_test.sh
