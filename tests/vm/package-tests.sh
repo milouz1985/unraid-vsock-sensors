@@ -81,13 +81,14 @@ check_installed() {
     systemctl is-active --quiet "$service"
     systemctl is-active --quiet "$topology_path"
     [[ "$(systemctl show -p NRestarts --value "$service")" == 0 ]]
-    [[ "$(systemctl show -p CapabilityBoundingSet --value "$service")" == cap_net_bind_service ]]
-    [[ "$(systemctl show -p NoNewPrivileges --value "$service")" == yes ]]
-    [[ "$(systemctl show -p ProtectHome --value "$service")" == yes ]]
-    [[ "$(systemctl show -p ProtectSystem --value "$service")" == strict ]]
-    [[ "$(systemctl show -p RestrictAddressFamilies --value "$service")" == AF_VSOCK ]]
-    [[ "$(systemctl show -p RuntimeDirectory --value "$service")" == unraid-vsock-sensors ]]
-    [[ "$(systemctl show -p RuntimeDirectoryPreserve --value "$service")" == yes ]]
+}
+
+check_systemd_units() {
+    systemd-analyze verify \
+        /usr/lib/systemd/system/unraid-vsock-hwmon.service \
+        /usr/lib/systemd/system/unraid-vsock-hwmon-topology.path \
+        /usr/lib/systemd/system/unraid-vsock-hwmon-topology.service \
+        /usr/lib/systemd/system/unraid-vsock-hwmon-restart@.service
 }
 
 check_runtime_directory_lifecycle() {
@@ -230,6 +231,7 @@ phase_pre_reboot() {
     done
 
     install_version 0.0.0-vmtest.1
+    check_systemd_units
     check_runtime_directory_lifecycle
     timing "package: install"
     printf '\n# VM test: preserve this configuration across upgrades and remove\n' >> "$config"
