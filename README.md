@@ -134,7 +134,9 @@ apt install "proxmox-headers-$(uname -r)" \
 
 Le paquet installe le récepteur, le module DKMS `virt-temp`, le service
 `unraid-vsock-hwmon.service` et les unités systemd de notification de
-topologie.
+topologie. Il dépend de `proxmox-default-headers` pour reconstruire le module
+lors des mises à jour de noyau. La configuration existante dans
+`/etc/default/unraid-vsock-hwmon` est conservée pendant les mises à jour.
 
 ## Configuration Proxmox
 
@@ -243,6 +245,33 @@ unraid_disk1
 unraid_hdd_maximum
 unraid_sas3008
 ```
+
+### Récupération du paquet Proxmox
+
+Si les headers du noyau courant manquent :
+
+```sh
+apt install "proxmox-headers-$(uname -r)"
+apt --fix-broken install
+```
+
+Après une installation interrompue :
+
+```sh
+dpkg --configure -a
+apt --fix-broken install
+```
+
+Lors d'un échec de compilation pendant une mise à jour, le paquet reste à
+réparer mais l'ancienne version DKMS et ses sources sont conservées sur disque
+pour le prochain démarrage. Les fichiers userspace de l'ancien paquet ne sont
+pas restaurés. Après correction de la cause, terminer avec
+`apt --fix-broken install`.
+
+Le downgrade en place d'une version 3.x vers une version 2.x antérieure à
+l'interface configfs n'est pas supporté et peut laisser le paquet dans un état
+half-configured. Dans cet état, `apt remove` retire toutes les versions DKMS et
+leurs sources de secours, tout en conservant la configuration et le cache.
 
 ## Collecte des disques
 
@@ -463,6 +492,12 @@ Sur Proxmox :
 ```sh
 apt install ./unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
 ```
+
+Un processus extérieur qui conserve ouvert le FD d'une sonde peut empêcher le
+déchargement de `virt_temp`. La suppression échoue alors proprement et, si le
+service était actif, tente de le relancer pour restaurer la topologie depuis le
+cache ; l'ancien FD retourne néanmoins `ENODEV`. Fermer le FD puis relancer la
+suppression. Le paquet ne tue pas le processus extérieur.
 
 Conserver la configuration :
 
