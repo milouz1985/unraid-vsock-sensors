@@ -246,12 +246,18 @@ Puis exécuter `systemctl daemon-reload` et redémarrer le service.
 Sur Proxmox :
 
 ```sh
+dpkg -s unraid-vsock-sensors-hwmon
 dkms status -m virt-temp
 systemctl status unraid-vsock-hwmon.service
+systemctl status unraid-vsock-hwmon-topology.path
 journalctl -u unraid-vsock-hwmon.service -n 50 --no-pager
 find /dev/virt-temp -maxdepth 1 -type c -ls
 sensors
 ```
+
+`dpkg -s` révèle notamment un paquet `half-configured`. L'état de l'unité
+`.path` permet de diagnostiquer séparément le watcher des changements de
+topologie.
 
 Des sondes telles que celles-ci doivent apparaître :
 
