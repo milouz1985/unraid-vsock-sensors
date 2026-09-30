@@ -60,9 +60,9 @@ make test-race
 
 ## Fuzzing MPT3
 
-Les parsers MPT3 disposent de plusieurs cibles de fuzzing.
+Le parser binaire de IO Unit Page 7 dispose d'une cible de fuzzing.
 
-Lancer les campagnes par défaut :
+Lancer la campagne par défaut :
 
 ```sh
 make fuzz-mpt3
@@ -74,8 +74,8 @@ Modifier leur durée :
 make fuzz-mpt3 FUZZTIME=2m
 ```
 
-Les campagnes longues ne font pas partie de `make check`, mais les seeds des
-fuzzers sont exécutées par `go test ./...`.
+Une campagne longue ne fait pas partie de `make check`, mais le seed du fuzzer
+est exécuté par `go test ./...`.
 
 ## Tests d'intégration Proxmox
 

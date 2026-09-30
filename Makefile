@@ -8,9 +8,6 @@ VERSION ?=
 DEBIAN_REVISION ?= 1
 FUZZTIME ?= 30s
 
-MPT3_FUZZ_TARGETS := FuzzParseMPT3Temperatures \
-	FuzzValidateMPT3ConfigReply
-
 BASH_SCRIPTS := version.sh \
 	version_test.sh \
 	unraid-plugin/package.sh \
@@ -81,11 +78,8 @@ test: ## Exécute tous les tests Go
 test-race: ## Exécute tous les tests Go avec le détecteur de courses
 	$(GO) test -race ./...
 
-fuzz-mpt3: ## Lance successivement les campagnes de fuzzing MPT3
-	@for target in $(MPT3_FUZZ_TARGETS); do \
-		echo "Fuzzing $$target for $(FUZZTIME)"; \
-		$(GO) test -run='^$$' -fuzz="^$${target}$$" -fuzztime="$(FUZZTIME)" . || exit $$?; \
-	done
+fuzz-mpt3: ## Lance la campagne de fuzzing du parser MPT3
+	$(GO) test -run='^$$' -fuzz='^FuzzParseMPT3Temperatures$$' -fuzztime="$(FUZZTIME)" .
 
 lint-shell: ## Analyse les scripts shell avec ShellCheck
 	shellcheck -x -P SCRIPTDIR $(BASH_SCRIPTS) $(POSIX_SCRIPTS)
