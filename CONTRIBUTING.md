@@ -473,6 +473,36 @@ dist/
 
 Le projet cible Linux amd64.
 
+### Paquet Proxmox
+
+Construire uniquement le paquet Debian avec :
+
+```sh
+make hwmon-package
+```
+
+`virt-temp/package.sh` prépare une arborescence temporaire puis appelle
+`dpkg-buildpackage` et debhelper 13. `dh_installsystemd` installe et active le
+receiver et l'unité `.path` sans arrêter le service avant une mise à jour. Les
+scripts de maintenance gèrent DKMS explicitement : le `prerm` généré par
+`dh_dkms` retirerait sinon l'ancienne version avant que la nouvelle ait prouvé
+qu'elle peut être construite et installée.
+
+Une construction directe avec `dpkg-buildpackage -b -us -uc` reste possible
+quand `debian/changelog` porte la version voulue. Sous Debian 13, installer Go
+1.27 séparément ; le script de projet utilise ce Go local et passe `-d` pour ne
+pas bloquer sur les `Build-Depends` Go indisponibles dans la distribution.
+
+Pour choisir la version ou la révision Debian :
+
+```sh
+make hwmon-package VERSION=X.Y.Z
+make hwmon-package VERSION=X.Y.Z DEBIAN_REVISION=2
+```
+
+Le résultat est écrit dans
+`dist/unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb`.
+
 ## Versionnement
 
 Les versions suivent SemVer.

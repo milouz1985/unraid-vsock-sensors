@@ -5,6 +5,10 @@ Ce document décrit le composant Proxmox de `unraid-vsock-sensors`.
 Pour l'installation complète et la collecte côté Unraid, voir le
 [README principal](../README.md).
 
+La construction et la release sont documentées dans
+[`CONTRIBUTING.md`](../CONTRIBUTING.md), et les tests réels dans
+[`tests/vm/README.md`](../tests/vm/README.md).
+
 ## Composants
 
 Le paquet Debian installe principalement :
@@ -257,49 +261,6 @@ CoolerControl n'est ici qu'un exemple, pas un consommateur géré par UVSS. Le
 template utilise `try-restart` : lors d'un événement, une unité inactive reste
 inactive.
 
-## Construction
-
-Depuis la racine du dépôt :
-
-```sh
-apt install debhelper rsync
-make hwmon-package
-```
-
-La construction requiert aussi Go 1.27 ou plus récent dans le `PATH`. Le script
-`virt-temp/package.sh` prépare une arborescence source temporaire, puis utilise
-`dpkg-buildpackage` et debhelper 13. `dh_installsystemd` installe et active le
-receiver et l'unité `.path` sans arrêter le service avant une mise à jour. Les
-scripts de maintenance gèrent explicitement DKMS : le `prerm`
-généré par `dh_dkms` retire l'ancienne version dès le début d'une mise à jour,
-ce qui empêcherait de conserver le module opérationnel si la compilation de la
-nouvelle version échouait.
-
-L'arborescence `debian/` permet aussi une construction directe avec
-`dpkg-buildpackage -b -us -uc` lorsque les dépendances de construction sont
-installées et que `debian/changelog` porte la version voulue. Sous Debian 13,
-Go 1.27 doit être installé séparément ; le script de projet utilise alors ce
-Go local et passe `-d` à `dpkg-buildpackage` pour ignorer le contrôle des
-`Build-Depends` indisponibles dans la distribution.
-
-Version explicite :
-
-```sh
-make hwmon-package VERSION=X.Y.Z
-```
-
-Nouvelle révision Debian :
-
-```sh
-make hwmon-package VERSION=X.Y.Z DEBIAN_REVISION=2
-```
-
-Le paquet est créé dans :
-
-```text
-dist/unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
-```
-
 ## Diagnostic
 
 ```sh
@@ -374,13 +335,6 @@ La purge retire la configuration et le cache. Elle ne retire spécialement ni
 les abonnements au template UVSS, ni les unités tierces directement abonnées à
 `unraid-vsock-hwmon-topology.service` : ces abonnements explicites restent sous
 la responsabilité de l'administrateur.
-
-## Tests
-
-Le vrai module, DKMS, systemd, configfs, les nodes `/dev`, hwmon, le failsafe et
-la récupération après reload sont testés dans une VM Proxmox dédiée.
-
-Voir [`../tests/vm/README.md`](../tests/vm/README.md).
 
 ## Licence
 
