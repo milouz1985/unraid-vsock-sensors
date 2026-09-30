@@ -7,11 +7,16 @@ Il n'est pas la source de vérité exhaustive du produit ni de ses invariants.
 
 Hiérarchie documentaire :
 
-- `README.md` décrit le produit, son installation et son comportement visible ;
-- `CONTRIBUTING.md` porte les invariants techniques et choix de conception ;
-- `virt-temp/README.md` détaille le module noyau et le receiver Proxmox ;
-- `tests/vm/README.md` décrit l'intégration VM, noyau et packaging ;
-- ce fichier indique quoi lire et comment intervenir.
+- `README.md` décrit l'installation, la configuration, l'exploitation, les
+  diagnostics, la récupération et la sécurité visibles par l'opérateur ;
+- `CONTRIBUTING.md` porte l'architecture, les invariants, les décisions de
+  conception et les lifecycles techniques ;
+- `virt-temp/README.md` détaille uniquement l'interface, le lifetime et les
+  contraintes du module noyau ;
+- `tests/vm/README.md` décrit la portée et les procédures des tests
+  d'intégration réels ;
+- ce fichier indique quoi lire, quelles validations exécuter et comment
+  intervenir.
 
 Une information absente d'`AGENTS.md` peut donc rester normative. Avant une
 modification non triviale, lire les sections pertinentes des documents
@@ -24,10 +29,14 @@ propriétaires.
   partie collecte de `README.md` si le comportement utilisateur change.
 - HBA, MPT3 ou StorCLI : `CONTRIBUTING.md`, « Collecte HBA et commandes
   externes » et « ABI MPT3 et IO Unit Page 7 ».
-- VSOCK, hwmon, configfs, cache ou diagnostics : `CONTRIBUTING.md`, « Côté
-  Proxmox », « Diagnostics » et « Failsafe », ainsi que `virt-temp/README.md`.
-- Module noyau, DKMS, Debian ou systemd : `virt-temp/README.md` et
-  `tests/vm/README.md`.
+- Module noyau, configfs, miscdevice ou hwmon kernel : `virt-temp/README.md`
+  ainsi que `CONTRIBUTING.md`, « Côté Proxmox » et « Failsafe ».
+- Receiver VSOCK, cache ou diagnostics : `CONTRIBUTING.md`, « Côté Proxmox »,
+  « Diagnostics » et « Failsafe », puis `README.md` si le comportement
+  opérateur change.
+- Systemd, Debian ou DKMS : les sections d'exploitation de `README.md`, les
+  sections techniques et de packaging de `CONTRIBUTING.md`, puis
+  `tests/vm/README.md` pour l'intégration réelle.
 - Release ou artefacts : les sections correspondantes de `CONTRIBUTING.md`.
 
 ## Portée et simplicité

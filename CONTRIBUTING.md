@@ -9,16 +9,19 @@ Pour l'installation et l'utilisation du projet, voir [`README.md`](README.md).
 
 Chaque information normative a un propriétaire principal :
 
-- [`README.md`](README.md) décrit le produit, son installation, sa
-  configuration et son comportement visible par l'opérateur ;
-- ce document est la source de vérité des invariants techniques et des choix de
-  conception nécessaires pour modifier le projet ;
-- [`virt-temp/README.md`](virt-temp/README.md) détaille l'interface et le cycle
-  de vie du module noyau et du receiver Proxmox ;
-- [`tests/vm/README.md`](tests/vm/README.md) décrit l'environnement et les
-  scénarios d'intégration réels ;
+- [`README.md`](README.md) décrit l'installation, la configuration,
+  l'exploitation, les diagnostics, la récupération et la sécurité visibles par
+  l'opérateur ;
+- ce document est la source de vérité de l'architecture, des invariants, des
+  décisions de conception et des lifecycles techniques nécessaires pour
+  modifier le projet ;
+- [`virt-temp/README.md`](virt-temp/README.md) détaille uniquement l'interface,
+  le lifetime et les contraintes du module noyau : configfs, miscdevices,
+  hwmon, IDs, stale timeout et unload ;
+- [`tests/vm/README.md`](tests/vm/README.md) décrit la portée et les procédures
+  des tests d'intégration réels ;
 - [`AGENTS.md`](AGENTS.md) contient uniquement les règles de travail propres aux
-  agents et renvoie vers ces sources.
+  agents, les validations à exécuter et les renvois vers ces sources.
 
 Une information absente d'`AGENTS.md` peut donc rester un invariant du projet.
 Les renvois sont préférés à la copie d'une même règle dans plusieurs documents.
