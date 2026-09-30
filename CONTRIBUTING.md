@@ -397,6 +397,30 @@ systemd. Une unité `.path` extérieure au processus transforme l'événement
 runtime en activation de `unraid-vsock-hwmon-topology.service`, auquel les
 consommateurs s'abonnent explicitement.
 
+#### Confinement systemd du receiver
+
+Le receiver reste exécuté par root : il doit manipuler la topologie configfs,
+écrire les températures dans les miscdevices `virt-temp` et effectuer le setup
+nécessaire au service. Ce besoin ne lui donne pas pour autant un accès root sans
+limites. L'unité systemd réduit explicitement son périmètre :
+
+- la seule capability conservée permet le bind du port VSOCK privilégié ;
+- les sockets sont limités à `AF_VSOCK` et l'acquisition de nouveaux privilèges
+  est interdite ;
+- le système de fichiers est protégé, les homes sont masqués et `/tmp` est
+  privé ;
+- seuls les répertoires d'état et d'exécution gérés par systemd ainsi que le
+  chemin configfs de `virt_temp` sont rendus accessibles en écriture ;
+- le chargement du module reste isolé dans `ExecStartPre`, avec le préfixe `+`
+  qui demande explicitement à systemd cette élévation hors du confinement du
+  processus principal.
+
+Ces restrictions forment un contrat de sécurité, pas une collection de réglages
+facultatifs. Leur retrait ou leur élargissement exige une justification liée à
+un besoin réel et la mise à jour du test statique de l'unité ; la VM conserve la
+responsabilité de vérifier que le service fonctionne effectivement sous ce
+confinement.
+
 La collecte et la publication sont indépendantes : une opération disque ou HBA
 lente ne bloque pas le heartbeat VSOCK. Le protocole reste un flux JSON
 persistant délimité par des retours à la ligne et validé dans
