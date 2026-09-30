@@ -488,35 +488,9 @@ responsabilité de l'administrateur.
 
 ## Développement
 
-Prérequis :
-
-- Go 1.27.0 ou plus récent ;
-- ShellCheck.
-
-Commandes principales :
-
-```sh
-make check
-make test-race
-make fuzz-mpt3
-make artifacts
-make test-vm
-```
-
-Les tests d'intégration Proxmox sont documentés dans
-[`tests/vm/README.md`](tests/vm/README.md).
-
-Pour préparer une release :
-
-```sh
-make release VERSION=X.Y.Z
-```
-
-Cette commande exécute les vérifications, les tests VM, construit les artefacts
-et actualise le `.plg`. Elle ne crée ni commit, ni tag et ne pousse rien.
-
-Publier d'abord le tag et les assets GitHub, vérifier leurs URLs, puis seulement
-pousser le nouveau `main` contenant le `.plg`.
+Les prérequis, commandes de validation, constructions et procédures de release
+sont documentés dans [`CONTRIBUTING.md`](CONTRIBUTING.md). L'intégration Proxmox
+est détaillée dans [`tests/vm/README.md`](tests/vm/README.md).
 
 ## Sécurité
 
