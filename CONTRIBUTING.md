@@ -254,17 +254,70 @@ IOC attendu par `MPT3COMMAND` ; aucun ioctl de découverte préalable n'est
 utilisé.
 
 SMART et StorCLI ne partagent volontairement pas de helper générique
-d'exécution. `smartctl_type` peut lancer une seconde commande : son process
-group est donc tué à l'annulation. StorCLI est appelé directement avec
-`exec.CommandContext` et `WaitDelay`, qui borne l'attente si un descendant garde
-stdout ou stderr ouvert. Un helper générique avec pipes, goroutines et
-`kill(-PID)` après `Wait` a été expérimenté puis supprimé : il ajoutait une
-complexité et une course inutiles sans pouvoir superviser un descendant ayant
-fait `fork` puis `setsid`. Aucun descendant persistant n'a été observé sur le
-matériel testé avec la commande utilisée par UVSS. La garantie retenue est que
-la collecte ne bloque jamais indéfiniment, pas qu'elle termine tous les
-processus internes possibles de StorCLI. Réexaminer ce choix seulement si un
-StorCLI réel laisse des orphelins avec un impact observable.
+d'exécution : leurs chaînes de processus et leurs modes de défaillance observés
+sont différents.
+
+##### SMART
+
+`smartctl_type` peut réellement lancer `smartctl`. Cette chaîne de processus
+connue justifie le process group dédié, tué à l'annulation, afin que le wrapper
+ne laisse pas la commande enfant continuer seule.
+
+##### StorCLI
+
+StorCLI est appelé directement avec `exec.CommandContext` et `WaitDelay`. Avec
+`StorCLI 007.3404.0000.0000 - April 18, 2025`, la commande exacte utilisée pour
+les températures n'a présenté qu'un seul processus sur Unraid :
+
+```text
+storcli64 /c0 show temperature
+```
+
+Aucun enfant, changement de SID ou PGID, ni processus survivant n'a été observé
+sur ce chemin. L'analyse statique du binaire montre néanmoins d'autres chemins
+capables de créer des processus, d'appeler `setsid()`, de gérer des événements
+asynchrones ou de lancer des commandes externes. L'observation ne constitue
+donc pas une garantie générale pour toutes les commandes StorCLI.
+
+Pendant son fonctionnement normal, le processus a notamment été observé dans
+la séquence d'états `D -> Dl -> Rl -> Dl -> Sl -> exit`. L'état `D` est un
+sommeil kernel non interruptible : si le driver ou le HBA reste bloqué, un
+`SIGKILL` peut rester pending jusqu'au retour de l'appel kernel.
+
+`Cmd.WaitDelay` n'est donc pas une borne absolue. `Cmd.Wait()` commence par
+`Process.Wait()` et attend la terminaison réelle du processus. Quand le contexte
+expire, `os/exec` peut appeler `Cancel`, envoyer `SIGKILL`, réessayer après
+`WaitDelay` et fermer les pipes encore ouverts. Cela borne notamment le drainage
+de pipes hérités par un descendant et les processus normalement interruptibles,
+mais ne rend pas interruptible un task bloqué en `D`.
+
+Un process group StorCLI n'améliorerait pas ce mode de défaillance ; un
+descendant appelant `setsid()` échapperait en outre au groupe initial. Un cgroup
+permettrait d'identifier ou d'isoler les processus, mais pas d'interrompre un
+task en `D`. UVSS n'ajoute donc ni `Setpgid`, ni `kill(-PID)`, ni cgroup, ni
+superviseur concurrent pour ce backend.
+
+Réexaminer ce choix seulement si la commande utilisée par UVSS présente
+réellement un enfant persistant, un processus détaché ayant un impact, une fuite
+répétable, plusieurs instances StorCLI simultanées causées par UVSS, un blocage
+du publisher ou une expiration incorrecte des snapshots HBA.
+
+##### Collector HBA
+
+La protection contre un backend bloqué est architecturale. `refresh()` effectue
+l'I/O synchrone sans tenir `hbaCollector.mu`, de sorte que `snapshot()` et
+`status()` restent disponibles. Le dernier snapshot réussi reste lisible
+pendant `interval + hbaCollectionTimeout`, puis expire normalement ; le
+publisher continue et signale l'erreur HBA, tandis que les diagnostics indiquent
+l'état stale. Si l'appel finit par revenir après sa deadline, son résultat est
+rejeté comme timeout.
+
+La boucle de collecte attend ce retour avant l'itération suivante : UVSS ne
+lance donc pas une nouvelle commande StorCLI pendant que la précédente reste
+bloquée. Il peut y avoir au maximum une collecte HBA ainsi immobilisée, sans
+bloquer la collecte disque, la publication VSOCK ou les diagnostics. Les tests
+simulent un backend synchrone ignorant temporairement son contexte ; ils ne
+prétendent pas reproduire un vrai task kernel en état `D`.
 
 Le backend StorCLI conserve l'association entre ses index et l'inventaire
 sysfs tant que la lecture réussit avec le même ensemble d'index. Dans

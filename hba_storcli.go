@@ -101,7 +101,8 @@ func runStorCLI(ctx context.Context, operation string, args ...string) ([]byte, 
 	}
 	command := exec.CommandContext(ctx, path, args...)
 	// StorCLI is executed directly. WaitDelay bounds pipe draining if a
-	// descendant keeps stdout or stderr open after the main process exits.
+	// descendant keeps stdout or stderr open after the main process exits. It
+	// cannot bound Process.Wait while StorCLI is stuck in uninterruptible sleep.
 	command.WaitDelay = time.Second
 	out, err := command.Output()
 	if ctx.Err() != nil {

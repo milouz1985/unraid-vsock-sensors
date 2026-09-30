@@ -462,9 +462,13 @@ erreur ou un changement de l'ensemble de leurs index. Un remplacement ou une
 reconfiguration à chaud qui conserve les mêmes index peut nécessiter un
 redémarrage d'UVSS pour redécouvrir l'identité du matériel.
 
-Une collecte HBA possède un deadline de 15 secondes. Un ioctl natif pouvant
-rester bloqué au-delà de ce délai, le dernier snapshot valide expire
-indépendamment et tout résultat revenu trop tard est rejeté.
+Une collecte HBA possède un contexte avec un délai de 15 secondes, mais ce délai
+ne peut pas interrompre un appel bloqué dans le noyau. L'I/O backend reste hors
+du verrou du collector : le dernier snapshot valide demeure lisible pendant
+l'intervalle normal augmenté de ces 15 secondes, puis expire pendant que la
+publication VSOCK et les diagnostics continuent. Aucun autre appel HBA n'est
+lancé avant le retour du précédent, et tout résultat revenu trop tard est
+rejeté.
 
 ## Topologie et failsafe
 

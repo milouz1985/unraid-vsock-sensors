@@ -196,8 +196,9 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 
-	// Do not hold c.mu during backend I/O: a synchronous ioctl may outlive its
-	// context, while snapshots must remain readable and expire independently.
+	// Do not hold c.mu during backend I/O: a synchronous backend call may
+	// outlive its context, while snapshots must remain readable and expire
+	// independently.
 	readings, err := c.reader.collect(ctx)
 	finishedAt := time.Now()
 	if !finishedAt.Before(deadline) {

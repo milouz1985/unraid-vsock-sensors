@@ -29,7 +29,7 @@ temperatures over AF_VSOCK to Proxmox as native hwmon sensors.
 - Harden the Proxmox receiver service with systemd confinement restricted to AF_VSOCK.
 - Preserve the last working DKMS module across failed upgrades and make package rollback and removal recoverable.
 - BREAKING: In-place downgrades from 3.x to a pre-configfs 2.x package are not supported.
-- Discover stable HBA identities and PCI associations from /sys/class/scsi_host for both MPT3 and StorCLI, and prevent StorCLI collection from blocking indefinitely.
+- Discover stable HBA identities and PCI associations from /sys/class/scsi_host for both MPT3 and StorCLI, and keep snapshot publication responsive while a blocked HBA collection expires independently.
 - Read native MPT3 temperatures through the IOC number exposed by mpt3sas, size IO Unit Page 7 from the firmware response, and accept additive page extensions.
 - Expose IOC and Board temperatures as independent hwmon sensors and Diagnostics values while retaining the legacy single-temperature protocol field for compatibility.
 - Make disk-policy writes and resets durable across abrupt power loss.
