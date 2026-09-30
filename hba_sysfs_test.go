@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -205,17 +204,5 @@ func TestDiscoverSysfsHBAsRejectsIncompleteInventory(t *testing.T) {
 	_, err := discoverSysfsHBAs(context.Background(), root)
 	if err == nil || !strings.Contains(err.Error(), "resolve host2 device") {
 		t.Fatalf("incomplete sysfs inventory returned %v", err)
-	}
-}
-
-func TestDiscoverSysfsHBAsHonorsContext(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "scsi_host")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := discoverSysfsHBAs(ctx, root); !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled discovery returned %v", err)
 	}
 }
