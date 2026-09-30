@@ -421,6 +421,21 @@ un besoin réel et la mise à jour du test statique de l'unité ; la VM conserve
 responsabilité de vérifier que le service fonctionne effectivement sous ce
 confinement.
 
+#### Lifetime de l'événement de topologie
+
+`RuntimeDirectoryPreserve=yes` conserve volontairement
+`/run/unraid-vsock-sensors/topology-changed` pendant les arrêts et redémarrages
+normaux du receiver. L'unité `.path` surveille ce fichier avec `PathChanged` :
+le supprimer puis le recréer pendant qu'elle est active pourrait transformer le
+lifecycle du service en faux changement de topologie.
+
+Le fichier disparaît naturellement au redémarrage de l'hôte. Lors d'une purge
+du paquet, `postrm` doit respecter cet ordre : arrêter le watcher
+`unraid-vsock-hwmon-topology.path`, le désactiver, puis seulement supprimer le
+runtime directory et son événement. Cette séquence empêche la suppression du
+paquet de déclencher un consumer au moment où sa topologie est retirée ; elle
+fait partie du contrat de lifecycle.
+
 La collecte et la publication sont indépendantes : une opération disque ou HBA
 lente ne bloque pas le heartbeat VSOCK. Le protocole reste un flux JSON
 persistant délimité par des retours à la ligne et validé dans
