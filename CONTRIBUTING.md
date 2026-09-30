@@ -457,6 +457,13 @@ d'une famille ne masque pas l'échec de l'autre. À la création d'une sonde, la
 température est écrite avant son premier `label`, car ce dernier la rend visible
 par hwmon.
 
+Le cache contient uniquement la dernière topologie valide de chaque famille,
+jamais les températures. Une reconfiguration réussie fixe `cacheDirty` jusqu'à
+ce que cette topologie soit écrite durablement ; si l'écriture échoue, le
+prochain snapshot la retente même sans nouveau changement. Cet état de
+persistance reste distinct de `needsReconcile`, qui décrit une réconciliation
+kernel encore nécessaire.
+
 Le module kernel doit rester simple. La logique métier et la découverte
 matérielle appartiennent autant que possible à l'espace utilisateur.
 
