@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,25 +65,6 @@ func makeHBAReading(metadata hbaMetadata, temperatures hbaTemperatures) (sensors
 		IOCTemp:    temperatures.ioc,
 		BoardTemp:  temperatures.board,
 	}, true
-}
-
-func cloneHBAReadings(readings []sensors.HBA) []sensors.HBA {
-	if readings == nil {
-		return nil
-	}
-	cloned := make([]sensors.HBA, len(readings))
-	for index, reading := range readings {
-		cloned[index] = reading
-		if reading.IOCTemp != nil {
-			temperature := *reading.IOCTemp
-			cloned[index].IOCTemp = &temperature
-		}
-		if reading.BoardTemp != nil {
-			temperature := *reading.BoardTemp
-			cloned[index].BoardTemp = &temperature
-		}
-	}
-	return cloned
 }
 
 const (
@@ -234,7 +216,9 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	}
 	c.lastSuccessfulAt = finishedAt
 	c.lastErrorAt = time.Time{}
-	c.lastSuccessfulSnapshot = cloneHBAReadings(readings)
+	// Backends and consumers treat temperature pointers as immutable. Clone the
+	// slice so callers cannot replace entries retained by the collector.
+	c.lastSuccessfulSnapshot = slices.Clone(readings)
 }
 
 // stale reports whether the last successful HBA snapshot has outlived the
@@ -257,7 +241,7 @@ func (c *hbaCollector) snapshot() ([]sensors.HBA, error) {
 	if c.stale() {
 		return nil, errors.New("HBA temperature snapshot expired")
 	}
-	return cloneHBAReadings(c.lastSuccessfulSnapshot), nil
+	return slices.Clone(c.lastSuccessfulSnapshot), nil
 }
 
 func (c *hbaCollector) status() hbaCollectorStatus {
@@ -266,6 +250,6 @@ func (c *hbaCollector) status() hbaCollectorStatus {
 	return hbaCollectorStatus{
 		interval: c.interval, mode: c.mode, backend: c.backend,
 		lastSuccessfulAt: c.lastSuccessfulAt, lastErrorAt: c.lastErrorAt, err: c.err,
-		lastSuccessfulSnapshot: cloneHBAReadings(c.lastSuccessfulSnapshot), stale: c.stale(),
+		lastSuccessfulSnapshot: slices.Clone(c.lastSuccessfulSnapshot), stale: c.stale(),
 	}
 }
