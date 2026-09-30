@@ -68,7 +68,8 @@ protocole `sample`/`configure`/`commit`, ni de session ou de staging côté noya
 Supprimer l'objet configfs supprime immédiatement le périphérique hwmon et le
 node `/dev` associé. Un descripteur `/dev` déjà ouvert reste mémoire-safe grâce
 au refcount du `config_item`, mais ses écritures retournent `ENODEV` après la
-suppression.
+suppression. Il conserve aussi une référence sur le module jusqu'à sa fermeture
+et peut donc empêcher le déchargement de `virt_temp` entre-temps.
 
 Contraintes principales :
 

@@ -605,6 +605,24 @@ ou une suppression propre jusque-là. Cette garantie est la raison pour laquelle
 le lifecycle ne délègue pas directement le retrait de l'ancienne version au
 `prerm` standard de `dh_dkms`.
 
+#### FD externe pendant un upgrade
+
+Un processus extérieur qui conserve un FD `/dev/virt-temp/*` pendant un upgrade
+est hors du contrat supporté. Les `file_operations` du miscdevice appartiennent
+à `THIS_MODULE` : même après la suppression configfs de la sonde et le passage
+des écritures à `ENODEV`, le FD ouvert retient le module et peut faire échouer
+`modprobe -r virt_temp`. Le receiver reste l'unique writer supporté en
+fonctionnement normal ; les manipulations manuelles exigent son arrêt et la
+fermeture des descripteurs avant un upgrade.
+
+Le chemin `remove` restaure le service après un échec de déchargement afin de
+laisser le paquet utilisable, mais cette récupération ne constitue pas une
+garantie équivalente pour l'upgrade. Le `postinst` n'ajoute pas de rollback
+spéculatif : après fermeture du FD, la configuration interrompue peut reprendre
+avec `dpkg --configure -a`. Supporter ce scénario demanderait d'abord un test VM
+d'upgrade réel avec un FD externe ouvert, puis un rollback minimal fondé sur le
+comportement observé de dpkg, systemd, configfs et DKMS.
+
 Une construction directe avec `dpkg-buildpackage -b -us -uc` reste possible
 quand `debian/changelog` porte la version voulue. Sous Debian 13, installer Go
 1.27 séparément ; le script de projet utilise ce Go local et passe `-d` pour ne

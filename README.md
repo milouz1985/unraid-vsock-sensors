@@ -512,6 +512,11 @@ Sur Proxmox :
 apt install ./unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
 ```
 
+Un upgrade avec un processus extérieur conservant ouvert un FD
+`/dev/virt-temp/*` n'est pas supporté : fermer ces descripteurs avant
+l'installation. S'ils empêchent le déchargement du module, fermer le FD puis
+reprendre la configuration avec `dpkg --configure -a`.
+
 Un processus extérieur qui conserve ouvert le FD d'une sonde peut empêcher le
 déchargement de `virt_temp`. La suppression échoue alors proprement et, si le
 service était actif, tente de le relancer pour restaurer la topologie depuis le
