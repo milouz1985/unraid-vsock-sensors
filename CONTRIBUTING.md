@@ -5,6 +5,43 @@ effectuer et le processus de publication de `unraid-vsock-sensors`.
 
 Pour l'installation et l'utilisation du projet, voir [`README.md`](README.md).
 
+## Sources de vérité documentaires
+
+Chaque information normative a un propriétaire principal :
+
+- [`README.md`](README.md) décrit le produit, son installation, sa
+  configuration et son comportement visible par l'opérateur ;
+- ce document est la source de vérité des invariants techniques et des choix de
+  conception nécessaires pour modifier le projet ;
+- [`virt-temp/README.md`](virt-temp/README.md) détaille l'interface et le cycle
+  de vie du module noyau et du receiver Proxmox ;
+- [`tests/vm/README.md`](tests/vm/README.md) décrit l'environnement et les
+  scénarios d'intégration réels ;
+- [`AGENTS.md`](AGENTS.md) contient uniquement les règles de travail propres aux
+  agents et renvoie vers ces sources.
+
+Une information absente d'`AGENTS.md` peut donc rester un invariant du projet.
+Les renvois sont préférés à la copie d'une même règle dans plusieurs documents.
+
+## Cartographie du dépôt
+
+Le package Go principal est organisé par responsabilité :
+
+- `main.go` fournit les commandes `serve`, `hwmon` et `version` ;
+- `disk*.go` couvre l'inventaire Unraid, les politiques, emhttpd/SMART et l'état
+  thermique des disques ;
+- `control_server.go` expose l'API locale de la WebUI sur socket Unix ;
+- `hba*.go` couvre l'inventaire HBA et les backends MPT3/StorCLI ;
+- `publisher.go` maintient la publication VSOCK ;
+- `hwmon*.go` valide, persiste et réconcilie la topologie Proxmox ;
+- `diagnostics.go` construit le snapshot runtime en lecture seule ;
+- `internal/sensors` porte le modèle et le framing VSOCK partagés ;
+- `internal/vsockaddr` valide le CID et le port.
+
+Les autres composants principaux sont `unraid-plugin/` pour la WebUI et le
+packaging Unraid, `virt-temp/` pour le module et le paquet Debian/DKMS, et
+`tests/vm/` pour les tests réels Proxmox, noyau, systemd et packaging.
+
 ## Prérequis
 
 Le projet nécessite :
@@ -117,43 +154,60 @@ de simuler du matériel dans la VM, notamment :
 - logique temporelle ;
 - fuzzing MPT3.
 
+La frontière suit la propriété testée, pas le langage du test. Une décision
+pure de script, comme l'ordre « tous les builds DKMS avant toute installation »,
+reste dans un test classique. Le comportement réel de `dpkg`, DKMS, systemd,
+configfs, d'un miscdevice ou d'un module retenu par un FD appartient à la VM.
+Ne pas maintenir un faux gestionnaire de paquets, faux noyau ou faux systemd
+pour rejouer cette intégration. Pour les unités systemd, utiliser
+`systemd-analyze verify` pour la validité statique et réserver la VM aux effets
+fonctionnels.
+
 ## Principes d'architecture
 
 Le projet cherche à conserver une séparation claire entre les responsabilités.
 
 ### Côté Unraid
 
-L'agent :
+#### Collecte des disques et état runtime
 
-- consomme les champs `temp` et `spundown` déjà maintenus par `emhttpd` ;
-- lorsque le heartbeat `poll_attributes` est sain, Unraid est l'autorité pour
-  ces champs ; UVSS ne connaît pas l'âge physique de la mesure emhttpd ;
-- en cas de heartbeat `poll_attributes` absent, lance temporairement
-  `smartctl_type` avec protection standby et des délais bornés ;
-- ne doit pas réveiller les disques ;
-- publie `Temp=0` comme sentinelle synthétique en état `standby` ou `waking`,
-  sans confondre ce cas avec une vraie mesure à `0 °C` ; UVSS ne conserve pas
-  lui-même sa mesure pré-standby pour le réveil. La wake grace exige une
-  transition standby vers actif observée sans erreur d'inventaire intermédiaire ;
-- publie les snapshots via AF_VSOCK.
+Quand le heartbeat `poll_attributes` est sain, les champs `temp` et `spundown`
+maintenus par `emhttpd` font autorité. UVSS ne connaît pas l'âge physique de la
+mesure. Entre deux acquisitions SMART prévues, republier la dernière valeur est
+intentionnel : `stale_timeout` protège l'absence de refresh vers hwmon, pas
+l'âge de la mesure matérielle. Ne pas ajouter de TTL thermique indépendant sans
+nouveau besoin fonctionnel.
 
-Les identités HBA proviennent de `/sys/class/scsi_host` pour les deux backends ;
-les pages Manufacturing MPT3 et les champs d'identité StorCLI ne sont pas des
-sources parallèles. Pour `mpt3sas`, `unique_id` fournit directement le numéro
-IOC attendu par `MPT3COMMAND` ; aucun ioctl de découverte préalable n'est
-utilisé. `TestMPT3CommandABI` verrouille seulement la transcription userspace
-Linux/amd64 de `mpt3_ioctl_command` : il ne vérifie pas l'ABI du noyau chargé.
-Un changement incompatible du layout qui conserverait la même taille reste
-donc un risque résiduel. Le backend StorCLI conserve l'association entre ses
-index et cet inventaire tant que la lecture des températures réussit avec le
-même ensemble d'index. Un remplacement à chaud avec index inchangés peut
-conserver une identité périmée jusqu'au redémarrage du daemon.
-StorCLI est exécuté directement avec un délai bornant l'attente de ses pipes.
-Une annulation termine le processus principal et `WaitDelay` empêche un
-descendant conservant stdout ou stderr ouvert de bloquer indéfiniment la
-collecte. UVSS ne garantit pas la terminaison d'un descendant détaché, notamment
-s'il a créé sa propre session. Le snapshot HBA expire indépendamment pour
-protéger le failsafe hwmon.
+Le SMART direct est un fallback temporaire quand ce heartbeat devient stale.
+Il reste borné en temps et en concurrence. Pour un disque ATA rotationnel, la
+collecte vérifie d'abord le standby puis conserve `smartctl -n standby,3` comme
+barrière anti-race afin de ne jamais réveiller le disque. Après un échec SMART,
+le disque devient indisponible au lieu de republier une ancienne mesure.
+
+Le JSON SMART ne fournit une température qu'au travers de champs sémantiques
+structurés. Les attributs ATA 190/194, `raw.value` et `raw.string` ne sont pas
+des sources de température. Toute valeur sémantique finie est acceptée sans
+filtre arbitraire de plausibilité physique.
+
+La continuité thermique reste répartie entre des propriétaires distincts :
+
+- `smartSourceState` porte le heartbeat emhttpd, le fallback et la cadence
+  SMART ;
+- `diskStateTracker` porte les transitions `standby`, `waking` et `active` ;
+- `lastSuccessfulSnapshot` porte la dernière vue disque entièrement cohérente ;
+- la collecte HBA possède son propre état.
+
+Ces états ne doivent pas être fusionnés dans un cache générique. Une wake grace
+exige une transition standby vers actif observée sans erreur d'inventaire
+intermédiaire. UVSS ne republie pas sa mesure pré-standby pendant le réveil.
+
+Dans l'inventaire, l'ID stable Unraid est l'identité ; `/dev/sdX` ne l'est
+jamais. Une entrée assigned l'emporte sur l'entrée unassigned correspondante et
+des IDs actifs dupliqués dans une même source invalident l'inventaire. Les
+champs `rotational` et `spundown` ne sont validés strictement que pour les
+entrées effectivement collectées. En mode `Auto`, un bus physique inconnu est
+inclus par prudence, un disque USB confirmé est exclu et `flash` reste toujours
+exclu.
 
 Les températures des disques proviennent de :
 
@@ -183,7 +237,72 @@ emhttpd. Conserver la validation stricte et ses tests défensifs : ne pas
 inventer une identité depuis `/dev/sdX`, ne pas utiliser le nom de section
 comme pseudo-identité et ne pas ignorer silencieusement cette entrée.
 
-La collecte HBA reste séparée de la collecte disque.
+#### Control plane Unraid
+
+Le daemon est l'unique writer des politiques disque persistées. La WebUI les
+lit et les modifie par l'API locale sur socket Unix ; PHP et les scripts
+n'écrivent pas `disk-policies.json`, et aucune CLI d'administration parallèle
+n'est prévue. `service.sh` reste un trampoline WebGUI pour le cycle de vie. Une
+panne de ce control plane ne doit arrêter ni la collecte ni VSOCK.
+
+#### Collecte HBA et commandes externes
+
+Les identités HBA proviennent de `/sys/class/scsi_host` pour les deux backends ;
+les pages Manufacturing MPT3 et les champs d'identité StorCLI ne sont pas des
+sources parallèles. Pour `mpt3sas`, `unique_id` fournit directement le numéro
+IOC attendu par `MPT3COMMAND` ; aucun ioctl de découverte préalable n'est
+utilisé.
+
+SMART et StorCLI ne partagent volontairement pas de helper générique
+d'exécution. `smartctl_type` peut lancer une seconde commande : son process
+group est donc tué à l'annulation. StorCLI est appelé directement avec
+`exec.CommandContext` et `WaitDelay`, qui borne l'attente si un descendant garde
+stdout ou stderr ouvert. Un helper générique avec pipes, goroutines et
+`kill(-PID)` après `Wait` a été expérimenté puis supprimé : il ajoutait une
+complexité et une course inutiles sans pouvoir superviser un descendant ayant
+fait `fork` puis `setsid`. Aucun descendant persistant n'a été observé sur le
+matériel testé avec la commande utilisée par UVSS. La garantie retenue est que
+la collecte ne bloque jamais indéfiniment, pas qu'elle termine tous les
+processus internes possibles de StorCLI. Réexaminer ce choix seulement si un
+StorCLI réel laisse des orphelins avec un impact observable.
+
+Le backend StorCLI conserve l'association entre ses index et l'inventaire
+sysfs tant que la lecture réussit avec le même ensemble d'index. Dans
+l'architecture cible, VM Unraid avec passthrough PCI, un remplacement physique
+invisible au même BDF sans disparition observée ne justifie pas un mécanisme de
+hot-swap supplémentaire. Un tel remplacement peut conserver une identité
+périmée jusqu'au redémarrage du daemon ; réexaminer ce compromis si le périmètre
+matériel ou l'architecture change.
+
+Les snapshots HBA publiés sont immuables. Une copie superficielle du slice
+suffit donc ; les valeurs pointées ne sont pas modifiées. Leur expiration reste
+indépendante de la collecte disque afin de protéger le failsafe hwmon.
+
+#### ABI MPT3 et IO Unit Page 7
+
+La transcription amd64 de `MPT3COMMAND` a été vérifiée contre les headers
+publics mpt3sas, le driver Linux, le SAS3008 utilisé pour les essais et le
+comportement du binaire StorCLI analysé. Le projet reste limité à Linux/amd64.
+`TestMPT3CommandABI` verrouille le layout userspace, mais ne prouve pas l'ABI du
+noyau chargé ; une rupture conservant la même taille reste un risque résiduel.
+
+La lecture de IO Unit Page 7 suit volontairement cette séquence :
+
+1. requête `PAGE_HEADER` ;
+2. allocation selon le `PageLength` retourné par le firmware ;
+3. requête `PAGE_READ_CURRENT` avec le header retourné ;
+4. décodage des seuls offsets historiques IOC et Board connus.
+
+Une `PageVersion` exacte et une taille exacte ne sont pas exigées. Les layouts
+MPI et StorCLI compilent les champs connus en dur, tandis que `PageLength`
+permet les extensions additives. L'historique observé conserve ces offsets et
+utilise les champs réservés ou ajoute des champs ; il ne constitue pas une
+garantie absolue de Broadcom. Une rupture réelle des offsets imposerait une
+nouvelle analyse.
+
+IOC et Board sont deux sondes indépendantes, conformément à la sémantique
+hwmon/mpt3sas. UVSS ne publie pas leur maximum et ne synthétise pas une Board
+absente ; le consommateur choisit la sonde pertinente pour sa ventilation.
 
 ### Politique des températures
 
@@ -202,7 +321,8 @@ La sentinelle `0 °C` publiée pendant l'état disque `waking` est volontaire. E
 évite qu'une indisponibilité transitoire au réveil déclenche le failsafe hwmon à
 `100 °C`, puis revienne immédiatement à la température physique, ce qui
 provoquerait un yoyo inutile des ventilateurs. Elle ne doit pas être remplacée
-par `Unavailable`.
+par `Unavailable`. Comme `0 °C` peut aussi être une mesure physique, seul l'état
+permet de la distinguer des sentinelles `standby` et `waking`.
 
 ### Côté Proxmox
 
@@ -221,8 +341,37 @@ systemd. Une unité `.path` extérieure au processus transforme l'événement
 runtime en activation de `unraid-vsock-hwmon-topology.service`, auquel les
 consommateurs s'abonnent explicitement.
 
+La collecte et la publication sont indépendantes : une opération disque ou HBA
+lente ne bloque pas le heartbeat VSOCK. Le protocole reste un flux JSON
+persistant délimité par des retours à la ligne et validé dans
+`internal/sensors`. Toute rupture volontaire exige une nouvelle
+`ProtocolVersion` et les tests correspondants.
+
+Configfs porte l'existence et les métadonnées des sondes ; les miscdevices
+`/dev/virt-temp/*` reçoivent leurs températures runtime. Le receiver est
+l'unique writer supporté de configfs pendant son fonctionnement. Les détails de
+ce contrat, notamment l'absence volontaire de staging transactionnel côté
+noyau, appartiennent à [`virt-temp/README.md`](virt-temp/README.md).
+
+La réconciliation configfs est idempotente et non transactionnelle. Un échec
+partiel peut laisser un état kernel intermédiaire, mais
+`hwmonInventory.sensors` continue de décrire la dernière topologie entièrement
+réconciliée et `needsReconcile` force une nouvelle tentative. `reconfigured`
+n'est émis qu'après le retour au succès de toutes les familles : la réussite
+d'une famille ne masque pas l'échec de l'autre. À la création d'une sonde, la
+température est écrite avant son premier `label`, car ce dernier la rend visible
+par hwmon.
+
 Le module kernel doit rester simple. La logique métier et la découverte
 matérielle appartiennent autant que possible à l'espace utilisateur.
+
+### Diagnostics
+
+Les diagnostics projettent un snapshot runtime en lecture seule. Ils ne
+déclenchent jamais SMART, `sdspin`, collecte HBA ni refresh, et passent par les
+statuts ou snapshots cohérents des collectors plutôt que par leurs mutex. Les
+IDs pouvant contenir des numéros de série, l'avertissement de masquage avant
+partage fait partie du contrat utilisateur.
 
 ### Failsafe
 
@@ -239,6 +388,18 @@ Quelques règles importantes :
 
 Éviter d'ajouter des abstractions génériques lorsque les collecteurs ont des
 contraintes réellement différentes.
+
+### Compatibilité de mise à jour
+
+Certains éléments qui ressemblent à du code mort restent nécessaires aux mises
+à jour :
+
+- `HBA.Temp` conserve la projection historique à une seule sonde du protocole ;
+- les IDs `serial:` restent acceptés lors de la lecture des anciens caches ;
+- l'ancienne clé `HBA_INTERVAL` reste tolérée mais ignorée par le script rc.
+
+Ne pas les supprimer sans migration explicite garantissant que les anciennes
+configurations, snapshots et caches ne sont plus rencontrés.
 
 ## Formatage et conventions
 
