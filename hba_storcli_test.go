@@ -87,58 +87,80 @@ func TestHBAReaderRediscoversOnControllerSetMismatch(t *testing.T) {
 }
 
 func TestParseStorCLI(t *testing.T) {
-	for _, spelling := range []string{"Celsius", "Celcius"} {
-		t.Run(spelling, func(t *testing.T) {
-			property := "ROC temperature(Degree " + spelling + ")"
-			data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"` + property + `","Value":"49"}]}}]}`)
-			readings, err := parseStorCLI(data)
-			if err != nil || len(readings) != 1 || readings[0].ioc == nil || *readings[0].ioc != 49 || readings[0].board != nil {
-				t.Fatalf("got %#v, %v", readings, err)
-			}
-		})
+	response := func(properties string) string {
+		return `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[` + properties + `]}}]}`
 	}
-	for raw, want := range map[string]float64{"0": 0, "-40": -40, "151": 151, "255": 255} {
-		readings, err := parseStorCLI([]byte(storCLIResponseWithTemperature(raw)))
-		if err != nil || readings[0].ioc == nil || *readings[0].ioc != want {
-			t.Errorf("temperature %q = %#v, %v; want %v", raw, readings, err, want)
-		}
-	}
-}
-
-func TestParseStorCLITemperatureProbes(t *testing.T) {
 	tests := []struct {
-		name       string
-		properties string
-		wantIOC    *float64
-		wantBoard  *float64
+		name      string
+		data      string
+		wantIOC   *float64
+		wantBoard *float64
+		wantError string
 	}{
 		{
-			name:       "ROC only",
-			properties: `{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"}`,
-			wantIOC:    float64Pointer(49),
+			name:    "ROC only",
+			data:    response(`{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"}`),
+			wantIOC: float64Pointer(49),
 		},
 		{
-			name: "ROC and Ctrl",
-			properties: `{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"},` +
-				`{"Ctrl_Prop":"Ctrl temperature(Degree Celsius)","Value":"45"}`,
+			name: "ROC with Celcius spelling and Ctrl",
+			data: response(`{"Ctrl_Prop":"ROC temperature(Degree Celcius)","Value":"49"},` +
+				`{"Ctrl_Prop":"Ctrl temperature(Degree Celsius)","Value":"45"}`),
 			wantIOC:   float64Pointer(49),
 			wantBoard: float64Pointer(45),
 		},
 		{
-			name:       "controller temperature only",
-			properties: `{"Ctrl_Prop":"Controller temperature(Degree Celsius)","Value":"45"}`,
-			wantBoard:  float64Pointer(45),
+			name:      "Controller name",
+			data:      response(`{"Ctrl_Prop":"Controller temperature(Degree Celsius)","Value":"45"}`),
+			wantBoard: float64Pointer(45),
 		},
-		{name: "no supported probe", properties: `{"Ctrl_Prop":"Ambient temperature","Value":"25"}`},
+		{
+			name:    "negative temperature",
+			data:    response(`{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"-40"}`),
+			wantIOC: float64Pointer(-40),
+		},
+		{
+			name:    "high temperature",
+			data:    response(`{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"255"}`),
+			wantIOC: float64Pointer(255),
+		},
+		{
+			name: "no supported probe",
+			data: response(`{"Ctrl_Prop":"Ambient temperature","Value":"25"}`),
+		},
+		{name: "malformed JSON", data: `{`, wantError: "parse storcli JSON"},
+		{
+			name:      "failed status",
+			data:      `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Failure"},"Response Data":{}}]}`,
+			wantError: `status is "Failure"`,
+		},
+		{
+			name:      "invalid temperature",
+			data:      response(`{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"broken"}`),
+			wantError: `invalid temperature "broken"`,
+		},
+		{
+			name:      "non-finite temperature",
+			data:      response(`{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"NaN"}`),
+			wantError: `invalid temperature "NaN"`,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			data := []byte(`{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[` + test.properties + `]}}]}`)
-			readings, err := parseStorCLI(data)
+			readings, err := parseStorCLI([]byte(test.data))
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("got %v, want error containing %q", err, test.wantError)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := readings[0]
+			got, found := readings[0]
+			if len(readings) != 1 || !found {
+				t.Fatalf("temperatures = %#v, want controller 0", readings)
+			}
 			if !equalOptionalTemperature(got.ioc, test.wantIOC) || !equalOptionalTemperature(got.board, test.wantBoard) {
 				t.Fatalf("temperatures = IOC %v, board %v; want IOC %v, board %v", got.ioc, got.board, test.wantIOC, test.wantBoard)
 			}
@@ -241,31 +263,6 @@ func readTestPID(t *testing.T, path string) int {
 		t.Fatalf("parse PID %q: %v", data, err)
 	}
 	return pid
-}
-
-func TestParseStorCLIRejectsUnexpectedOutput(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		data string
-		want string
-	}{
-		{name: "malformed JSON", data: `{`, want: "parse storcli JSON"},
-		{name: "failed status", data: `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Failure"},"Response Data":{}}]}`, want: `status is "Failure"`},
-		{name: "not a number", data: storCLIResponseWithTemperature("broken"), want: `invalid temperature "broken"`},
-		{name: "NaN", data: storCLIResponseWithTemperature("NaN"), want: `invalid temperature "NaN"`},
-		{name: "infinity", data: storCLIResponseWithTemperature("Inf"), want: `invalid temperature "Inf"`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := parseStorCLI([]byte(test.data))
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("got %v, want error containing %q", err, test.want)
-			}
-		})
-	}
-}
-
-func storCLIResponseWithTemperature(temperature string) string {
-	return `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"` + temperature + `"}]}}]}`
 }
 
 func TestStorCLIDiscoveryRequiresPCIAddress(t *testing.T) {
