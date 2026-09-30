@@ -583,6 +583,28 @@ scripts de maintenance gèrent DKMS explicitement : le `prerm` généré par
 `dh_dkms` retirerait sinon l'ancienne version avant que la nouvelle ait prouvé
 qu'elle peut être construite et installée.
 
+L'upgrade conserve donc l'ancienne version DKMS enregistrée et ses sources de
+secours jusqu'à la validation complète du remplacement. Son ordre est
+volontaire :
+
+1. construire la nouvelle version pour tous les kernels ciblés ;
+2. l'installer pour tous ces kernels ;
+3. seulement ensuite arrêter le watcher de topologie et le receiver ;
+4. décharger l'ancien module et charger le nouveau ;
+5. redémarrer le receiver lorsqu'il était actif ou reste activé ;
+6. vérifier que l'interface configfs `virt_temp` existe ;
+7. supprimer les anciennes versions DKMS et leurs sources préservées.
+
+Construire tous les kernels avant la première installation évite un état où le
+nouveau module remplace déjà l'ancien pour certains kernels alors qu'il est
+inconstructible pour un autre. Comme le build et l'installation précèdent
+l'arrêt du service, leur échec laisse l'ancien module chargé et ses sources DKMS
+disponibles. Les anciens enregistrements ne sont retirés qu'après la preuve que
+le remplacement expose configfs, afin de rester disponibles pour une réparation
+ou une suppression propre jusque-là. Cette garantie est la raison pour laquelle
+le lifecycle ne délègue pas directement le retrait de l'ancienne version au
+`prerm` standard de `dh_dkms`.
+
 Une construction directe avec `dpkg-buildpackage -b -us -uc` reste possible
 quand `debian/changelog` porte la version voulue. Sous Debian 13, installer Go
 1.27 séparément ; le script de projet utilise ce Go local et passe `-d` pour ne
