@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared by the Proxmox entry points and the scripts executed in the guest.
 
-readonly UVSS_TEST_IMAGE_VERSION=2
+readonly UVSS_TEST_IMAGE_VERSION=3
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -45,6 +45,13 @@ verify_guest_template() {
         test \"\$(cat /etc/uvss-test-kernel)\" = '$PVE_KERNEL_RELEASE'
         test -r /lib/modules/\$actual/build/Makefile
         test -r /lib/modules/\$actual/build/Module.symvers
+        for command in qemu-system-x86_64 busybox cpio modprobe zstd xz readelf; do
+            command -v \"\$command\" >/dev/null || {
+                echo \"Template dependency missing: \$command; rebuild template\" >&2
+                exit 1
+            }
+        done
+        dpkg-query -W -f='\${Status}' busybox-static | grep -qx 'install ok installed'
     "
 }
 

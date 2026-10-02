@@ -31,6 +31,7 @@ BASH_SCRIPTS := version.sh \
 	tests/vm/topology-pipeline-test.sh \
 	tests/vm/systemd-hardening-test.sh \
 	tests/vm/virt-temp-stress-test.sh \
+	tests/vm/vsock-e2e-test.sh \
 	tests/vm/sync-builder.sh
 
 POSIX_SCRIPTS := virt-temp/debian/postinst.in \
@@ -117,7 +118,7 @@ check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le pro
 all: check test-race artifacts ## Vérifie, compile et crée tous les paquets
 
 
-.PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package test-vm-kernel-stress
+.PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package test-vm-kernel-stress test-vm-vsock
 
 vm-template-sync: ## Synchronise le builder du template vers Proxmox
 	bash tests/vm/sync-builder.sh
@@ -136,6 +137,9 @@ test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
 
 test-vm-kernel-stress: ## Stress virt-temp (lifecycle, concurrence, unload/reload)
 	VM_TEST_SUITE=kernel-stress bash tests/vm/run.sh
+
+test-vm-vsock: ## Acceptance AF_VSOCK réelle guest KVM imbriqué vers receiver/hwmon
+	VM_TEST_SUITE=vsock-e2e bash tests/vm/run.sh
 
 
 .PHONY: build

@@ -239,7 +239,7 @@ printf '%s  %s\n' "$GO_SHA256" "$GO_TARBALL" | sha256sum -c -
 log "Installing Proxmox kernel $PVE_KERNEL_RELEASE and test dependencies into the image"
 virt-customize \
     -a "$CUSTOM_IMAGE" \
-    --install 'qemu-guest-agent,openssh-server,ca-certificates,git,rsync,python3,lm-sensors,build-essential,make,gcc,pkg-config,kmod,php-cli,dkms' \
+    --install 'qemu-guest-agent,openssh-server,ca-certificates,git,rsync,python3,lm-sensors,build-essential,make,gcc,pkg-config,kmod,php-cli,dkms,qemu-system-x86,busybox-static,cpio,zstd,xz-utils' \
     --upload "${PVE_KEYRING_FILE}:/usr/share/keyrings/uvss-proxmox.gpg" \
     --write "/etc/apt/sources.list.d/uvss-proxmox.sources:Types: deb
 URIs: http://download.proxmox.com/debian/pve

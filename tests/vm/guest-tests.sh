@@ -8,8 +8,8 @@ source tests/vm/common.sh
 }
 verify_local_test_image
 suite="${1:-core}"
-[[ "$suite" == core || "$suite" == kernel-stress || "$suite" == package-pre-reboot || "$suite" == package-post-reboot || "$suite" == package-remove-after-failed-upgrade || "$suite" == package-final ]] ||
-    die "Usage: $0 [core|kernel-stress|package-pre-reboot|package-post-reboot|package-remove-after-failed-upgrade|package-final]"
+[[ "$suite" == core || "$suite" == kernel-stress || "$suite" == vsock-e2e || "$suite" == package-pre-reboot || "$suite" == package-post-reboot || "$suite" == package-remove-after-failed-upgrade || "$suite" == package-final ]] ||
+    die "Usage: $0 [core|kernel-stress|vsock-e2e|package-pre-reboot|package-post-reboot|package-remove-after-failed-upgrade|package-final]"
 case "$(systemd-detect-virt --vm)" in
     kvm|qemu) ;;
     *) echo "Expected a QEMU/KVM VM" >&2; exit 1 ;;
@@ -48,6 +48,10 @@ if [[ "$suite" == kernel-stress ]]; then
     timing "kernel-stress: module load"
     bash tests/vm/virt-temp-stress-test.sh "$PWD/virt-temp/module/virt-temp.ko"
     timing "kernel-stress suite"
+fi
+if [[ "$suite" == vsock-e2e ]]; then
+    bash tests/vm/vsock-e2e-test.sh
+    timing "vsock-e2e suite"
 fi
 if [[ "$suite" == package-pre-reboot || "$suite" == package-post-reboot || "$suite" == package-remove-after-failed-upgrade || "$suite" == package-final ]]; then
     bash tests/vm/package-tests.sh "${suite#package-}"

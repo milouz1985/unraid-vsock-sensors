@@ -9,6 +9,7 @@ Elle couvre notamment :
 - le vrai sysfs hwmon ;
 - le collecteur disque avec des block devices QEMU ;
 - le failsafe et la reconstruction après reload du module ;
+- AF_VSOCK guest → host via un guest KVM imbriqué ;
 - DKMS ;
 - systemd ;
 - l'installation, la mise à jour, la suppression et la purge du paquet Debian.
@@ -98,7 +99,14 @@ Le builder crée une Debian generic avec :
 - ses headers ;
 - Go ;
 - PHP ;
-- les outils de compilation.
+- les outils de compilation ;
+- `qemu-system-x86`, `busybox-static`, `cpio`, `kmod`, `zstd` et `xz-utils`
+  pour le guest d’acceptance imbriqué.
+
+Le contrat d’image est en version 3 : reconstruire les templates plus anciens.
+Ces dépendances sont installées dans l’image Debian ; aucune installation réseau
+n’est effectuée par la suite VSOCK. La virtualisation imbriquée doit être exposée
+au clone (`--cpu host`), avec `/dev/kvm` utilisable. Aucun fallback TCG n’est permis.
 
 Le boot est explicitement fixé sur le noyau Proxmox demandé.
 
@@ -115,7 +123,7 @@ l'hôte est utilisé comme cible.
 
 ## Exécuter les tests
 
-Suite complète (core + kernel-stress + package) :
+Suite complète (core → kernel-stress → vsock-e2e → package) :
 
 ```sh
 make test-vm
@@ -131,6 +139,12 @@ Stress du module `virt-temp` (lifecycle, concurrence, unload/reload) :
 
 ```sh
 make test-vm-kernel-stress
+```
+
+Acceptance AF_VSOCK réelle :
+
+```sh
+make test-vm-vsock
 ```
 
 Paquet Debian et DKMS :
@@ -327,6 +341,52 @@ restante.
 Le démarrage du service est vérifié avec `vsock_loopback`. Ce test ne représente
 pas un vrai transport AF_VSOCK entre une VM Unraid et son hôte.
 
+## Suite `vsock-e2e`
+
+Cette suite fait partie de `make test-vm`, après `kernel-stress` et avant
+`package`. Son ajout à `all` suit trois runs ciblés successifs réussis.
+
+La VM PVE disposable est l’hôte VSOCK. Elle lance un mini guest QEMU/KVM,
+sans disque ni réseau, avec le même `/boot/vmlinuz-$(uname -r)` et un initramfs
+construit pour le test :
+
+```text
+guest KVM imbriqué (sender Go statique)
+→ virtio-vsock → vhost-vsock dans la VM disposable
+→ receiver hwmon de production
+→ configfs virt_temp → /dev/virt-temp → hwmon
+```
+
+Le script vérifie `/dev/kvm`, le device QEMU `vhost-vsock-pci`, le module
+`vhost_vsock` et `/dev/vhost-vsock`. Il construit le receiver et `virt-temp.ko`
+depuis le working tree. Le port provient de l’unité systemd et `--cid 42` filtre
+le CID du guest imbriqué ; le receiver utilise son bind VSOCK de production.
+Aucun module ni receiver n’est lancé sur l’hyperviseur physique.
+
+L’initramfs contient BusyBox statique, `/init`, le sender, et les modules dérivés
+par `modprobe --show-depends` pour `virtio_pci` et `vmw_vsock_virtio_transport`.
+Les modules compressés sont décompressés avant inclusion. Le sender réutilise
+`sensors.WriteFrame` pour les frames valides et `vsock.Host` comme destination.
+
+Le canal série bidirectionnel du coprocess QEMU synchronise `READY`, `VALID1`,
+`INVALID`, `VALID2` et `QUIT`, avec des deadlines. Chaque envoi ouvre une nouvelle
+connexion AF_VSOCK. Le test vérifie le sensor `disk:vsock-e2e`, label `VSOCK E2E`,
+à `42000` puis `43000` milli°C, les chemins configfs et miscdevice indépendants,
+l’unicité et l’identité du hwmon. `INVALID` envoie du JSON incorrect : l’erreur
+de protocole doit apparaître dans le log du receiver, qui reste vivant et accepte
+`VALID2`.
+
+Le cleanup attend QEMU et le receiver, retire uniquement le sensor possédé,
+vérifie les leftovers et décharge les modules chargés par le test. Les nouvelles
+lignes de dmesg et la console interne sont vérifiées pour les erreurs kernel.
+La console complète et le log receiver sont inclus dans le journal récupéré ;
+les fichiers séparés `/var/tmp/uvss-vsock-{console,receiver,dmesg}.log` restent
+également disponibles dans une VM conservée après échec.
+
+Cette suite valide le transport virtio réel et le receiver. Elle n’exécute pas
+un OS Unraid, ne teste pas un HBA physique et n’utilise pas `vsock_loopback` pour
+ses connexions. Le test de démarrage du paquet conserve sa portée distincte.
+
 ## Diagnostic
 
 Les journaux sont récupérés dans :
@@ -376,14 +436,14 @@ Les tests utilisent réellement :
 - hwmon/sysfs ;
 - DKMS ;
 - systemd ;
-- des block devices QEMU.
+- des block devices QEMU ;
+- AF_VSOCK virtio guest → host, avec un guest KVM imbriqué.
 
 Ils ne couvrent pas :
 
 - Unraid lui-même ;
 - un vrai disque SMART ;
 - un HBA physique ;
-- le transport AF_VSOCK guest → host réel ;
 - Secure Boot ;
 - un cycle de reboot entre plusieurs noyaux.
 

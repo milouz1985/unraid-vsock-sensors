@@ -130,6 +130,7 @@ make vm-template-rebuild
 make test-vm
 make test-vm-core
 make test-vm-package
+make test-vm-vsock
 ```
 
 Le fonctionnement du runner et la préparation du template sont documentés dans
@@ -144,7 +145,8 @@ véritable frontière système, par exemple :
 - hwmon/sysfs ;
 - DKMS ;
 - systemd ;
-- suppression/recréation réelle de la topologie kernel.
+- suppression/recréation réelle de la topologie kernel ;
+- AF_VSOCK guest → host via un guest KVM imbriqué dans la VM disposable.
 
 Les tests unitaires restent préférables pour les cas qui nécessiteraient sinon
 de simuler du matériel dans la VM, notamment :
