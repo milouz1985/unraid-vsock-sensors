@@ -211,3 +211,116 @@ func TestSnapshotQueueKeepsOnlyFreshestReading(t *testing.T) {
 		t.Fatal("snapshot was accepted at its expiration deadline")
 	}
 }
+
+// TestReceiveSnapshotsRecoversAfterInvalidFrame locks the contract that an
+// invalid frame from an authorized peer (wrong CID is a different case) does
+// not terminate receiveSnapshots: the connection is closed, the accept loop
+// continues, and a subsequent valid connection is accepted and its snapshot
+// published. It detects a global `return err` in the read-error path that
+// would stop the whole receiver instead of just closing the connection.
+func TestReceiveSnapshotsRecoversAfterInvalidFrame(t *testing.T) {
+	const expectedCID = 3
+
+	for _, test := range []struct {
+		name string
+		// sendInvalid writes an invalid frame to the first (bad) connection.
+		sendInvalid func(client net.Conn) error
+	}{
+		{
+			name: "invalid JSON",
+			sendInvalid: func(client net.Conn) error {
+				// A complete line that is not valid JSON.
+				_, err := client.Write([]byte(`{"protocol": "not-a-number"}
+`))
+				return err
+			},
+		},
+		{
+			name: "unsupported protocol",
+			sendInvalid: func(client net.Conn) error {
+				return sensors.WriteFrame(client, sensors.Response{
+					Protocol: sensors.ProtocolVersion + 1,
+					Disks:    []sensors.Disk{},
+					HBAs:     []sensors.HBA{},
+				})
+			},
+		},
+		{
+			name: "oversized frame",
+			sendInvalid: func(client net.Conn) error {
+				// Write a line longer than maxFrameSize (1 MiB). The scanner
+				// will reject it as "token too long". The write may fail with
+				// a closed pipe if the receiver closes the connection mid-write;
+				// that is acceptable because the frame is already being
+				// rejected.
+				payload := make([]byte, 1<<20+1024)
+				for i := range payload {
+					payload[i] = 'a'
+				}
+				payload[len(payload)-1] = '\n'
+				_, err := client.Write(payload)
+				if err != nil && (errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe)) {
+					return nil
+				}
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			badServer, badClient := net.Pipe()
+			goodServer, goodClient := net.Pipe()
+			listener := newSnapshotTestListener(
+				&snapshotPeerConn{Conn: badServer, cid: expectedCID},
+				&snapshotPeerConn{Conn: goodServer, cid: expectedCID},
+			)
+			defer listener.Close()
+			defer badClient.Close()
+			defer goodClient.Close()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			out := make(chan receivedSnapshot)
+			done := make(chan error, 1)
+			go func() { done <- receiveSnapshots(ctx, listener, expectedCID, out) }()
+
+			// The first (bad) connection is accepted.
+			waitForSnapshotAccept(t, listener)
+
+			// Send the invalid frame.
+			if err := test.sendInvalid(badClient); err != nil {
+				t.Fatalf("sending invalid frame: %v", err)
+			}
+
+			// The bad connection must be closed by the receiver.
+			assertSnapshotConnectionClosed(t, badClient, time.Second)
+
+			// The receiver must continue accepting: the second (good)
+			// connection is accepted.
+			waitForSnapshotAccept(t, listener)
+
+			// The good connection sends a valid frame.
+			want := sensors.Response{
+				Protocol: sensors.ProtocolVersion,
+				Disks:    []sensors.Disk{},
+				HBAs:     []sensors.HBA{},
+			}
+			if err := sensors.WriteFrame(goodClient, want); err != nil {
+				t.Fatal(err)
+			}
+
+			// The snapshot must be published.
+			select {
+			case got := <-out:
+				if got.response.Protocol != want.Protocol {
+					t.Fatalf("received protocol = %d, want %d", got.response.Protocol, want.Protocol)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("valid connection after invalid frame did not publish its snapshot")
+			}
+
+			cancel()
+			_ = goodClient.Close()
+			waitForSnapshotReceiver(t, done)
+		})
+	}
+}

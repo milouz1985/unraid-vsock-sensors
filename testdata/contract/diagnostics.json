@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "version": "dev",
+  "pid": 12345,
+  "started_at": "2026-10-01T11:00:00Z",
+  "generated_at": "2026-10-01T12:00:00Z",
+  "uptime_seconds": 3600,
+  "vsock": {
+    "status": "connected",
+    "host_cid": 2,
+    "port": 990,
+    "last_connected_at": "2026-10-01T11:59:00Z",
+    "last_published_at": "2026-10-01T11:59:55Z",
+    "last_published_age_seconds": 5
+  },
+  "emhttpd": {
+    "status": "healthy",
+    "last_poll_at": "2026-10-01T11:59:57Z",
+    "last_poll_age_seconds": 3,
+    "poll_attributes": "30s",
+    "stale_after": "45s",
+    "temperature_source": "emhttpd",
+    "fallback_active": false
+  },
+  "disks": {
+    "status": "healthy",
+    "updated_at": "2026-10-01T11:59:50Z",
+    "items": [
+      {
+        "name": "disk1",
+        "id": "serial001",
+        "device": "/dev/sda",
+        "transport": "ata",
+        "rotational": true,
+        "temperature_c": 38.5,
+        "status": "valid",
+        "source": "emhttpd",
+        "spundown": false,
+        "last_valid_at": "2026-10-01T11:59:50Z",
+        "last_valid_age_seconds": 10
+      }
+    ]
+  },
+  "hba": {
+    "status": "healthy",
+    "mode": "enabled",
+    "backend": "mpt3ctl",
+    "interval": "15s",
+    "last_successful_at": "2026-10-01T11:59:50Z",
+    "snapshot_age_seconds": 10,
+    "count": 1,
+    "items": [
+      {
+        "id": "sas:56c92bf0002e6705",
+        "model": "LSI SAS3008",
+        "pci_address": "0000:06:00.0",
+        "temp_c": 42,
+        "ioc_temp_c": 42,
+        "board_temp_c": 45
+      }
+    ]
+  }
+}

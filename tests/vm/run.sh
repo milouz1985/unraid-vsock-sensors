@@ -41,8 +41,8 @@ for name in TEMPLATE_VMID VMID BOOT_TIMEOUT CLOUD_INIT_TIMEOUT TEST_TIMEOUT TEST
     positive_integer "$name" "${!name}"
 done
 [[ "$KEEP" == 0 || "$KEEP" == 1 ]] || die "TEST_VM_KEEP must be 0 or 1"
-[[ "$VM_TEST_SUITE" == core || "$VM_TEST_SUITE" == package || "$VM_TEST_SUITE" == all ]] ||
-    die "VM_TEST_SUITE must be core, package or all"
+[[ "$VM_TEST_SUITE" == core || "$VM_TEST_SUITE" == package || "$VM_TEST_SUITE" == kernel-stress || "$VM_TEST_SUITE" == all ]] ||
+    die "VM_TEST_SUITE must be core, package, kernel-stress or all"
 [[ -n "$PVE_HOST" ]] || die "Set PVE_HOST in tests/vm/template.env"
 [[ -n "$PVE_SSH_USER" && -n "$PVE_STORAGE" && -n "$GUEST_USER" ]] ||
     die "PVE_SSH_USER, PVE_STORAGE and GUEST_USER must not be empty"
@@ -337,6 +337,11 @@ run_guest_suite() {
 }
 if [[ "$VM_TEST_SUITE" == core || "$VM_TEST_SUITE" == all ]]; then
     if ! run_guest_suite core ""; then
+        TEST_PASSED=0
+    fi
+fi
+if [[ "$VM_TEST_SUITE" == kernel-stress || "$VM_TEST_SUITE" == all ]]; then
+    if ! run_guest_suite kernel-stress "-a"; then
         TEST_PASSED=0
     fi
 fi

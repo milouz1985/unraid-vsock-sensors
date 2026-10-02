@@ -233,7 +233,10 @@ phase_pre_reboot() {
     install_version 0.0.0-vmtest.1
     check_systemd_units
     check_runtime_directory_lifecycle
-    timing "package: install"
+    bash "$repo_root/tests/vm/topology-pipeline-test.sh"
+    timing "package: topology pipeline"
+    bash "$repo_root/tests/vm/systemd-hardening-test.sh"
+    timing "package: systemd hardening"
     printf '\n# VM test: preserve this configuration across upgrades and remove\n' >> "$config"
     cp -- "$config" /var/tmp/uvss-expected-config
     mkdir -p -- "$(dirname -- "$cache")"

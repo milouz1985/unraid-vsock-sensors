@@ -1,0 +1,11 @@
+{
+  "id": "serial001",
+  "name": "disk1",
+  "device": "sda",
+  "transport": "ata",
+  "bus": "pci",
+  "policy": "include",
+  "selected": true,
+  "eligible": false,
+  "validation_error": "disk is in an unknown state"
+}

@@ -92,12 +92,21 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 	go func() {
 		backgroundErrors <- receiveSnapshots(ctx, listener, config.cid, snapshots)
 	}()
+	return hwmonOrchestrationLoop(ctx, snapshots, backgroundErrors, publisher, virtTempConfigPath, virtTempDeviceDir, topologyChangedPath)
+}
 
+// hwmonOrchestrationLoop is the main hwmon event loop. The select blocks while
+// no event is ready, so this loop does not poll or run continuously. It wakes
+// only for guest snapshots, receiver failures, or context cancellation.
+func hwmonOrchestrationLoop(
+	ctx context.Context,
+	snapshots <-chan receivedSnapshot,
+	backgroundErrors <-chan error,
+	publisher *hwmonPublisher,
+	configRoot, deviceRoot, topologyPath string,
+) error {
 	updateLog := stickyErrorLog{context: "hwmon update"}
 	seenGuestSnapshot := false
-	// Main hwmon event loop. The select blocks while no event is ready, so this
-	// loop does not poll or run continuously. It wakes only for guest snapshots,
-	// receiver failures, or context cancellation.
 	for {
 		select {
 		case snapshot := <-snapshots:
@@ -105,14 +114,14 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 				updateLog.update(fmt.Errorf("discard snapshot queued for %s", time.Since(snapshot.receivedAt).Round(time.Millisecond)))
 				continue
 			}
-			reconfigured, publishErr := publisher.publish(virtTempConfigPath, virtTempDeviceDir, snapshot.response)
+			reconfigured, publishErr := publisher.publish(configRoot, deviceRoot, snapshot.response)
 			firstGuestSnapshot := !seenGuestSnapshot
 			seenGuestSnapshot = true
 			// The first guest snapshot also announces a topology restored from
 			// cache, even if no reconfiguration was needed, but never while
 			// another family still needs reconciliation.
 			if publisher.shouldNotifyTopologyChanged(reconfigured, firstGuestSnapshot) {
-				if err := notifyTopologyChanged(topologyChangedPath); err != nil {
+				if err := notifyTopologyChanged(topologyPath); err != nil {
 					publishErr = errors.Join(publishErr, err)
 				}
 			}

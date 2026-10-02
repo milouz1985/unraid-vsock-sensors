@@ -10,24 +10,75 @@ import (
 	"unsafe"
 )
 
+// mpt3ReferenceRequestPageHeader is the literal 28-byte MPI CONFIG PAGE_HEADER
+// request for IO Unit Page 7, transcribed from the MPI2 header layout (mpi2_cnfg.h)
+// and the in-kernel mpt3sas CONFIG helpers: byte 0 carries the action, byte 3 the
+// MPI function, and bytes 20-23 the PageVersion, reserved, PageNumber and
+// PageType. It is an independent reference vector that does not reuse
+// mpt3ConfigRequest, so a corruption of that helper is detected here.
+var mpt3ReferenceRequestPageHeader = [28]byte{
+	0:  0x00, // Action = PAGE_HEADER
+	3:  0x04, // MPI Function = MPI2_FUNCTION_CONFIG
+	20: 0x05, // PageVersion
+	21: 0x00, // reserved
+	22: 0x07, // PageNumber
+	23: 0x00, // PageType = IO Unit
+}
+
+// mpt3ReferenceRequestPageReadCurrent is the literal 28-byte MPI CONFIG
+// PAGE_READ_CURRENT request built from the firmware-returned header
+// {PageVersion 0x05, PageLength 0x04, PageNumber 0x07, PageType 0x00}. Like the
+// header request it is an independent reference vector.
+var mpt3ReferenceRequestPageReadCurrent = [28]byte{
+	0:  0x01, // Action = PAGE_READ_CURRENT
+	3:  0x04, // MPI Function = MPI2_FUNCTION_CONFIG
+	20: 0x05, // PageVersion
+	21: 0x04, // PageLength (in dwords)
+	22: 0x07, // PageNumber
+	23: 0x00, // PageType = IO Unit
+}
+
+func TestMPT3ConfigRequestVectors(t *testing.T) {
+	t.Run("PAGE_HEADER uses literal ABI vector", func(t *testing.T) {
+		got := mpt3ConfigRequest(0x00, 0x00, 7, 0x05, nil)
+		if !slices.Equal(got[:], mpt3ReferenceRequestPageHeader[:]) {
+			t.Fatalf("PAGE_HEADER request = %x, want %x", got, mpt3ReferenceRequestPageHeader)
+		}
+	})
+	t.Run("PAGE_READ_CURRENT uses literal ABI vector", func(t *testing.T) {
+		header := []byte{0x05, 0x04, 0x07, 0x00}
+		got := mpt3ConfigRequest(0x01, 0x00, 7, 0x05, header)
+		if !slices.Equal(got[:], mpt3ReferenceRequestPageReadCurrent[:]) {
+			t.Fatalf("PAGE_READ_CURRENT request = %x, want %x", got, mpt3ReferenceRequestPageReadCurrent)
+		}
+	})
+}
+
+// TestMPT3CommandIOCTL locks the numeric value of the MPT3COMMAND ioctl request
+// word (0xc0484c14) against the literal Linux mpt3sas ABI.
+func TestMPT3CommandIOCTL(t *testing.T) {
+	if got := mpt3CommandIOCTL; got != uintptr(0xc0484c14) {
+		t.Fatalf("mpt3CommandIOCTL = %#x, want 0xc0484c14", got)
+	}
+}
+
 // TestMPT3CommandABI locks UVSS's Linux/amd64 userspace transcription of
-// mpt3_ioctl_command. It does not inspect the ABI of the loaded kernel, so an
-// incompatible field-layout change that preserves the structure size remains
-// a residual risk.
+// mpt3_ioctl_command. The expected 96-byte buffer is assembled from the literal
+// request vectors in TestMPT3ConfigRequestVectors, not from mpt3ConfigRequest,
+// so the two helpers cannot mask each other's corruption.
 func TestMPT3CommandABI(t *testing.T) {
-	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, nil)
 	reply, data := new(byte), new(byte)
 	replyPointer, dataPointer := unsafe.Pointer(reply), unsafe.Pointer(data)
-	got := makeMPT3Command(3, request, 256, replyPointer, dataPointer)
+	got := makeMPT3Command(3, mpt3ReferenceRequestPageReadCurrent, 256, replyPointer, dataPointer)
 	var want [96]byte
 	binary.LittleEndian.PutUint32(want[0:4], 3)
-	binary.LittleEndian.PutUint32(want[12:16], mpt3FirmwareTimeout)
+	binary.LittleEndian.PutUint32(want[12:16], 10)
 	binary.LittleEndian.PutUint64(want[16:24], uint64(uintptr(replyPointer)))
 	binary.LittleEndian.PutUint64(want[24:32], uint64(uintptr(dataPointer)))
-	binary.LittleEndian.PutUint32(want[48:52], mpt3ReplyBufferSize)
+	binary.LittleEndian.PutUint32(want[48:52], 128)
 	binary.LittleEndian.PutUint32(want[52:56], 256)
 	binary.LittleEndian.PutUint32(want[64:68], 7)
-	copy(want[68:96], request[:])
+	copy(want[68:96], mpt3ReferenceRequestPageReadCurrent[:])
 	if !slices.Equal(got[:], want[:]) {
 		t.Fatalf("command buffer = %x, want %x", got, want)
 	}

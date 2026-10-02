@@ -28,6 +28,9 @@ BASH_SCRIPTS := version.sh \
 	tests/vm/run.sh \
 	tests/vm/guest-tests.sh \
 	tests/vm/package-tests.sh \
+	tests/vm/topology-pipeline-test.sh \
+	tests/vm/systemd-hardening-test.sh \
+	tests/vm/virt-temp-stress-test.sh \
 	tests/vm/sync-builder.sh
 
 POSIX_SCRIPTS := virt-temp/debian/postinst.in \
@@ -106,13 +109,15 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	bash unraid-plugin/rc_test.sh
 	php unraid-plugin/diagnostics_page_test.php >/dev/null
 	php unraid-plugin/uvss_control_test.php >/dev/null
+	$(GO) test -run 'TestDiagnosticsContractFixture|TestDiskPolicyContractFixture' -count=1 . >/dev/null
+	php unraid-plugin/contract_test.php >/dev/null
 
 check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
 
 all: check test-race artifacts ## Vérifie, compile et crée tous les paquets
 
 
-.PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package
+.PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package test-vm-kernel-stress
 
 vm-template-sync: ## Synchronise le builder du template vers Proxmox
 	bash tests/vm/sync-builder.sh
@@ -128,6 +133,9 @@ test-vm-core: ## Teste le module, hwmon et SMART sous noyau PVE
 
 test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
 	VM_TEST_SUITE=package bash tests/vm/run.sh
+
+test-vm-kernel-stress: ## Stress virt-temp (lifecycle, concurrence, unload/reload)
+	VM_TEST_SUITE=kernel-stress bash tests/vm/run.sh
 
 
 .PHONY: build

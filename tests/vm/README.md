@@ -115,7 +115,7 @@ l'hôte est utilisé comme cible.
 
 ## Exécuter les tests
 
-Suite complète :
+Suite complète (core + kernel-stress + package) :
 
 ```sh
 make test-vm
@@ -127,10 +127,22 @@ Module, hwmon et collecteur disque :
 make test-vm-core
 ```
 
+Stress du module `virt-temp` (lifecycle, concurrence, unload/reload) :
+
+```sh
+make test-vm-kernel-stress
+```
+
 Paquet Debian et DKMS :
 
 ```sh
 make test-vm-package
+```
+
+Mode long pour le stress (plus d'itérations) :
+
+```sh
+UVSS_STRESS_ITERS=2000 UVSS_RELOAD_CYCLES=100 make test-vm-kernel-stress
 ```
 
 Le scénario installe debhelper et `rsync` dans le clone VM avant de construire
@@ -215,6 +227,44 @@ Il vérifie notamment :
 - reconfiguration par le code de production ;
 - restauration du cache ;
 - collecteur disque avec vrais block devices QEMU.
+
+## Suite `kernel-stress`
+
+Le test `tests/vm/virt-temp-stress-test.sh` exerce le vrai module `virt_temp`
+construit depuis le working tree et chargé via `insmod`. Le service
+`unraid-vsock-hwmon` est arrêté pendant le test et restauré après. Tous les
+reloads utilisent le `.ko` exact du checkout.
+
+Scénarios (dans l'ordre) :
+
+1. **Nominal** : `mkdir` configfs → `/dev` apparaît → write température →
+   write label → lecture hwmon (`temp1_input` + `temp1_label`) → `rmdir` →
+   disparition.
+2. **Open-FD** : FD `/dev/virt-temp/*` ouvert, `rmdir` configfs, write via
+   l'ancien FD → doit retourner **ENODEV** exactement (vérifié par Python).
+3. **Multi-FD** : 8 FDs simultanés, `rmdir`, chaque FD write → **ENODEV**
+   (8/8), puis fermeture propre.
+4. **Unload refcount** : sensor créé, FD ouvert, `rmdir` (le seul refcount
+   restant est le FD), `rmmod` → doit échouer. Close FD, `rmmod` → succès.
+   Rechargement via `insmod`.
+5. **Concurrence** : 3 workers en parallèle pendant 500 itérations :
+   - Worker A : lifecycle strict (create → label → write → publish → remove) ;
+   - Worker B : lecture hwmon ciblé sur le sensor publié par A ;
+   - Worker C : écriture miscdevice via Python (errno exact).
+   Preuve d'activité : `hwmon_reads > 0`, `misc_attempts > 0`.
+   Erreurs acceptées : ENOENT/ENODEV (disparition concurrente).
+6. **Unload/reload** : 30 cycles `rmmod` / `insmod` avec vérification de
+   l'apparition/disparition de `/sys/kernel/config/virt_temp`.
+7. **dmesg** : recherche des patterns `BUG:`, `WARNING:`, `KASAN:`, `KCSAN:`,
+   `UBSAN:`, `use-after-free`, `general protection fault`, `kernel BUG`,
+   `Oops:`, `refcount_t:`, `hung task`, `lockdep` depuis le début du test.
+
+Limites :
+
+- Pas de KASAN/KCSAN sur le kernel PVE standard. Un dmesg propre ne prouve
+  pas l'absence absolue d'UAF ; c'est une amélioration future.
+- Le test couvre la concurrence userspace (FDs, configfs, hwmon,
+  miscdevice) mais pas la préemption/migration multi-cœur au niveau kernel.
 
 ## Suite `package`
 
