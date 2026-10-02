@@ -145,6 +145,13 @@ Mode long pour le stress (plus d'itérations) :
 UVSS_STRESS_ITERS=2000 UVSS_RELOAD_CYCLES=100 make test-vm-kernel-stress
 ```
 
+Le runner valide ces deux paramètres comme des entiers strictement positifs
+(au plus sept chiffres) et les transmet explicitement au scénario
+`kernel-stress` dans la VM, y compris pendant `make test-vm`. Sans paramètre,
+le guest conserve les valeurs par défaut de 500 itérations et 30 cycles.
+Les lignes `Concurrent stress (N iterations)` et `Unload/reload (N cycles)`
+du journal guest confirment les valeurs effectivement utilisées.
+
 Le scénario installe debhelper et `rsync` dans le clone VM avant de construire
 les paquets. Il vérifie ensuite les scripts de maintenance générés, notamment
 la conservation de l'ancienne version DKMS lors d'une mise à jour ratée.
@@ -252,6 +259,9 @@ Scénarios (dans l'ordre) :
    - Worker B : lecture hwmon ciblé sur le sensor publié par A ;
    - Worker C : écriture miscdevice via Python (errno exact).
    Preuve d'activité : `hwmon_reads > 0`, `misc_attempts > 0`.
+   La première sonde attend cette activité des deux observateurs avant son
+   retrait, avec une limite de cinq secondes, pour rendre les runs courts
+   vérifiables. Les sondes suivantes suivent le lifecycle concurrent normal.
    Erreurs acceptées : ENOENT/ENODEV (disparition concurrente).
 6. **Unload/reload** : 30 cycles `rmmod` / `insmod` avec vérification de
    l'apparition/disparition de `/sys/kernel/config/virt_temp`.
@@ -274,6 +284,12 @@ Elle construit plusieurs versions du `.deb` et vérifie :
 - DKMS ;
 - chargement du module ;
 - démarrage systemd ;
+- politique `SystemCallFilter` du fragment installé et de ses drop-ins,
+  expansion récursive des groupes locaux, absence de syscall bloqué hors des
+  groupes et contribution effective de chaque groupe ;
+- mutations temporaires de cette politique : retrait de `@mount` et ajout
+  d'un syscall extérieur aux groupes, tous deux détectés, puis restauration
+  du filtre et des drop-ins sans redémarrer le service ;
 - mise à jour ;
 - conservation de la configuration ;
 - échec volontaire d'une compilation DKMS ;

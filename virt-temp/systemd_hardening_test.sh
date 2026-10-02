@@ -16,6 +16,7 @@ declare -A expected=(
     [RuntimeDirectory]=unraid-vsock-sensors
     [RuntimeDirectoryPreserve]=yes
     [StateDirectory]=unraid-vsock-sensors
+    [SystemCallFilter]="~@cpu-emulation @debug @mount @obsolete @privileged @resources"
 )
 declare -A actual=()
 

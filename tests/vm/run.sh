@@ -40,6 +40,11 @@ done
 for name in TEMPLATE_VMID VMID BOOT_TIMEOUT CLOUD_INIT_TIMEOUT TEST_TIMEOUT TEST_DISK_SIZE_GIB; do
     positive_integer "$name" "${!name}"
 done
+for name in UVSS_STRESS_ITERS UVSS_RELOAD_CYCLES; do
+    if [[ -v "$name" ]]; then
+        positive_integer "$name" "${!name}"
+    fi
+done
 [[ "$KEEP" == 0 || "$KEEP" == 1 ]] || die "TEST_VM_KEEP must be 0 or 1"
 [[ "$VM_TEST_SUITE" == core || "$VM_TEST_SUITE" == package || "$VM_TEST_SUITE" == kernel-stress || "$VM_TEST_SUITE" == all ]] ||
     die "VM_TEST_SUITE must be core, package, kernel-stress or all"
@@ -333,7 +338,15 @@ require_pve_lock "guest tests"
 TEST_PASSED=1
 run_guest_suite() {
     local phase="$1" tee_option="$2"
-    guest_exec "$TEST_TIMEOUT" "cd /var/tmp/uvss-source; bash tests/vm/guest-tests.sh '$phase' 2>&1 | tee $tee_option /var/tmp/uvss-tests.log"
+    local stress_env="" name
+    if [[ "$phase" == kernel-stress ]]; then
+        for name in UVSS_STRESS_ITERS UVSS_RELOAD_CYCLES; do
+            if [[ -v "$name" ]]; then
+                stress_env+="$name=$(shell_quote "${!name}") "
+            fi
+        done
+    fi
+    guest_exec "$TEST_TIMEOUT" "cd /var/tmp/uvss-source; ${stress_env}bash tests/vm/guest-tests.sh '$phase' 2>&1 | tee $tee_option /var/tmp/uvss-tests.log"
 }
 if [[ "$VM_TEST_SUITE" == core || "$VM_TEST_SUITE" == all ]]; then
     if ! run_guest_suite core ""; then

@@ -373,6 +373,7 @@ printf '0\n' > "$HWMON_COUNTS_FILE"
 
 worker_lifecycle() {
     local i id dev cfg hwmon_dir
+    local activity_deadline hwmon_reads misc_attempts _
     for i in $(seq 1 "$STRESS_ITERS"); do
         id="stress-lc-$i"
         dev="$(device_path_for disk "$id")"
@@ -393,6 +394,17 @@ worker_lifecycle() {
         done
         [[ -n "$hwmon_dir" ]] || return 1
         printf '%s\n' "$hwmon_dir" > "$CURRENT_HWMON_FILE"
+        # Let both observers exercise the first sensor before removing it.
+        # Short runs can otherwise finish before either observer is scheduled.
+        if (( i == 1 )); then
+            activity_deadline=$((SECONDS + 5))
+            until read -r hwmon_reads < "$HWMON_COUNTS_FILE" &&
+                read -r misc_attempts _ < "$MISC_COUNTS_FILE" &&
+                (( hwmon_reads > 0 && misc_attempts > 0 )); do
+                (( SECONDS < activity_deadline )) || die "Stress observers did not exercise the first sensor"
+                sleep 0.01
+            done
+        fi
         rmdir "$cfg" || return 1
         # Mark sensor as removed in the log (for final verification).
         wait_for_gone "$dev" 3
@@ -457,9 +469,9 @@ worker_misc_writer() {
             10) (( ++enoent )) ;;
             *) return 1 ;;
         esac
+        printf '%s %s %s\n' "$attempts" "$successes" "$((enodev + enoent))" > "$MISC_COUNTS_FILE"
         sleep 0.01
     done
-    printf '%s %s %s\n' "$attempts" "$successes" "$((enodev + enoent))" > "$MISC_COUNTS_FILE"
     return 0
 }
 
