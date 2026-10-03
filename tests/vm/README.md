@@ -56,7 +56,7 @@ cp tests/vm/template.env.example tests/vm/template.env
 Puis adapter notamment :
 
 ```sh
-PVE_HOST=pve01.lan.home
+PVE_HOST=pve01.example.net
 PVE_SSH_USER=root
 PVE_TEMPLATE_DIR=/root/uvss-template-builder
 
@@ -394,7 +394,7 @@ dist/vm-tests-<VMID>.<suffixe>.log
 Pour une VM conservée :
 
 ```sh
-ssh root@pve01.lan.home qm terminal 9900
+ssh root@pve01.example.net qm terminal 9900
 ```
 
 ou :
@@ -407,8 +407,8 @@ ssh -i ~/.ssh/id_ed25519 uvss-test@ADRESSE_IP \
 Après diagnostic :
 
 ```sh
-ssh root@pve01.lan.home qm shutdown 9900 --timeout 120
-ssh root@pve01.lan.home qm destroy 9900 --purge
+ssh root@pve01.example.net qm shutdown 9900 --timeout 120
+ssh root@pve01.example.net qm destroy 9900 --purge
 ```
 
 Adapter `9900` à `TEST_VMID`.

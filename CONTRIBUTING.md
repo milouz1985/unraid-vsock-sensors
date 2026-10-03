@@ -680,7 +680,7 @@ Sur une installation où le plugin existe déjà :
 
 ```sh
 make unraid-package
-scp dist/<paquet>.txz root@NAS:/tmp/
+scp dist/<paquet>.txz root@unraid.example.net:/tmp/
 ```
 
 Puis sur Unraid :
