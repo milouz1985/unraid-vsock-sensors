@@ -118,3 +118,34 @@ ne jamais annoncer un succès non observé.
 - Un changement de comportement exige des tests ciblés et, si son contrat
   public change, la documentation associée. Préserver la compatibilité lorsque
   l'état matériel est incertain.
+
+## Indépendance des tests
+
+Pour toute modification non triviale du comportement, d'un protocole, d'une
+machine d'état, de la concurrence ou d'une frontière système, séparer autant
+que possible l'implémentation de la conception des tests.
+
+- Déléguer la conception ou la revue des tests à un sous-agent indépendant
+  lorsque les capacités multi-agent sont disponibles.
+- Le sous-agent de test doit partir du contrat attendu, des spécifications,
+  des interfaces externes et du comportement observable, pas du raisonnement
+  ayant conduit à l'implémentation.
+- Ne pas demander au sous-agent de simplement confirmer les tests déjà écrits
+  par l'agent d'implémentation.
+- Rechercher en priorité des oracles indépendants : valeurs littérales issues
+  d'un contrat externe, fixtures indépendantes, vrais composants aux frontières,
+  propriétés observables et scénarios susceptibles de réfuter l'implémentation.
+- Un test doit pouvoir expliquer quel défaut plausible il détecte.
+- Éviter les tests qui reconstruisent l'attendu avec les mêmes helpers,
+  constantes, parsers ou algorithmes que le code testé.
+- Éviter de modifier le code de production uniquement pour faciliter un test,
+  sauf si le changement améliore également l'architecture de production.
+- Les tests déjà couverts à une frontière plus forte ne doivent pas être
+  dupliqués sans invariant supplémentaire clairement identifié.
+- Le sous-agent de test doit chercher activement à falsifier l'implémentation,
+  pas à confirmer qu'elle fonctionne ; lorsque c'est possible, lui faire
+  proposer les scénarios et les oracles avant de lui présenter les tests
+  existants.
+
+Pour les changements triviaux ou purement mécaniques, ne pas créer de
+délégation multi-agent sans bénéfice concret.
