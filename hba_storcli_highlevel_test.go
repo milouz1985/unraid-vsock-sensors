@@ -19,10 +19,10 @@ import (
 func TestReadStorCLITemperaturesLocksCommand(t *testing.T) {
 	argvPath := filepath.Join(t.TempDir(), "storcli-args.txt")
 	fixture := `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"49"},{"Ctrl_Prop":"Ctrl temperature(Degree Celsius)","Value":"45"}]}}]}`
-	// Use a bash script to reliably capture all arguments, including the first.
+	// Record the external command arguments independently of the parser.
 	body := "for arg in \"$@\"; do printf '%s\\n' \"$arg\" >> '" + argvPath + "'; done\nprintf '" + fixture + "'"
 
-	installTestStorCLIBash(t, body)
+	installTestStorCLI(t, body)
 
 	readings, err := readStorCLITemperatures(context.Background())
 	if err != nil {
@@ -68,7 +68,7 @@ func TestDiscoverStorCLIHBALocksCommand(t *testing.T) {
 	fixture := `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Basics":{"Model":"SAS3008","SAS Address":"0x5000000000000001","PCI Address":"0000:06:10:0"}}}]}`
 	body := "for arg in \"$@\"; do printf '%s\\n' \"$arg\" >> '" + argvPath + "'; done\nprintf '" + fixture + "'"
 
-	installTestStorCLIBash(t, body)
+	installTestStorCLI(t, body)
 
 	// The discovery also reads sysfs (defaultSCSIHostRoot points to the real
 	// /sys). It will fail on a system without a matching HBA, but the argv is
@@ -87,16 +87,4 @@ func TestDiscoverStorCLIHBALocksCommand(t *testing.T) {
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("argv = %v, want %v", gotArgs, wantArgs)
 	}
-}
-
-// installTestStorCLIBash installs a fake storcli executable using bash (instead
-// of sh) to reliably capture all arguments including the first.
-func installTestStorCLIBash(t *testing.T, body string) {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "storcli")
-	if err := os.WriteFile(path, []byte("#!/bin/bash\n"+body+"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

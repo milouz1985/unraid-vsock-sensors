@@ -143,24 +143,6 @@ func TestDiskCollectorUsesDefaultPollAttributesUntilFirstValidRead(t *testing.T)
 	}
 }
 
-func TestPollAttributesLogMessageWithoutSMARTCache(t *testing.T) {
-	var output bytes.Buffer
-	previous := log.Writer()
-	log.SetOutput(&output)
-	t.Cleanup(func() { log.SetOutput(previous) })
-
-	logPollAttributes(defaultPollAttributes, errors.New("invalid config"))
-	if message := output.String(); !strings.Contains(message, "invalid config") || !strings.Contains(message, "30s") || !strings.Contains(message, "stalled-poll detection") {
-		t.Fatalf("fallback warning = %q", message)
-	}
-
-	output.Reset()
-	logPollAttributes(5*time.Minute, errors.New("invalid config"))
-	if message := output.String(); !strings.Contains(message, "5m0s") {
-		t.Fatalf("last-known-good warning = %q", message)
-	}
-}
-
 func TestPollAttributesWarnings(t *testing.T) {
 	var output bytes.Buffer
 	previous := log.Writer()
@@ -180,5 +162,10 @@ func TestPollAttributesWarnings(t *testing.T) {
 	logPollAttributes(defaultPollAttributes, errors.New("invalid config"))
 	if message := output.String(); !strings.Contains(message, "invalid config") || !strings.Contains(message, "30s for stalled-poll detection") {
 		t.Fatalf("fallback warning = %q", message)
+	}
+	output.Reset()
+	logPollAttributes(5*time.Minute, errors.New("invalid config"))
+	if message := output.String(); !strings.Contains(message, "5m0s") {
+		t.Fatalf("last-known-good warning = %q", message)
 	}
 }

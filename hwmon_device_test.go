@@ -107,18 +107,17 @@ func TestUpdateHWMonFamilySkipsUnavailableSensors(t *testing.T) {
 	if err := updateHWMonFamily(deviceRoot, readings, values); err != nil {
 		t.Fatal(err)
 	}
-	for _, reading := range readings {
-		path := hwmonTemperatureDevicePath(deviceRoot, reading.sensor.id)
-		data, err := os.ReadFile(path)
+	for id, want := range map[string]string{
+		"disk:1": "35000", "disk:2": "unchanged",
+		"disk:3": "46000", "disk:group:hdd": "unchanged",
+	} {
+		data, err := os.ReadFile(hwmonTemperatureDevicePath(deviceRoot, id))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if reading.skipRefresh {
-			if !strings.HasPrefix(string(data), "unchanged") {
-				t.Fatalf("%s was refreshed despite skipRefresh: %q", reading.sensor.id, data)
-			}
-		} else if strings.HasPrefix(string(data), "unchanged") {
-			t.Fatalf("%s was not refreshed", reading.sensor.id)
+		// Regular-file fixtures retain a suffix after a shorter device write.
+		if got := strings.SplitN(string(data), "\n", 2)[0]; got != want {
+			t.Fatalf("%s temperature = %q, want %q", id, got, want)
 		}
 	}
 }
@@ -253,10 +252,8 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconciliationFailure(t *testing.T) 
 }
 
 func TestValidateHWMonSamplesIDSizeBoundary(t *testing.T) {
-	maximumID := "disk:" + strings.Repeat("a", maxHWMonIDSize-len("disk:"))
-	if got := len(maximumID); got != maxHWMonIDSize {
-		t.Fatalf("maximum disk hwmon ID is %d bytes, want %d", got, maxHWMonIDSize)
-	}
+	// The kernel ABI allows 84 bytes including the namespace.
+	maximumID := "disk:" + strings.Repeat("a", 79)
 	if _, err := validateHWMonSamples("disk", []hwmonSample{
 		hwmonTestSample(maximumID, "Maximum ID", 30),
 	}); err != nil {
@@ -265,7 +262,7 @@ func TestValidateHWMonSamplesIDSizeBoundary(t *testing.T) {
 	if _, err := validateHWMonSamples("disk", []hwmonSample{
 		hwmonTestSample(maximumID+"X", "Oversized ID", 30),
 	}); err == nil {
-		t.Fatal("ID larger than maxHWMonIDSize accepted")
+		t.Fatal("ID larger than the 84-byte kernel ABI accepted")
 	}
 }
 

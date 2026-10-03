@@ -277,12 +277,12 @@ func TestPublisherDefersReconfigurationWhileFamilyNeedsReconcile(t *testing.T) {
 			if err := json.Unmarshal(data, &cached); err != nil {
 				t.Fatal(err)
 			}
-			wantDisks := sensorsToCache(sensorsFromSamples(disks))
-			wantHBAs := sensorsToCache(sensorsFromSamples(hbas))
+			wantDisks := []cachedHWMonSensor{{ID: "disk:new", Label: "disk1"}}
+			wantHBAs := []cachedHWMonSensor{{ID: "hba:new", Label: "New HBA"}}
 			if test.failedNamespace == "disk" {
-				wantDisks = sensorsToCache(lastValidDisks)
+				wantDisks = []cachedHWMonSensor{{ID: "disk:old", Label: "Old disk"}}
 			} else {
-				wantHBAs = sensorsToCache(lastValidHBAs)
+				wantHBAs = []cachedHWMonSensor{{ID: "hba:old", Label: "Old HBA"}}
 			}
 			if cached.Disks == nil || !reflect.DeepEqual(cached.Disks.Sensors, wantDisks) {
 				t.Fatalf("cached disks = %#v, want %#v", cached.Disks, wantDisks)

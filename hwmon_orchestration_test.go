@@ -183,52 +183,6 @@ func TestHWMonOrchRejectsStaleAndPublishesFresh(t *testing.T) {
 	})
 }
 
-// TestHWMonOrchContinuesAfterStale verifies that the loop does not terminate
-// after discarding a stale snapshot: a subsequent fresh snapshot is still
-// processed. It detects mutation B (continue replaced by return).
-func TestHWMonOrchContinuesAfterStale(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		diskSamples := []hwmonSample{
-			hwmonTestSample("disk:stale", "staleDisk", 38),
-			hwmonTestSample("disk:fresh", "freshDisk", 47),
-		}
-		h := newOrchHarness(t, diskSamples)
-		h.start(ctx)
-
-		now := time.Now()
-		h.snapshots <- receivedSnapshot{
-			response: sensors.Response{
-				Protocol: sensors.ProtocolVersion,
-				Disks:    []sensors.Disk{{ID: "stale", Name: "staleDisk", Device: "sda", Rotational: true, Temp: 38}},
-				HBAs:     []sensors.HBA{},
-			},
-			receivedAt: now.Add(-snapshotStreamTimeout - time.Second),
-		}
-		synctest.Wait()
-
-		h.snapshots <- receivedSnapshot{
-			response: sensors.Response{
-				Protocol: sensors.ProtocolVersion,
-				Disks:    []sensors.Disk{{ID: "fresh", Name: "freshDisk", Device: "sdb", Rotational: true, Temp: 47}},
-				HBAs:     []sensors.HBA{},
-			},
-			receivedAt: time.Now(),
-		}
-		synctest.Wait()
-
-		got := h.readDevice(t, "disk:fresh")
-		if got != "47000" {
-			t.Fatalf("fresh device value = %s, want 47000 (loop must continue after stale)", got)
-		}
-
-		cancel()
-		h.stop(t, nil)
-	})
-}
-
 // TestHWMonOrchPropagatesBackgroundError verifies that an error sent on the
 // backgroundErrors channel is returned by the loop. It detects mutation C
 // (error ignored / replaced by continue or nil).

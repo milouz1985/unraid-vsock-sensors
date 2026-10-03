@@ -258,17 +258,12 @@ reloads utilisent le `.ko` exact du checkout.
 
 Scénarios (dans l'ordre) :
 
-1. **Nominal** : `mkdir` configfs → `/dev` apparaît → write température →
-   write label → lecture hwmon (`temp1_input` + `temp1_label`) → `rmdir` →
-   disparition.
-2. **Open-FD** : FD `/dev/virt-temp/*` ouvert, `rmdir` configfs, write via
-   l'ancien FD → doit retourner **ENODEV** exactement (vérifié par Python).
-3. **Multi-FD** : 8 FDs simultanés, `rmdir`, chaque FD write → **ENODEV**
-   (8/8), puis fermeture propre.
-4. **Unload refcount** : sensor créé, FD ouvert, `rmdir` (le seul refcount
-   restant est le FD), `rmmod` → doit échouer. Close FD, `rmmod` → succès.
-   Rechargement via `insmod`.
-5. **Concurrence** : 3 workers en parallèle pendant 500 itérations :
+1. **Lifetime multi-FD et refcount** : création configfs, ouverture de huit FDs,
+   écriture et lecture hwmon, puis `rmdir`. Le device et le hwmon disparaissent ;
+   chacun des huit FDs retourne **ENODEV exact**. `rmmod` échoue avec les huit FDs,
+   puis encore avec le dernier FD seul ; après son close, unload et reload du
+   même `.ko` réussissent.
+2. **Concurrence** : 3 workers en parallèle pendant 500 itérations :
    - Worker A : lifecycle strict (create → label → write → publish → remove) ;
    - Worker B : lecture hwmon ciblé sur le sensor publié par A ;
    - Worker C : écriture miscdevice via Python (errno exact).
@@ -277,9 +272,13 @@ Scénarios (dans l'ordre) :
    retrait, avec une limite de cinq secondes, pour rendre les runs courts
    vérifiables. Les sondes suivantes suivent le lifecycle concurrent normal.
    Erreurs acceptées : ENOENT/ENODEV (disparition concurrente).
-6. **Unload/reload** : 30 cycles `rmmod` / `insmod` avec vérification de
+   Le parent signale la fin du lifecycle par un fichier `done`, puis attend les
+   observateurs ; leur délai de 60 secondes reste un watchdog dont l'expiration
+   fait échouer le test, pas une durée minimale. Le timeout du runner borne
+   l'exécution guest complète.
+3. **Unload/reload** : 30 cycles `rmmod` / `insmod` avec vérification de
    l'apparition/disparition de `/sys/kernel/config/virt_temp`.
-7. **dmesg** : recherche des patterns `BUG:`, `WARNING:`, `KASAN:`, `KCSAN:`,
+4. **dmesg** : recherche des patterns `BUG:`, `WARNING:`, `KASAN:`, `KCSAN:`,
    `UBSAN:`, `use-after-free`, `general protection fault`, `kernel BUG`,
    `Oops:`, `refcount_t:`, `hung task`, `lockdep` depuis le début du test.
 
@@ -301,9 +300,6 @@ Elle construit plusieurs versions du `.deb` et vérifie :
 - politique `SystemCallFilter` du fragment installé et de ses drop-ins,
   expansion récursive des groupes locaux, absence de syscall bloqué hors des
   groupes et contribution effective de chaque groupe ;
-- mutations temporaires de cette politique : retrait de `@mount` et ajout
-  d'un syscall extérieur aux groupes, tous deux détectés, puis restauration
-  du filtre et des drop-ins sans redémarrer le service ;
 - mise à jour ;
 - conservation de la configuration ;
 - échec volontaire d'une compilation DKMS ;

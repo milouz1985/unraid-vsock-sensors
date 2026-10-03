@@ -36,6 +36,14 @@ func TestStreamFramesSuccessiveSnapshots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Pin the wire format independently of the writer/reader roundtrip.
+	const wire = `{"protocol":1,"disks":[{"id":"disk1","name":"disk1","device":"sda","rotational":false,"temp_c":35}],"hbas":[]}
+{"protocol":1,"disks":[],"hbas":[{"id":"sas:1234","temp_c":51}]}
+{"protocol":1,"disks":[],"hbas":[{"id":"sas:5678","temp_c":52,"ioc_temp_c":52,"board_temp_c":48}]}
+`
+	if got := stream.String(); got != wire {
+		t.Fatalf("wire frames = %q, want %q", got, wire)
+	}
 	reader := NewFrameReader(&stream)
 	for index := range want {
 		got, err := reader.Read()

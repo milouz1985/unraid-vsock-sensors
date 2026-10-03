@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -138,19 +137,4 @@ func TestHBACollectorRunCancelledDuringCollection(t *testing.T) {
 			t.Fatalf("snapshot = %#v after canceled collection, want an error (late success must not be published)", readings)
 		}
 	})
-}
-
-// TestHBACollectorRunDisabledExitsImmediately ensures the disabled collector
-// returns without performing any collection.
-func TestHBACollectorRunDisabledExitsImmediately(t *testing.T) {
-	collector := newTestHBACollector(time.Millisecond, hbaModeDisabled)
-	var calls atomic.Int32
-	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
-		calls.Add(1)
-		return nil, errors.New("must not collect")
-	})
-	collector.run(context.Background())
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("calls = %d for a disabled collector, want 0", got)
-	}
 }

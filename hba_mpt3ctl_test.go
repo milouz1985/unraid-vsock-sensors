@@ -85,22 +85,7 @@ func TestMPT3CommandABI(t *testing.T) {
 }
 
 func TestMPT3ConfigRequestPageHeader(t *testing.T) {
-	for _, test := range []struct {
-		name                              string
-		pageType, pageNumber, pageVersion byte
-		want                              []byte
-	}{
-		{"IO Unit 7", mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, []byte{0x05, 0, 7, 0x00}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			request := mpt3ConfigRequest(mpi2ConfigPageHeader, test.pageType, test.pageNumber, test.pageVersion, nil)
-			if got := request[20:24]; !slices.Equal(got, test.want) {
-				t.Fatalf("CONFIG page header = %x, want %x", got, test.want)
-			}
-		})
-	}
-
-	returnedHeader := []byte{0x06, 0xff, 7, mpi2PageTypeIOUnit}
+	returnedHeader := []byte{0x06, 0xff, 0x07, 0x00}
 	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, returnedHeader)
 	if got := request[20:24]; !slices.Equal(got, returnedHeader) {
 		t.Fatalf("CONFIG read header = %x, want returned header %x", got, returnedHeader)
@@ -119,11 +104,11 @@ func TestMPT3ParsersRejectUndersizedBuffers(t *testing.T) {
 func TestValidateMPT3ConfigReply(t *testing.T) {
 	validReply := func() []byte {
 		reply := make([]byte, 128)
-		reply[0x00] = mpi2ConfigPageHeader
-		reply[0x02] = mpi2ConfigReplyDWords
-		reply[0x03] = mpi2FunctionConfig
+		reply[0x00] = 0x00
+		reply[0x02] = 0x06
+		reply[0x03] = 0x04
 		reply[0x16] = 7
-		reply[0x17] = mpi2PageTypeIOUnit
+		reply[0x17] = 0x00
 		return reply
 	}
 	if err := validateMPT3ConfigReply(validReply(), mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7); err != nil {
@@ -132,10 +117,10 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 
 	for name, mutate := range map[string]func([]byte){
 		"zero length":      func(reply []byte) { reply[0x02] = 0 },
-		"short length":     func(reply []byte) { reply[0x02] = mpi2ConfigReplyDWords - 1 },
+		"short length":     func(reply []byte) { reply[0x02] = 0x06 - 1 },
 		"oversized length": func(reply []byte) { reply[0x02] = 33 },
 		"wrong function":   func(reply []byte) { reply[0x03] = 0xff },
-		"wrong action":     func(reply []byte) { reply[0x00] = mpi2ConfigPageReadCurrent },
+		"wrong action":     func(reply []byte) { reply[0x00] = 0x01 },
 		"failed status": func(reply []byte) {
 			binary.LittleEndian.PutUint16(reply[0x0e:0x10], 0x0002)
 			binary.LittleEndian.PutUint32(reply[0x10:0x14], 0x12345678)
@@ -163,12 +148,12 @@ func TestParseMPT3Temperatures(t *testing.T) {
 		wantIOC    *float64
 		wantBoard  *float64
 	}{
-		{name: "IOC only", iocRaw: 42, iocUnits: temperatureCelsius, boardUnits: temperatureNotPresent, wantIOC: float64Pointer(42)},
-		{name: "board only", iocUnits: temperatureNotPresent, boardRaw: 43, boardUnits: temperatureCelsius, wantBoard: float64Pointer(43)},
-		{name: "IOC and board", iocRaw: 42, iocUnits: temperatureCelsius, boardRaw: 43, boardUnits: temperatureCelsius, wantIOC: float64Pointer(42), wantBoard: float64Pointer(43)},
-		{name: "no probes", iocUnits: temperatureNotPresent, boardUnits: temperatureNotPresent},
-		{name: "unknown IOC unit", iocRaw: 51, iocUnits: 0xff, boardRaw: 43, boardUnits: temperatureCelsius, wantBoard: float64Pointer(43)},
-		{name: "unknown board unit", iocRaw: 42, iocUnits: temperatureCelsius, boardRaw: 51, boardUnits: 0xff, wantIOC: float64Pointer(42)},
+		{name: "IOC only", iocRaw: 42, iocUnits: 0x02, boardUnits: 0x00, wantIOC: float64Pointer(42)},
+		{name: "board only", iocUnits: 0x00, boardRaw: 43, boardUnits: 0x02, wantBoard: float64Pointer(43)},
+		{name: "IOC and board", iocRaw: 42, iocUnits: 0x02, boardRaw: 43, boardUnits: 0x02, wantIOC: float64Pointer(42), wantBoard: float64Pointer(43)},
+		{name: "no probes", iocUnits: 0x00, boardUnits: 0x00},
+		{name: "unknown IOC unit", iocRaw: 51, iocUnits: 0xff, boardRaw: 43, boardUnits: 0x02, wantBoard: float64Pointer(43)},
+		{name: "unknown board unit", iocRaw: 42, iocUnits: 0x02, boardRaw: 51, boardUnits: 0xff, wantIOC: float64Pointer(42)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -185,7 +170,7 @@ func TestParseMPT3Temperatures(t *testing.T) {
 }
 
 func TestParseMPT3TemperaturesIgnoresAdditiveExtensions(t *testing.T) {
-	page := mpt3TemperaturePage(42, temperatureCelsius, 113, temperatureFahrenheit)
+	page := mpt3TemperaturePage(42, 0x02, 113, 0x01)
 	page = append(page, make([]byte, 997)...)
 	got, err := parseMPT3Temperatures(page)
 	if err != nil {
@@ -203,13 +188,13 @@ func TestDecodeMPT3Temperature(t *testing.T) {
 		units byte
 		want  *float64
 	}{
-		{name: "Celsius", raw: 42, units: temperatureCelsius, want: float64Pointer(42)},
-		{name: "negative Celsius", raw: -40, units: temperatureCelsius, want: float64Pointer(-40)},
-		{name: "high Celsius", raw: math.MaxInt16, units: temperatureCelsius, want: float64Pointer(math.MaxInt16)},
-		{name: "freezing Fahrenheit", raw: 32, units: temperatureFahrenheit, want: float64Pointer(0)},
-		{name: "negative Fahrenheit", raw: -40, units: temperatureFahrenheit, want: float64Pointer(-40)},
-		{name: "high Fahrenheit", raw: 1000, units: temperatureFahrenheit, want: float64Pointer(537.7777777777778)},
-		{name: "not present", units: temperatureNotPresent},
+		{name: "Celsius", raw: 42, units: 0x02, want: float64Pointer(42)},
+		{name: "negative Celsius", raw: -40, units: 0x02, want: float64Pointer(-40)},
+		{name: "high Celsius", raw: math.MaxInt16, units: 0x02, want: float64Pointer(math.MaxInt16)},
+		{name: "freezing Fahrenheit", raw: 32, units: 0x01, want: float64Pointer(0)},
+		{name: "negative Fahrenheit", raw: -40, units: 0x01, want: float64Pointer(-40)},
+		{name: "high Fahrenheit", raw: 1000, units: 0x01, want: float64Pointer(537.7777777777778)},
+		{name: "not present", units: 0x00},
 		{name: "unknown units", raw: 51, units: 3},
 	}
 	for _, test := range tests {

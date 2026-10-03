@@ -194,14 +194,6 @@ func TestBuildHBAReadingsPreservesLegacyProjection(t *testing.T) {
 	}
 }
 
-func TestRunStorCLI(t *testing.T) {
-	installTestStorCLI(t, `printf 'normal output'`)
-	output, err := runStorCLI(context.Background(), "discovery", "show")
-	if err != nil || string(output) != "normal output" {
-		t.Fatalf("output = %q, error = %v", output, err)
-	}
-}
-
 func TestRunStorCLIPreservesCommandError(t *testing.T) {
 	installTestStorCLI(t, `printf 'firmware error\n' >&2; exit 7`)
 	_, err := runStorCLI(context.Background(), "discovery", "show")

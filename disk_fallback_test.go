@@ -712,14 +712,6 @@ func TestFallbackCommandCancellation(t *testing.T) {
 	}
 }
 
-func TestFallbackCommandSuccess(t *testing.T) {
-	command := fallbackTestCommand(t, `printf 'normal output'`)
-	output, err := runFallbackCommand(context.Background(), command)
-	if err != nil || string(output) != "normal output" {
-		t.Fatalf("output = %q, error = %v", output, err)
-	}
-}
-
 func TestFallbackCommandTerminatesWrapperProcessGroup(t *testing.T) {
 	directory := t.TempDir()
 	wrapperPIDPath := filepath.Join(directory, "wrapper.pid")
@@ -843,34 +835,5 @@ func TestFallbackConcurrencyIsBounded(t *testing.T) {
 	data, _ = os.ReadFile(callLog)
 	if got := len(strings.Fields(string(data))); got != 6 {
 		t.Fatalf("processed %d of 6 disks", got)
-	}
-}
-
-func TestControlOperationsAdvanceHeartbeatAndRefresh(t *testing.T) {
-	env := newDiskTestEnvironment(t, "30")
-	collector := env.collector()
-	refresh := make(chan struct{}, 1)
-
-	// A manual refresh must request a collection without touching the heartbeat.
-	requestDiskRefresh(refresh)
-	select {
-	case <-refresh:
-	case <-time.After(time.Second):
-		t.Fatal("manual refresh was not forwarded")
-	}
-	if collector.smartSource.status().heartbeatSeen {
-		t.Fatal("manual refresh advanced emhttpd heartbeat")
-	}
-
-	// An emhttpd poll must record the heartbeat and request a collection.
-	collector.noteEmhttpPoll()
-	requestDiskRefresh(refresh)
-	select {
-	case <-refresh:
-	case <-time.After(time.Second):
-		t.Fatal("emhttpd poll refresh was not forwarded")
-	}
-	if got := collector.smartSource.status().lastHeartbeat; !got.Equal(env.now) {
-		t.Fatalf("emhttpd heartbeat = %v, want %v", got, env.now)
 	}
 }

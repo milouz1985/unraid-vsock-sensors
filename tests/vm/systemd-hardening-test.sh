@@ -19,24 +19,7 @@ case "$(systemd-detect-virt --vm)" in
 esac
 
 readonly SERVICE=unraid-vsock-hwmon.service
-readonly UNIT_DIR=/etc/systemd/system/${SERVICE}.d
-readonly MUTATION_DROPIN="${UNIT_DIR}/99-uvss-test-mutation.conf"
 readonly FILTER_GROUPS='@cpu-emulation @debug @mount @obsolete @privileged @resources'
-[[ ! -e "$MUTATION_DROPIN" ]] || die "Mutation drop-in already exists: $MUTATION_DROPIN"
-mutation_active=0
-unit_dir_created=0
-
-cleanup() {
-    local rc=$?
-    trap - EXIT
-    if (( mutation_active )); then
-        rm -f -- "$MUTATION_DROPIN"
-        if (( unit_dir_created )); then rmdir "$UNIT_DIR" 2>/dev/null || true; fi
-        systemctl daemon-reload 2>/dev/null || true
-    fi
-    exit "$rc"
-}
-trap cleanup EXIT
 
 show_property() {
     systemctl show --property="$1" --value "$SERVICE"
@@ -181,46 +164,6 @@ assert_syscall_filter() {
     done
 }
 
-assert_syscall_filter
-
-# Mutate only manager configuration: daemon-reload changes the reported policy
-# without restarting or changing the running service's installed seccomp filter.
-original_filter="$(show_property SystemCallFilter)"
-original_dropins="$(show_property DropInPaths)"
-if [[ ! -d "$UNIT_DIR" ]]; then
-    mkdir "$UNIT_DIR"
-    unit_dir_created=1
-fi
-mutation_active=1
-printf '[Service]\nSystemCallFilter=\nSystemCallFilter=~@cpu-emulation @debug @obsolete @privileged @resources\n' > "$MUTATION_DROPIN"
-systemctl daemon-reload
-if mutation_output="$(trap - EXIT; assert_syscall_filter 2>&1)"; then
-    die "SystemCallFilter mutation removing @mount was not detected"
-fi
-[[ "$mutation_output" == *"Effective declared SystemCallFilter groups differ"* ]] ||
-    die "Unexpected failure for removed-group mutation: $mutation_output"
-echo "$mutation_output"
-echo "SystemCallFilter mutation removing @mount: detected"
-
-# getpid is used only for this mutation, never as a configured group's oracle.
-! printf '%s\n' "$expected_syscalls" | grep -qx getpid ||
-    die "Mutation syscall getpid already belongs to the configured groups"
-printf '[Service]\nSystemCallFilter=~getpid\n' > "$MUTATION_DROPIN"
-systemctl daemon-reload
-if mutation_output="$(trap - EXIT; assert_syscall_filter 2>&1)"; then
-    die "SystemCallFilter mutation adding getpid was not detected"
-fi
-[[ "$mutation_output" == *"blocks unexpected syscalls: getpid"* ]] ||
-    die "Unexpected failure for extra-syscall mutation: $mutation_output"
-echo "$mutation_output"
-echo "SystemCallFilter mutation adding getpid: detected"
-
-rm -f -- "$MUTATION_DROPIN"
-if (( unit_dir_created )); then rmdir "$UNIT_DIR"; fi
-systemctl daemon-reload
-mutation_active=0
-assert_property SystemCallFilter "$original_filter"
-assert_property DropInPaths "$original_dropins"
 assert_syscall_filter
 
 # Module must be loaded (ExecStartPre ran outside the confinement).

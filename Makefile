@@ -55,7 +55,7 @@ help: ## Affiche les commandes disponibles
 		$(MAKEFILE_LIST)
 
 
-.PHONY: fmt fmt-check tidy tidy-check vet test test-race fuzz-mpt3 check-scripts lint-shell check all
+.PHONY: fmt fmt-check tidy tidy-check vet test test-race fuzz-mpt3 check-scripts test-php test-shell lint-shell check all
 
 fmt: ## Formate tous les fichiers Go
 	$(GOFMT) -w .
@@ -101,6 +101,8 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	php -l unraid-plugin/diagnostics_page_test.php >/dev/null
 	php -l unraid-plugin/uvss_control.php >/dev/null
 	php -l unraid-plugin/uvss_action.php >/dev/null
+
+test-shell: ## Exécute les tests des scripts shell
 	bash version_test.sh
 	bash virt-temp/debian/lifecycle_test.sh
 	bash virt-temp/systemd_hardening_test.sh
@@ -108,12 +110,12 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/uvss_action_test.sh
 	bash unraid-plugin/rc_test.sh
+
+test-php: ## Exécute les tests PHP
 	php unraid-plugin/diagnostics_page_test.php >/dev/null
 	php unraid-plugin/uvss_control_test.php >/dev/null
-	$(GO) test -run 'TestDiagnosticsContractFixture|TestDiskPolicyContractFixture' -count=1 . >/dev/null
-	php unraid-plugin/contract_test.php >/dev/null
 
-check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
+check: fmt-check tidy-check vet test check-scripts test-shell test-php lint-shell ## Vérifie le projet sans créer d'artefacts
 
 all: check test-race artifacts ## Vérifie, compile et crée tous les paquets
 

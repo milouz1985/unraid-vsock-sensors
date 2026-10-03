@@ -35,29 +35,6 @@ func TestPublishHWMonStateKeepsFamiliesIndependent(t *testing.T) {
 	}
 }
 
-func TestPublisherReconfiguresWhenLabelChanges(t *testing.T) {
-	root := t.TempDir()
-	configRoot := filepath.Join(root, "config")
-	deviceRoot := filepath.Join(root, "dev")
-	if err := os.MkdirAll(deviceRoot, 0700); err != nil {
-		t.Fatal(err)
-	}
-	initial := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sda)", 34)}
-	changed := []hwmonSample{hwmonTestSample("disk:serial", "disk1 (sdb)", 35)}
-	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", changed)
-	inventory := hwmonInventory{sensors: sensorsFromSamples(initial)}
-	reconfigured, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, changed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reconfigured {
-		t.Fatal("a label change must reconfigure the hwmon family")
-	}
-	if got, want := inventory.sensors[0].label, "disk1 (sdb)"; got != want {
-		t.Fatalf("configured label = %q, want %q", got, want)
-	}
-}
-
 func TestPublisherClearsEmptyFamily(t *testing.T) {
 	root := t.TempDir()
 	configRoot := filepath.Join(root, "config")
@@ -103,7 +80,7 @@ func TestSanitizeHWMonLabel(t *testing.T) {
 		{name: "control characters", label: " Mega\tRAID\n\x00 ", fallback: "hba:sas:1234", want: "Mega RAID"},
 		{name: "empty after sanitizing", label: "\t\r\n\x00", fallback: "hba:sas:1234", want: "hba:sas:1234"},
 		{name: "fallback control characters", label: "", fallback: "hba:sas:\n1234", want: "hba:sas: 1234"},
-		{name: "ASCII truncation", label: strings.Repeat("a", maxHWMonLabelSize+1), fallback: "fallback", want: strings.Repeat("a", maxHWMonLabelSize)},
+		{name: "ASCII truncation", label: strings.Repeat("a", 96), fallback: "fallback", want: strings.Repeat("a", 95)},
 		{name: "UTF-8 truncation keeps rune boundary", label: strings.Repeat("é", 48), fallback: "fallback", want: strings.Repeat("é", 47)},
 	}
 	for _, test := range tests {

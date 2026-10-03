@@ -13,13 +13,9 @@ import (
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-// TestDiagnosticsContractFixture locks the Go -> PHP JSON contract for the
-// diagnostics page. It generates the diagnostics snapshot JSON in memory from
-// the production code, reads the versioned golden file
-// (testdata/contract/diagnostics.json), and verifies that the two match. The
-// golden file is the contract: a rename or type change on the Go side that
-// breaks the PHP consumer makes this test fail. The golden is only rewritten
-// when UPDATE_GOLDEN=1 is set; make check never sets it.
+// TestDiagnosticsContractFixture locks diagnostics serialization against a
+// versioned golden. It does not execute the PHP page consuming this JSON.
+// UPDATE_GOLDEN=1 explicitly updates the fixture; normal checks only read it.
 func TestDiagnosticsContractFixture(t *testing.T) {
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	startedAt := now.Add(-3600 * time.Second)
@@ -73,16 +69,12 @@ func TestDiagnosticsContractFixture(t *testing.T) {
 	verifyContractGolden(t, goldenPath, snapshot)
 }
 
-// TestDiskPolicyContractFixture locks the Go -> PHP JSON contract for the disk
-// policy inventory. It generates the disk policy row JSON in memory from the
-// production code, reads the versioned golden file
-// (testdata/contract/disk-policy.json), and verifies that the two match. The
-// golden is only rewritten when UPDATE_GOLDEN=1 is set; make check never sets
-// it.
+// TestDiskPolicyContractFixture locks disk policy serialization against a
+// versioned golden. It does not execute the PHP page consuming this JSON.
 func TestDiskPolicyContractFixture(t *testing.T) {
 	// The validation_error field is omitempty; set a non-empty value so the
 	// fixture includes it. The PHP page reads it only when non-empty, but the
-	// contract test verifies the field name is present in the JSON schema.
+	// serialization test preserves this optional field in the fixture.
 	row := diskPolicyRow{
 		ID:              "serial001",
 		Name:            "disk1",

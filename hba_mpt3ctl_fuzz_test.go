@@ -10,7 +10,7 @@ import (
 
 func FuzzParseMPT3Temperatures(f *testing.F) {
 	const minimum = 0x17
-	f.Add(mpt3TemperaturePage(42, temperatureCelsius, 113, temperatureFahrenheit))
+	f.Add(mpt3TemperaturePage(42, 0x02, 113, 0x01))
 
 	f.Fuzz(func(t *testing.T, page []byte) {
 		temperatures, err := parseMPT3Temperatures(page)
@@ -27,7 +27,7 @@ func FuzzParseMPT3Temperatures(f *testing.F) {
 
 func checkMPT3FuzzTemperature(t *testing.T, got *float64, rawBytes []byte, units byte) {
 	t.Helper()
-	if units != temperatureCelsius && units != temperatureFahrenheit {
+	if units != 0x02 && units != 0x01 {
 		if got != nil {
 			t.Fatalf("unsupported temperature unit 0x%02x returned %v", units, *got)
 		}
@@ -38,7 +38,7 @@ func checkMPT3FuzzTemperature(t *testing.T, got *float64, rawBytes []byte, units
 	}
 	raw := int16(binary.LittleEndian.Uint16(rawBytes))
 	want := float64(raw)
-	if units == temperatureFahrenheit {
+	if units == 0x01 {
 		want = (float64(raw) - 32) * 5 / 9
 	}
 	if *got != want {

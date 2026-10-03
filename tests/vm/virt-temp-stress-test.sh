@@ -5,13 +5,10 @@ set -Eeuo pipefail
 # Usage: virt-temp-stress-test.sh /path/to/virt-temp.ko
 #
 # Scenarios (in order):
-#   1. Nominal create/configure/read/remove
-#   2. Open-FD deterministic lifecycle (FD open during rmdir -> ENODEV)
-#   3. Multi-FD deterministic lifecycle (8 FDs, each returns ENODEV)
-#   4. Unload refcount (rmmod refused with open FD, succeeds after close)
-#   5. Concurrent stress (lifecycle + hwmon reader + miscdevice writer)
-#   6. Unload/reload stress (30 cycles)
-#   7. dmesg validation
+#   1. Multi-FD lifecycle (hwmon, removal, ENODEV, module refcount, last close)
+#   2. Concurrent stress (lifecycle + hwmon reader + miscdevice writer)
+#   3. Unload/reload stress (30 cycles)
+#   4. dmesg validation
 #
 # Requires: root, VM, the .ko file passed as argument.
 
@@ -210,154 +207,65 @@ fi
 dmesg_before="$(dmesg_line_count)"
 
 # ---------------------------------------------------------------------------
-# 1. Nominal: create -> configure -> read -> remove
+# 1. Deterministic multi-FD lifecycle through the last close
 # ---------------------------------------------------------------------------
-echo "--- 1. Nominal lifecycle ---"
-TEST_ID="stress-nominal"
-CONFIG_PATH="$(config_path_for disk "$TEST_ID")"
-DEV_PATH="$(device_path_for disk "$TEST_ID")"
-
+echo "--- 1. Multi-FD lifecycle and unload refcount (8 FDs) ---"
+CONFIG_PATH="$(config_path_for disk stress-multifd)"
+DEV_PATH="$(device_path_for disk stress-multifd)"
 mkdir "$CONFIG_PATH"
 created_sensors+=("$CONFIG_PATH")
 wait_for_path "$DEV_PATH"
+for i in $(seq 1 8); do
+    exec {fd}> "$DEV_PATH"
+    open_fds+=("$fd")
+done
 printf '42000\n' > "$DEV_PATH"
-printf '%s\n' "Nominal Sensor" > "$CONFIG_PATH/label"
+printf '%s\n' "MultiFD Sensor" > "$CONFIG_PATH/label"
 
 hwmon_found=0
 for hwmon_dir in /sys/class/hwmon/hwmon*; do
     [[ -d "$hwmon_dir" ]] || continue
-    if [[ -f "$hwmon_dir/temp1_input" && -f "$hwmon_dir/temp1_label" ]]; then
-        temp_val="$(cat "$hwmon_dir/temp1_input")"
-        label_val="$(cat "$hwmon_dir/temp1_label")"
-        if [[ "$temp_val" == "42000" && "$label_val" == "Nominal Sensor" ]]; then
-            hwmon_found=1
-            break
-        fi
+    if [[ -f "$hwmon_dir/temp1_input" && -f "$hwmon_dir/temp1_label" ]] &&
+        [[ "$(cat "$hwmon_dir/temp1_input")" == "42000" &&
+           "$(cat "$hwmon_dir/temp1_label")" == "MultiFD Sensor" ]]; then
+        hwmon_found=1
+        break
     fi
 done
-(( hwmon_found )) || die "hwmon device not found for nominal sensor"
-
+(( hwmon_found )) || die "hwmon device not found for multi-FD sensor"
 rmdir "$CONFIG_PATH"
 created_sensors=()
 wait_for_gone "$DEV_PATH"
-echo "Nominal: OK"
+wait_for_gone "$hwmon_dir"
 
-# ---------------------------------------------------------------------------
-# 2. Open-FD deterministic lifecycle (ENODEV exact)
-# ---------------------------------------------------------------------------
-echo "--- 2. Open-FD during rmdir ---"
-FD_TEST_ID="stress-fd"
-FD_CONFIG_PATH="$(config_path_for disk "$FD_TEST_ID")"
-FD_DEV_PATH="$(device_path_for disk "$FD_TEST_ID")"
-
-mkdir "$FD_CONFIG_PATH"
-created_sensors+=("$FD_CONFIG_PATH")
-wait_for_path "$FD_DEV_PATH"
-printf '38000\n' > "$FD_DEV_PATH"
-printf '%s\n' "FD Sensor" > "$FD_CONFIG_PATH/label"
-
-exec {fd}> "$FD_DEV_PATH"
-open_fds+=("$fd")
-
-rmdir "$FD_CONFIG_PATH"
-created_sensors=()
-wait_for_gone "$FD_DEV_PATH"
-
-# Write through the old FD: must get exactly ENODEV.
-fd_result="$(python3 -c "$FD_WRITE_PY" "$fd")"
-[[ "$fd_result" == "ENODEV" ]] ||
-    die "Open-FD write after rmdir returned $fd_result, want ENODEV"
-
-exec {fd}>&-
-open_fds=()
-echo "Open-FD: OK (ENODEV confirmed)"
-
-# ---------------------------------------------------------------------------
-# 3. Multi-FD deterministic lifecycle (8 FDs, each ENODEV)
-# ---------------------------------------------------------------------------
-echo "--- 3. Multi-FD (8 FDs) ---"
-MF_ID="stress-multifd"
-MF_CONFIG_PATH="$(config_path_for disk "$MF_ID")"
-MF_DEV_PATH="$(device_path_for disk "$MF_ID")"
-
-mkdir "$MF_CONFIG_PATH"
-created_sensors+=("$MF_CONFIG_PATH")
-wait_for_path "$MF_DEV_PATH"
-printf '35000\n' > "$MF_DEV_PATH"
-printf '%s\n' "MultiFD" > "$MF_CONFIG_PATH/label"
-
-mf_fds=()
-for i in $(seq 1 8); do
-    exec {mf_fd_i}> "$MF_DEV_PATH"
-    mf_fds+=("$mf_fd_i")
-    open_fds+=("$mf_fd_i")
-done
-
-rmdir "$MF_CONFIG_PATH"
-created_sensors=()
-wait_for_gone "$MF_DEV_PATH"
-
-mf_enodev_count=0
-for fd in "${mf_fds[@]}"; do
+for fd in "${open_fds[@]}"; do
     result="$(python3 -c "$FD_WRITE_PY" "$fd")"
-    if [[ "$result" == "ENODEV" ]]; then
-        (( ++mf_enodev_count ))
-    else
-        die "Multi-FD: FD write returned $result, want ENODEV"
-    fi
+    [[ "$result" == "ENODEV" ]] || die "Multi-FD write returned $result, want ENODEV"
 done
-(( mf_enodev_count == 8 )) || die "Multi-FD: $mf_enodev_count/8 ENODEV, want 8/8"
-
-for fd in "${mf_fds[@]}"; do
+echo "Multi-FD: 8/8 ENODEV after removal"
+if rmmod virt_temp 2>/dev/null; then
+    die "rmmod succeeded with open FDs; refcount is broken"
+fi
+for fd in "${open_fds[@]:0:7}"; do
     exec {fd}>&-
 done
-open_fds=()
-echo "Multi-FD: OK (8/8 ENODEV)"
-
-# ---------------------------------------------------------------------------
-# 4. Unload refcount (rmdir first, then test FD holds module ref)
-# ---------------------------------------------------------------------------
-echo "--- 4. Unload refcount ---"
-UL_ID="stress-unload"
-UL_CONFIG_PATH="$(config_path_for disk "$UL_ID")"
-UL_DEV_PATH="$(device_path_for disk "$UL_ID")"
-
-mkdir "$UL_CONFIG_PATH"
-created_sensors+=("$UL_CONFIG_PATH")
-wait_for_path "$UL_DEV_PATH"
-printf '33000\n' > "$UL_DEV_PATH"
-printf '%s\n' "Unload" > "$UL_CONFIG_PATH/label"
-
-exec {ul_fd}> "$UL_DEV_PATH"
-open_fds+=("$ul_fd")
-
-# Remove the sensor first — the FD remains open.
-rmdir "$UL_CONFIG_PATH"
-created_sensors=()
-wait_for_gone "$UL_DEV_PATH"
-
-# Now the only reference is the open FD. rmmod must fail.
+open_fds=("${open_fds[7]}")
 if rmmod virt_temp 2>/dev/null; then
-    die "rmmod succeeded with an open FD; refcount is broken"
+    die "rmmod succeeded with the last FD still open"
 fi
-echo "Unload with FD: correctly refused"
-
-exec {ul_fd}>&-
+fd="${open_fds[0]}"
+exec {fd}>&-
 open_fds=()
-
-# Now rmmod must succeed.
-if ! rmmod virt_temp; then
-    die "rmmod failed after closing all FDs"
-fi
+rmmod virt_temp || die "rmmod failed after the last close"
 wait_for_gone "$CONFIG_ROOT" 10
 insmod "$MODULE_KO"
 wait_for_path "$CONFIG_ROOT" 10
-echo "Unload refcount: OK"
+echo "Multi-FD lifecycle: OK (hwmon removed, module retained until last close)"
 
 # ---------------------------------------------------------------------------
-# 5. Concurrent stress
+# 2. Concurrent stress
 # ---------------------------------------------------------------------------
-echo "--- 5. Concurrent stress ($STRESS_ITERS iterations) ---"
+echo "--- 2. Concurrent stress ($STRESS_ITERS iterations) ---"
 dmesg_before_stress="$(dmesg_line_count)"
 
 CURRENT_DEVICE_FILE="$WORK_DIR/current-device"
@@ -365,6 +273,7 @@ CURRENT_HWMON_FILE="$WORK_DIR/current-hwmon"
 MISC_COUNTS_FILE="$WORK_DIR/misc-counts"
 HWMON_COUNTS_FILE="$WORK_DIR/hwmon-counts"
 SENSOR_LOG_FILE="$WORK_DIR/sensor-log"
+WORKER_DONE_FILE="$WORK_DIR/lifecycle-done"
 : > "$CURRENT_DEVICE_FILE"
 : > "$CURRENT_HWMON_FILE"
 printf '0 0 0\n' > "$MISC_COUNTS_FILE"
@@ -417,7 +326,8 @@ worker_lifecycle() {
 worker_hwmon_reader() {
     local deadline=$((SECONDS + WORKER_TIMEOUT))
     local hwmon_dir path rc count
-    while (( SECONDS < deadline )); do
+    while [[ ! -e "$WORKER_DONE_FILE" ]]; do
+        (( SECONDS < deadline )) || return 1
         hwmon_dir="$(cat "$CURRENT_HWMON_FILE" 2>/dev/null || true)"
         [[ -n "$hwmon_dir" && -d "$hwmon_dir" ]] || { sleep 0.01; continue; }
         count=0
@@ -453,7 +363,8 @@ worker_misc_writer() {
     successes=0
     enodev=0
     enoent=0
-    while (( SECONDS < deadline )); do
+    while [[ ! -e "$WORKER_DONE_FILE" ]]; do
+        (( SECONDS < deadline )) || return 1
         dev="$(cat "$CURRENT_DEVICE_FILE" 2>/dev/null || true)"
         [[ -n "$dev" ]] || { sleep 0.01; continue; }
         [[ -e "$dev" ]] || { sleep 0.01; continue; }
@@ -483,7 +394,11 @@ worker_misc_writer &
 pids+=("$!")
 
 local_failed=0
-for pid in "${pids[@]}"; do
+# Stop observers as soon as the lifecycle finishes, including on failure.
+# WORKER_TIMEOUT remains a watchdog, never a minimum observation duration.
+wait "${pids[0]}" || local_failed=1
+: > "$WORKER_DONE_FILE"
+for pid in "${pids[@]:1}"; do
     wait "$pid" || local_failed=1
 done
 (( local_failed == 0 )) || die "Concurrent stress worker failed"
@@ -495,14 +410,14 @@ hwmon_reads="$(cat "$HWMON_COUNTS_FILE" 2>/dev/null || echo 0)"
 
 read -r misc_attempts misc_successes misc_disappeared < "$MISC_COUNTS_FILE"
 (( misc_attempts > 0 )) || die "misc writer never exercised a stress device"
-echo "Concurrent stress: OK ($STRESS_ITERS iters, hwmon_reads=$hwmon_reads, misc: $misc_successes ok / $misc_disappeared disappeared)"
+echo "Concurrent stress: OK ($STRESS_ITERS iters, hwmon_reads=$hwmon_reads, misc_attempts=$misc_attempts, misc: $misc_successes ok / $misc_disappeared disappeared)"
 
 check_dmesg_since "$dmesg_before_stress" "concurrent stress"
 
 # ---------------------------------------------------------------------------
-# 6. Unload/reload stress
+# 3. Unload/reload stress
 # ---------------------------------------------------------------------------
-echo "--- 6. Unload/reload ($RELOAD_CYCLES cycles) ---"
+echo "--- 3. Unload/reload ($RELOAD_CYCLES cycles) ---"
 dmesg_before_reload="$(dmesg_line_count)"
 for i in $(seq 1 "$RELOAD_CYCLES"); do
     if ! rmmod virt_temp; then
@@ -518,7 +433,7 @@ check_dmesg_since "$dmesg_before_reload" "unload/reload"
 echo "Unload/reload: OK ($RELOAD_CYCLES cycles)"
 
 # ---------------------------------------------------------------------------
-# 7. Final dmesg check + strict cleanup verification
+# 4. Final dmesg check + strict cleanup verification
 # ---------------------------------------------------------------------------
 check_dmesg_since "$dmesg_before" "entire stress test"
 echo "dmesg: clean"
@@ -527,11 +442,6 @@ echo "dmesg: clean"
 while IFS= read -r sensor; do
     [[ -e "$sensor" ]] && die "Configfs sensor still exists: $sensor"
 done < "$SENSOR_LOG_FILE"
-
-# Also verify the deterministic sensors from scenarios 1-4 are gone.
-for sensor in "${created_sensors[@]}"; do
-    [[ ! -e "$sensor" ]] || die "Configfs sensor still exists: $sensor"
-done
 
 # Unload the module since we loaded it.
 rmmod virt_temp
