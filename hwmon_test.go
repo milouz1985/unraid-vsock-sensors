@@ -3,9 +3,12 @@
 package main
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestShouldNotifyTopologyChanged(t *testing.T) {
@@ -71,6 +74,15 @@ func TestShouldNotifyTopologyChanged(t *testing.T) {
 
 func TestNotifyTopologyChanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "topology-changed")
+	watch, err := unix.InotifyInit1(unix.IN_NONBLOCK | unix.IN_CLOEXEC)
+	if err != nil {
+		t.Fatalf("create topology event watcher: %v", err)
+	}
+	defer unix.Close(watch)
+	if _, err := unix.InotifyAddWatch(watch, filepath.Dir(path), unix.IN_CLOSE_WRITE); err != nil {
+		t.Fatalf("watch topology event directory: %v", err)
+	}
+
 	for attempt := 1; attempt <= 2; attempt++ {
 		if err := notifyTopologyChanged(path); err != nil {
 			t.Fatalf("notification %d: %v", attempt, err)
@@ -84,6 +96,16 @@ func TestNotifyTopologyChanged(t *testing.T) {
 		}
 		if got := info.Mode().Perm(); got != 0600 {
 			t.Fatalf("notification %d mode = %o, want 600", attempt, got)
+		}
+		// PathChanged observes files closed after writing. Drain each event so
+		// the next notification must produce its own event on the retained file.
+		var event [unix.SizeofInotifyEvent + 256]byte
+		n, err := unix.Read(watch, event[:])
+		if err != nil {
+			t.Fatalf("notification %d filesystem event: %v", attempt, err)
+		}
+		if n < unix.SizeofInotifyEvent || binary.NativeEndian.Uint32(event[4:8])&unix.IN_CLOSE_WRITE == 0 {
+			t.Fatalf("notification %d: missing IN_CLOSE_WRITE event", attempt)
 		}
 	}
 }

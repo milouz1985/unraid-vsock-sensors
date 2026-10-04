@@ -13,20 +13,20 @@ import (
 	"unraid-vsock-sensors/internal/sensors"
 )
 
-// A refused initial connection must back off, reconnect, publish a frame and
-// clear the failure from diagnostics. A single failure exercises this transition.
+// Each of two consecutive refused connections must back off before recovery,
+// publication and clearing the failure from diagnostics.
 func TestPublisherRecoversAfterInitialDialFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		server, client := net.Pipe()
 		defer server.Close()
 		defer client.Close()
 
-		firstDial := make(chan struct{})
-		var dialTimes []time.Time
+		dialStarted := make(chan time.Time, 3)
+		dialAttempts := 0
 		dial := func(context.Context) (snapshotConnection, error) {
-			dialTimes = append(dialTimes, time.Now())
-			if len(dialTimes) == 1 {
-				close(firstDial)
+			dialAttempts++
+			dialStarted <- time.Now()
+			if dialAttempts <= 2 {
 				return nil, errors.New("vsock dial refused")
 			}
 			return client, nil
@@ -42,11 +42,14 @@ func TestPublisherRecoversAfterInitialDialFailures(t *testing.T) {
 				newTestHBACollector(time.Minute, hbaModeDisabled), dial, state)
 		}()
 
-		<-firstDial
-		synctest.Wait()
-		status := state.status().publisher
-		if status.status != publisherStatusReconnecting || status.lastError != "vsock dial refused" || status.lastErrorAt.IsZero() {
-			t.Fatalf("after dial failure: status = %#v", status)
+		var dialTimes [3]time.Time
+		for attempt := 1; attempt <= 2; attempt++ {
+			dialTimes[attempt-1] = <-dialStarted
+			synctest.Wait()
+			status := state.status().publisher
+			if status.status != publisherStatusReconnecting || status.lastError != "vsock dial refused" || status.lastErrorAt.IsZero() {
+				t.Fatalf("after dial failure %d: status = %#v", attempt, status)
+			}
 		}
 
 		frame, err := sensors.NewFrameReader(server).Read()
@@ -56,16 +59,22 @@ func TestPublisherRecoversAfterInitialDialFailures(t *testing.T) {
 		if frame.Protocol != 1 {
 			t.Fatalf("frame protocol = %d, want 1", frame.Protocol)
 		}
+		dialTimes[2] = <-dialStarted
 		synctest.Wait()
-		status = state.status().publisher
+		status := state.status().publisher
 		if status.status != publisherStatusConnected || status.lastError != "" || !status.lastErrorAt.IsZero() {
 			t.Fatalf("after recovery: status = %#v", status)
 		}
 		if status.lastConnectedAt.IsZero() || status.lastPublishedAt.IsZero() {
 			t.Fatal("recovery did not record connection and publication")
 		}
-		if len(dialTimes) != 2 || dialTimes[1].Sub(dialTimes[0]) < defaultPublishInterval {
-			t.Fatalf("dial times = %v, want failure then success separated by backoff", dialTimes)
+		if len(dialStarted) != 0 {
+			t.Fatal("unexpected additional dial after recovery")
+		}
+		for attempt := 1; attempt < len(dialTimes); attempt++ {
+			if gap := dialTimes[attempt].Sub(dialTimes[attempt-1]); gap < time.Second {
+				t.Fatalf("backoff before dial %d = %v, want at least 1s", attempt+1, gap)
+			}
 		}
 
 		cancel()

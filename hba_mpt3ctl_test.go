@@ -85,8 +85,13 @@ func TestMPT3CommandABI(t *testing.T) {
 }
 
 func TestMPT3ConfigRequestPageHeader(t *testing.T) {
+	request := mpt3ConfigRequest(mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, nil)
+	if got := request[20]; got != 0x05 {
+		t.Fatalf("IO Unit Page 7 request version = %#02x, want 0x05", got)
+	}
+
 	returnedHeader := []byte{0x06, 0xff, 0x07, 0x00}
-	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, returnedHeader)
+	request = mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, returnedHeader)
 	if got := request[20:24]; !slices.Equal(got, returnedHeader) {
 		t.Fatalf("CONFIG read header = %x, want returned header %x", got, returnedHeader)
 	}
