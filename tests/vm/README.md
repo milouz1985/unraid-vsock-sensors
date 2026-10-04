@@ -56,7 +56,7 @@ cp tests/vm/template.env.example tests/vm/template.env
 Puis adapter notamment :
 
 ```sh
-PVE_HOST=pve01.example.net
+PVE_HOST=pve01.lan.home
 PVE_SSH_USER=root
 PVE_TEMPLATE_DIR=/root/uvss-template-builder
 
@@ -123,7 +123,7 @@ l'hôte est utilisé comme cible.
 
 ## Exécuter les tests
 
-Suite complète (core → kernel-stress → vsock-e2e → package) :
+Suite complète (core + kernel-stress + package) :
 
 ```sh
 make test-vm
@@ -258,12 +258,17 @@ reloads utilisent le `.ko` exact du checkout.
 
 Scénarios (dans l'ordre) :
 
-1. **Lifetime multi-FD et refcount** : création configfs, ouverture de huit FDs,
-   écriture et lecture hwmon, puis `rmdir`. Le device et le hwmon disparaissent ;
-   chacun des huit FDs retourne **ENODEV exact**. `rmmod` échoue avec les huit FDs,
-   puis encore avec le dernier FD seul ; après son close, unload et reload du
-   même `.ko` réussissent.
-2. **Concurrence** : 3 workers en parallèle pendant 500 itérations :
+1. **Nominal** : `mkdir` configfs → `/dev` apparaît → write température →
+   write label → lecture hwmon (`temp1_input` + `temp1_label`) → `rmdir` →
+   disparition.
+2. **Open-FD** : FD `/dev/virt-temp/*` ouvert, `rmdir` configfs, write via
+   l'ancien FD → doit retourner **ENODEV** exactement (vérifié par Python).
+3. **Multi-FD** : 8 FDs simultanés, `rmdir`, chaque FD write → **ENODEV**
+   (8/8), puis fermeture propre.
+4. **Unload refcount** : sensor créé, FD ouvert, `rmdir` (le seul refcount
+   restant est le FD), `rmmod` → doit échouer. Close FD, `rmmod` → succès.
+   Rechargement via `insmod`.
+5. **Concurrence** : 3 workers en parallèle pendant 500 itérations :
    - Worker A : lifecycle strict (create → label → write → publish → remove) ;
    - Worker B : lecture hwmon ciblé sur le sensor publié par A ;
    - Worker C : écriture miscdevice via Python (errno exact).
@@ -272,13 +277,9 @@ Scénarios (dans l'ordre) :
    retrait, avec une limite de cinq secondes, pour rendre les runs courts
    vérifiables. Les sondes suivantes suivent le lifecycle concurrent normal.
    Erreurs acceptées : ENOENT/ENODEV (disparition concurrente).
-   Le parent signale la fin du lifecycle par un fichier `done`, puis attend les
-   observateurs ; leur délai de 60 secondes reste un watchdog dont l'expiration
-   fait échouer le test, pas une durée minimale. Le timeout du runner borne
-   l'exécution guest complète.
-3. **Unload/reload** : 30 cycles `rmmod` / `insmod` avec vérification de
+6. **Unload/reload** : 30 cycles `rmmod` / `insmod` avec vérification de
    l'apparition/disparition de `/sys/kernel/config/virt_temp`.
-4. **dmesg** : recherche des patterns `BUG:`, `WARNING:`, `KASAN:`, `KCSAN:`,
+7. **dmesg** : recherche des patterns `BUG:`, `WARNING:`, `KASAN:`, `KCSAN:`,
    `UBSAN:`, `use-after-free`, `general protection fault`, `kernel BUG`,
    `Oops:`, `refcount_t:`, `hung task`, `lockdep` depuis le début du test.
 
@@ -300,6 +301,9 @@ Elle construit plusieurs versions du `.deb` et vérifie :
 - politique `SystemCallFilter` du fragment installé et de ses drop-ins,
   expansion récursive des groupes locaux, absence de syscall bloqué hors des
   groupes et contribution effective de chaque groupe ;
+- mutations temporaires de cette politique : retrait de `@mount` et ajout
+  d'un syscall extérieur aux groupes, tous deux détectés, puis restauration
+  du filtre et des drop-ins sans redémarrer le service ;
 - mise à jour ;
 - conservation de la configuration ;
 - échec volontaire d'une compilation DKMS ;
@@ -339,9 +343,6 @@ pas un vrai transport AF_VSOCK entre une VM Unraid et son hôte.
 
 ## Suite `vsock-e2e`
 
-Cette suite fait partie de `make test-vm`, après `kernel-stress` et avant
-`package`. Son ajout à `all` suit trois runs ciblés successifs réussis.
-
 La VM PVE disposable est l’hôte VSOCK. Elle lance un mini guest QEMU/KVM,
 sans disque ni réseau, avec le même `/boot/vmlinuz-$(uname -r)` et un initramfs
 construit pour le test :
@@ -369,7 +370,7 @@ Le canal série bidirectionnel du coprocess QEMU synchronise `READY`, `VALID1`,
 connexion AF_VSOCK. Le test vérifie le sensor `disk:vsock-e2e`, label `VSOCK E2E`,
 à `42000` puis `43000` milli°C, les chemins configfs et miscdevice indépendants,
 l’unicité et l’identité du hwmon. `INVALID` envoie du JSON incorrect : l’erreur
-de protocole doit apparaître dans le log du receiver, qui reste vivant et accepte
+protocol doit apparaître dans le log du receiver, qui reste vivant et accepte
 `VALID2`.
 
 Le cleanup attend QEMU et le receiver, retire uniquement le sensor possédé,
@@ -394,7 +395,7 @@ dist/vm-tests-<VMID>.<suffixe>.log
 Pour une VM conservée :
 
 ```sh
-ssh root@pve01.example.net qm terminal 9900
+ssh root@pve01.lan.home qm terminal 9900
 ```
 
 ou :
@@ -407,8 +408,8 @@ ssh -i ~/.ssh/id_ed25519 uvss-test@ADRESSE_IP \
 Après diagnostic :
 
 ```sh
-ssh root@pve01.example.net qm shutdown 9900 --timeout 120
-ssh root@pve01.example.net qm destroy 9900 --purge
+ssh root@pve01.lan.home qm shutdown 9900 --timeout 120
+ssh root@pve01.lan.home qm destroy 9900 --purge
 ```
 
 Adapter `9900` à `TEST_VMID`.
