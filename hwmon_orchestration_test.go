@@ -130,7 +130,7 @@ func diskSnap1(temp float64, receivedAt time.Time) receivedSnapshot {
 // TestHWMonOrchRejectsStaleAndPublishesFresh verifies that a snapshot whose
 // receivedAt is older than snapshotStreamTimeout is discarded by the loop
 // (never applied to the device), while a subsequent fresh snapshot is
-// published. It detects mutation A (expired() check removed).
+// published.
 //
 // The stale snapshot uses a different disk ID than the fresh one, so the
 // stale value cannot be hidden by the fresh publish overwriting the same
@@ -184,8 +184,7 @@ func TestHWMonOrchRejectsStaleAndPublishesFresh(t *testing.T) {
 }
 
 // TestHWMonOrchPropagatesBackgroundError verifies that an error sent on the
-// backgroundErrors channel is returned by the loop. It detects mutation C
-// (error ignored / replaced by continue or nil).
+// backgroundErrors channel is returned by the loop rather than ignored.
 func TestHWMonOrchPropagatesBackgroundError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -219,7 +218,6 @@ func TestHWMonOrchCleanShutdown(t *testing.T) {
 // triggers a topology notification even when no reconfiguration is needed.
 // The topology is pre-initialized from cache so that publish() returns
 // reconfigured=false; the notification must come from firstGuestSnapshot.
-// It detects mutation C (firstGuestSnapshot forced to false).
 func TestHWMonOrchTopologyFirstSnapshot(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -227,7 +225,9 @@ func TestHWMonOrchTopologyFirstSnapshot(t *testing.T) {
 
 		diskSamples := []hwmonSample{hwmonTestSample("disk:1", "disk1", 38)}
 		h := newOrchHarness(t, diskSamples)
-		h.publisher.disks = hwmonInventory{sensors: sensorsFromSamples(diskSamples)}
+		h.publisher.disks = hwmonInventory{sensors: []hwmonSensor{
+			{id: "disk:1", label: "disk1"},
+		}}
 		h.publisher.hbas = hwmonInventory{sensors: []hwmonSensor{}}
 		h.start(ctx)
 
@@ -245,7 +245,6 @@ func TestHWMonOrchTopologyFirstSnapshot(t *testing.T) {
 
 // TestHWMonOrchTopologyNoNotificationOnTempOnly verifies that a temperature-
 // only change (same inventory) does NOT trigger a new topology notification.
-// It detects mutation D (notification on every publish).
 func TestHWMonOrchTopologyNoNotificationOnTempOnly(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -253,7 +252,9 @@ func TestHWMonOrchTopologyNoNotificationOnTempOnly(t *testing.T) {
 
 		diskSamples := []hwmonSample{hwmonTestSample("disk:1", "disk1", 38)}
 		h := newOrchHarness(t, diskSamples)
-		h.publisher.disks = hwmonInventory{sensors: sensorsFromSamples(diskSamples)}
+		h.publisher.disks = hwmonInventory{sensors: []hwmonSensor{
+			{id: "disk:1", label: "disk1"},
+		}}
 		h.publisher.hbas = hwmonInventory{sensors: []hwmonSensor{}}
 		h.start(ctx)
 
@@ -282,7 +283,6 @@ func TestHWMonOrchTopologyNoNotificationOnTempOnly(t *testing.T) {
 
 // TestHWMonOrchTopologyNotificationOnLabelChange verifies that a label change
 // (real topology change) triggers a new topology notification.
-// It detects mutation E (notification suppressed after reconfiguration).
 func TestHWMonOrchTopologyNotificationOnLabelChange(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())

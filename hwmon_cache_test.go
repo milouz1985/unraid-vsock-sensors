@@ -118,9 +118,6 @@ func TestTopologyNotificationWaitsForPendingCacheReconciliation(t *testing.T) {
 	if publisher.disks.sensors == nil {
 		t.Fatal("successful disk cache restore did not initialize the family")
 	}
-	if !publisher.hbas.needsReconcile {
-		t.Fatal("failed HBA cache restore did not remain pending")
-	}
 
 	state := sensors.Response{
 		Disks:    []sensors.Disk{{ID: "cached", Name: "Cached disk", Temp: 35}},
@@ -264,10 +261,6 @@ func TestPublisherDefersReconfigurationWhileFamilyNeedsReconcile(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), test.failedErrorLabel) {
 				t.Fatalf("publish error = %v, want %s reconciliation failure", err, test.failedNamespace)
 			}
-			if test.failedNamespace == "disk" && !publisher.disks.needsReconcile ||
-				test.failedNamespace == "hba" && !publisher.hbas.needsReconcile {
-				t.Fatalf("failed %s reconciliation did not remain pending", test.failedNamespace)
-			}
 
 			data, err := os.ReadFile(publisher.cachePath)
 			if err != nil {
@@ -299,10 +292,6 @@ func TestPublisherDefersReconfigurationWhileFamilyNeedsReconcile(t *testing.T) {
 			if !reconfigured {
 				t.Fatal("successful retry did not report the deferred reconfiguration")
 			}
-			if publisher.disks.needsReconcile || publisher.hbas.needsReconcile {
-				t.Fatalf("successful retry left reconciliation pending: disks=%v HBA=%v",
-					publisher.disks.needsReconcile, publisher.hbas.needsReconcile)
-			}
 		})
 	}
 }
@@ -333,7 +322,39 @@ func TestPublisherReportsReconfigurationWhenCacheSaveFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "save hwmon inventory cache") {
 		t.Fatalf("error = %v, want cache save failure", err)
 	}
-	if !publisher.cacheDirty {
-		t.Fatal("failed cache save must remain pending for the next cycle")
+	// Repair only the destination; the same snapshot must retry persistence
+	// without requiring another kernel topology change.
+	if err := os.Remove(blockingFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(blockingFile, 0700); err != nil {
+		t.Fatal(err)
+	}
+	reconfigured, err = publisher.publish(configRoot, deviceRoot, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconfigured {
+		t.Fatal("cache persistence retry must not report a new kernel reconfiguration")
+	}
+	data, err := os.ReadFile(publisher.cachePath)
+	if err != nil {
+		t.Fatalf("cache was not saved on the next identical snapshot: %v", err)
+	}
+	type cachedSensor struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
+	}
+	var cached struct {
+		Disks struct {
+			Readings []cachedSensor `json:"readings"`
+		} `json:"disks"`
+	}
+	if err := json.Unmarshal(data, &cached); err != nil {
+		t.Fatal(err)
+	}
+	want := []cachedSensor{{ID: "disk:1", Label: "disk1"}}
+	if !reflect.DeepEqual(cached.Disks.Readings, want) {
+		t.Fatalf("persisted disks = %#v, want %#v", cached.Disks.Readings, want)
 	}
 }

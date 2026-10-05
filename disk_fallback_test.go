@@ -55,7 +55,7 @@ func TestFallbackCursorFollowsChangedInventories(t *testing.T) {
 	}{
 		{name: "removed disk", cursor: 3, disks: []string{"a", "b", "c", "d"}, want: []string{"d", "a", "b"}},
 		{name: "added disk", cursor: 3, disks: []string{"a", "b", "c", "d", "e"}, want: []string{"d", "e", "a"}},
-		{name: "empty inventory", cursor: 3},
+		{name: "empty inventory", cursor: 3, want: []string{"a", "b", "c"}},
 		{name: "cursor beyond new length", cursor: 8, disks: []string{"a", "b", "c", "d"}, want: []string{"a", "b", "c"}},
 		{name: "reordered inventory", cursor: 3, disks: []string{"d", "c", "b", "a", "e"}, want: []string{"a", "e", "d"}},
 	} {
@@ -64,19 +64,19 @@ func TestFallbackCursorFollowsChangedInventories(t *testing.T) {
 			command := fallbackTestCommand(t, "printf '%s\\n' \"$1\" >> '"+logPath+"'\nsleep 0.2")
 			collector := newDiskCollector(diskDataPaths{smartctlType: command})
 			collector.fallbackCursor = test.cursor
-			disks := make([]unraidDisk, len(test.disks))
-			for i, name := range test.disks {
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			names := test.disks
+			if len(names) == 0 {
+				_, _ = collector.collectFallback(ctx, nil)
+				// A repopulated inventory starts at its beginning after an empty cycle.
+				names = []string{"a", "b", "c", "d"}
+			}
+			disks := make([]unraidDisk, len(names))
+			for i, name := range names {
 				disks[i] = unraidDisk{name: name, id: name}
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 			_, _ = collector.collectFallback(ctx, disks)
 			cancel()
-			if len(disks) == 0 {
-				if collector.fallbackCursor != 0 {
-					t.Fatalf("cursor after empty inventory = %d", collector.fallbackCursor)
-				}
-				return
-			}
 			attempts, err := os.ReadFile(logPath)
 			if err != nil {
 				t.Fatal(err)

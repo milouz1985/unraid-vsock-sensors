@@ -207,8 +207,17 @@ func TestPublishHWMonFamilyPreservesLastValidInventoryAfterReconciliationFailure
 	if !reflect.DeepEqual(inventory.sensors, lastValid) {
 		t.Fatalf("inventory after failed reconciliation = %#v, want last valid %#v", inventory.sensors, lastValid)
 	}
-	if !inventory.needsReconcile {
-		t.Fatal("failed reconciliation did not mark the kernel state for retry")
+	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", current)
+	reconfigured, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reconfigured {
+		t.Fatal("publish after partial reconciliation failure did not report a reconfiguration")
+	}
+	wantSensors := []hwmonSensor{{id: "disk:new", label: "New disk"}}
+	if !reflect.DeepEqual(inventory.sensors, wantSensors) {
+		t.Fatalf("inventory after successful retry = %#v, want %#v", inventory.sensors, wantSensors)
 	}
 }
 
@@ -219,7 +228,8 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconciliationFailure(t *testing.T) 
 		t.Fatal(err)
 	}
 	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1", 35)}
-	inventory := hwmonInventory{sensors: sensorsFromSamples(current)}
+	wantSensors := []hwmonSensor{{id: "disk:serial", label: "disk1"}}
+	inventory := hwmonInventory{sensors: wantSensors}
 
 	_, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current)
 	if err == nil {
@@ -228,11 +238,8 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconciliationFailure(t *testing.T) 
 	if !strings.Contains(err.Error(), "reconcile stale disk inventory:") {
 		t.Fatalf("stale reconciliation error = %q", err)
 	}
-	if !reflect.DeepEqual(inventory.sensors, sensorsFromSamples(current)) {
-		t.Fatalf("inventory after failed stale reconciliation = %#v, want last valid %#v", inventory.sensors, sensorsFromSamples(current))
-	}
-	if !inventory.needsReconcile {
-		t.Fatal("failed stale reconciliation did not mark the kernel state for retry")
+	if !reflect.DeepEqual(inventory.sensors, wantSensors) {
+		t.Fatalf("inventory after failed stale reconciliation = %#v, want last valid %#v", inventory.sensors, wantSensors)
 	}
 
 	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", current)
@@ -243,11 +250,8 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconciliationFailure(t *testing.T) 
 	if !reconfigured {
 		t.Fatal("publish after failed stale reconciliation did not retry reconciliation")
 	}
-	if !reflect.DeepEqual(inventory.sensors, sensorsFromSamples(current)) {
-		t.Fatalf("inventory after successful retry = %#v, want %#v", inventory.sensors, sensorsFromSamples(current))
-	}
-	if inventory.needsReconcile {
-		t.Fatal("successful retry left the kernel state marked for reconciliation")
+	if !reflect.DeepEqual(inventory.sensors, wantSensors) {
+		t.Fatalf("inventory after successful retry = %#v, want %#v", inventory.sensors, wantSensors)
 	}
 }
 

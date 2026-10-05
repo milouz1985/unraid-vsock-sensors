@@ -98,9 +98,6 @@ func TestPollingDisabledStandbyToActiveIsImmediatelyUnavailable(t *testing.T) {
 	if disk := requireSingleDisk(t, collector); disk.unavailable || disk.temp != 0 {
 		t.Fatalf("standby disk = %#v; want temp 0, not unavailable", disk)
 	}
-	if state := collector.state["serial"]; state.thermalState != diskThermalStandby {
-		t.Fatalf("standby state = %#v", state)
-	}
 
 	// Disk wakes up: spundown=0.
 	environment.write(t, environment.paths.disksINI, "[disk1]\nid=serial\ndevice=sda\nrotational=1\nspundown=0\ntemp=*\n")
@@ -110,9 +107,6 @@ func TestPollingDisabledStandbyToActiveIsImmediatelyUnavailable(t *testing.T) {
 	// never published as waking with a synthetic zero.
 	if disk := requireSingleDisk(t, collector); !disk.unavailable || disk.temp != 0 {
 		t.Fatalf("woken disk with polling disabled = %#v; want unavailable, temp 0", disk)
-	}
-	if state := collector.state["serial"]; state.thermalState != diskThermalUnavailable {
-		t.Fatalf("woken disk state = %#v; want unavailable", state)
 	}
 }
 

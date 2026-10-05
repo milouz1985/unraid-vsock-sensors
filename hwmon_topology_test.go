@@ -101,7 +101,8 @@ func TestMakeHWMonSamplesKeepsDiskLabelStableAcrossDeviceChanges(t *testing.T) {
 	if got, want := second[0].sensor.label, "disk1"; got != want {
 		t.Fatalf("second label = %q, want %q", got, want)
 	}
-	if !sameHWMonConfiguration(sensorsFromSamples(first), second) {
+	existing := []hwmonSensor{{id: "disk:stable-id", label: "disk1"}}
+	if !sameHWMonConfiguration(existing, second) {
 		t.Fatal("a device-name change for the same stable disk must not reconfigure hwmon")
 	}
 }
