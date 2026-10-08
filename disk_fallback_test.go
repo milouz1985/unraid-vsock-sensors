@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,169 @@ func TestFallbackAdvancesPastSlowDisksAcrossCycles(t *testing.T) {
 			if !strings.Contains(string(attempts), "fast\n") || observations[6].temperature != 42 || observations[6].err != nil {
 				t.Fatalf("fast disk starved across cycles: attempts %q, observation %#v", attempts, observations[6])
 			}
+		}
+	}
+}
+
+func TestFallbackPartialCycleAcrossRotations(t *testing.T) {
+	env := newDiskTestEnvironment(t, "30")
+	var inventory strings.Builder
+	for i := 1; i <= 15; i++ {
+		fmt.Fprintf(&inventory, "[disk%d]\nid=serial%d\ndevice=nvme%dn1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=31\n", i, i, i)
+	}
+	env.write(t, env.paths.disksINI, inventory.String())
+	collector := env.collector()
+	collector.refresh()
+	attempted := make(map[string]bool)
+	for cycle := range 3 {
+		directory := t.TempDir()
+		journal := filepath.Join(directory, "events")
+		collector.paths.smartctlType = fallbackTestCommand(t,
+			"printf 'start %s\\n' \"$1\" >> '"+journal+"'\n"+
+				"while [ ! -e '"+directory+"/release-'\"$1\" ]; do sleep 0.005; done\n"+
+				"result=$(cat '"+directory+"/release-'\"$1\")\n"+
+				"printf 'end %s\\n' \"$1\" >> '"+journal+"'\n"+
+				"if [ \"$result\" = fail ]; then exit 1; fi\n"+
+				"printf '{\"temperature\":{\"current\":37}}\\n'")
+		if cycle == 0 {
+			env.now = env.now.Add(46 * time.Second)
+		} else {
+			env.now = env.now.Add(30 * time.Second)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { collector.refreshWithContext(ctx); close(done) }()
+		// Always release processes before TempDir cleanup, even after an assertion.
+		t.Cleanup(func() { cancel(); <-done })
+		starts := waitFallbackStarts(t, journal, done, 3)
+		if err := os.WriteFile(filepath.Join(directory, "release-"+starts[0]), []byte("success"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		starts = waitFallbackStarts(t, journal, done, 4)
+		if err := os.WriteFile(filepath.Join(directory, "release-"+starts[1]), []byte("fail"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		starts = waitFallbackStarts(t, journal, done, 5)
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("canceled partial collection did not return")
+		}
+		for _, name := range starts {
+			if attempted[name] {
+				t.Fatalf("disk %q repeated before the complete inventory was reached", name)
+			}
+			attempted[name] = true
+		}
+		readings, err := collector.snapshot()
+		if err != nil || len(readings) != 15 {
+			t.Fatalf("cycle %d inventory = %v, %v; want all 15 disks", cycle, readings, err)
+		}
+		for _, reading := range readings {
+			if reading.Name == starts[0] {
+				if reading.Unavailable || reading.Temp != 37 {
+					t.Fatalf("successful disk = %#v; want available 37", reading)
+				}
+			} else if !reading.Unavailable || reading.Temp != 0 {
+				t.Fatalf("uncollected, failed or canceled disk reused an old value: %#v", reading)
+			}
+		}
+		status := collector.status()
+		if status.source.lastFallbackError == "" {
+			t.Fatal("partial fallback did not report its collection error")
+		}
+		for _, runtime := range status.disks {
+			if runtime.disk.name != starts[0] && runtime.collectionError == nil {
+				t.Fatalf("missing per-disk error for %q", runtime.disk.name)
+			}
+		}
+	}
+	if len(attempted) != 15 {
+		t.Fatalf("rotation reached %d disks; want 15", len(attempted))
+	}
+	// A healthy heartbeat restores every native value immediately, including
+	// disks that had errors, were canceled or were not queried in the last cycle.
+	env.write(t, env.paths.disksINI, strings.ReplaceAll(inventory.String(), "temp=31", "temp=42"))
+	env.now = env.now.Add(time.Second)
+	collector.noteEmhttpPoll()
+	collector.paths.smartctlType = fallbackTestCommand(t, "exit 1")
+	collector.refresh()
+	readings, err := collector.snapshot()
+	if err != nil || len(readings) != 15 || collector.status().source.source != diskSourceEmhttpd {
+		t.Fatalf("native recovery = %v, %v", readings, err)
+	}
+	for _, reading := range readings {
+		if reading.Unavailable || reading.Temp != 42 {
+			t.Fatalf("native reading did not recover: %#v", reading)
+		}
+	}
+}
+
+// The helper processes stop at explicit file gates; no sleep duration decides
+// which disk succeeds. The event journal independently measures live commands.
+func waitFallbackStarts(t *testing.T, journal string, done <-chan struct{}, count int) []string {
+	t.Helper()
+	deadline := time.NewTimer(1500 * time.Millisecond)
+	defer deadline.Stop()
+	for {
+		data, err := os.ReadFile(journal)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		var starts []string
+		active := 0
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 2 {
+				continue
+			}
+			switch fields[0] {
+			case "start":
+				active++
+				starts = append(starts, fields[1])
+			case "end":
+				active--
+			}
+			if active > 3 {
+				t.Fatalf("more than three live SMART commands: %s", data)
+			}
+		}
+		if len(starts) >= count {
+			if len(starts) != count {
+				t.Fatalf("started %d commands; want exactly %d", len(starts), count)
+			}
+			return starts
+		}
+		select {
+		case <-done:
+			t.Fatalf("collection stopped before %d commands started: %s", count, data)
+		case <-deadline.C:
+			t.Fatalf("commands did not reach gate %d: %s", count, data)
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+func TestFallbackGlobalCycleBudget(t *testing.T) {
+	collector := newDiskCollector(diskDataPaths{smartctlType: fallbackTestCommand(t, "sleep 10")})
+	disks := make([]unraidDisk, 12)
+	for i := range disks {
+		disks[i] = unraidDisk{id: fmt.Sprintf("serial%d", i), name: fmt.Sprintf("disk%d", i)}
+	}
+	started := time.Now()
+	observations, err := collector.collectFallback(context.Background(), disks)
+	// Twelve commands at two seconds each with three workers would take eight
+	// seconds without a global budget. Allow process startup/teardown slack.
+	if elapsed := time.Since(started); elapsed > 6*time.Second {
+		t.Fatalf("four-second collection budget was not enforced: %s", elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) || len(observations) != 12 {
+		t.Fatalf("bounded cycle = %v, %v; want deadline error and full inventory", observations, err)
+	}
+	for _, observation := range observations {
+		if observation.err == nil || observation.temperature != 0 {
+			t.Fatalf("timed out or unqueried disk returned a temperature: %#v", observation)
 		}
 	}
 }
