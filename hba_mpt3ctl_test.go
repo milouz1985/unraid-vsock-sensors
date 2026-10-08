@@ -174,6 +174,42 @@ func TestParseMPT3Temperatures(t *testing.T) {
 	}
 }
 
+// Use literal firmware bytes at the MPI IO Unit Page 7 offsets. The real
+// ioctl boundary remains outside this test; this exercises the parser and
+// the reading construction shared with the MPT3 collector.
+func TestMPT3TemperatureAvailabilityTransitionsCurrentBehavior(t *testing.T) {
+	metadata := hbaMetadata{id: "sas:0000000000000001", model: "SAS3008"}
+	for _, phase := range []struct {
+		name      string
+		page      []byte
+		available bool
+		wantIOC   float64
+		wantBoard float64
+	}{
+		{name: "valid", page: []byte{0x10: 51, 0x12: 2, 0x14: 43, 0x16: 2}, available: true, wantIOC: 51, wantBoard: 43},
+		{name: "unsupported units", page: []byte{0x10: 51, 0x12: 0xff, 0x14: 43, 0x16: 0xff}},
+		{name: "probes absent", page: []byte{0x10: 51, 0x12: 0, 0x14: 43, 0x16: 0}},
+		{name: "recover", page: []byte{0x10: 57, 0x12: 2, 0x14: 45, 0x16: 2}, available: true, wantIOC: 57, wantBoard: 45},
+	} {
+		t.Run(phase.name, func(t *testing.T) {
+			temperatures, err := parseMPT3Temperatures(phase.page)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reading, available := makeHBAReading(metadata, temperatures)
+			// Current behavior omits a present controller with no usable probe;
+			// this documents the risk instead of endorsing deletion as failsafe.
+			if available != phase.available {
+				t.Fatalf("reading availability = %t; want %t", available, phase.available)
+			}
+			if available && (reading.ID != "sas:0000000000000001" || reading.Temp != phase.wantIOC ||
+				reading.IOCTemp == nil || *reading.IOCTemp != phase.wantIOC || reading.BoardTemp == nil || *reading.BoardTemp != phase.wantBoard) {
+				t.Fatalf("reading = %#v; want IOC %v Board %v", reading, phase.wantIOC, phase.wantBoard)
+			}
+		})
+	}
+}
+
 func TestParseMPT3TemperaturesIgnoresAdditiveExtensions(t *testing.T) {
 	page := mpt3TemperaturePage(42, 0x02, 113, 0x01)
 	page = append(page, make([]byte, 997)...)

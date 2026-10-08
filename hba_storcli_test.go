@@ -14,7 +14,129 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"unraid-vsock-sensors/internal/sensors"
 )
+
+// This characterizes the current loss of topology when a present controller
+// returns no supported probe. It is not a desired thermal-safety invariant:
+// an authoritative empty reading removes the probe rather than letting it stale.
+func TestStorCLITemperatureAvailabilityTransitionsCurrentBehavior(t *testing.T) {
+	const valid = `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"51"},{"Ctrl_Prop":"Ctrl temperature(Degree Celsius)","Value":"43"}]}},{"Command Status":{"Controller":1,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"60"}]}}]}`
+	const missing = `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[]}},{"Command Status":{"Controller":1,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"60"}]}}]}`
+	const recovered = `{"Controllers":[{"Command Status":{"Controller":0,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"57"},{"Ctrl_Prop":"Ctrl temperature(Degree Celsius)","Value":"45"}]}},{"Command Status":{"Controller":1,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"60"}]}}]}`
+	const removed = `{"Controllers":[{"Command Status":{"Controller":1,"Status":"Success"},"Response Data":{"Controller Properties":[{"Ctrl_Prop":"ROC temperature(Degree Celsius)","Value":"60"}]}}]}`
+	metadata := map[int]hbaMetadata{0: {id: "sas:0000000000000001"}, 1: {id: "sas:0000000000000002"}}
+	report := valid
+	var readErr error
+	reader := &storCLIReader{
+		discoverMetadata: func(context.Context) (map[int]hbaMetadata, error) { return metadata, nil },
+		readTemperatures: func(context.Context) (map[int]hbaTemperatures, error) {
+			if readErr != nil {
+				return nil, readErr
+			}
+			return parseStorCLI([]byte(report))
+		},
+	}
+	collector := newTestHBACollector(time.Minute, hbaModeEnabled)
+	collector.reader = reader
+	root := t.TempDir()
+	configRoot, deviceRoot := filepath.Join(root, "config"), filepath.Join(root, "dev")
+	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", nil)
+	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "hba", nil)
+	publisher := &hwmonPublisher{cachePath: filepath.Join(root, "inventory.json")}
+	const iocID = "hba:sas:0000000000000001"
+	const boardID = "hba:board:sas:0000000000000001"
+	const otherID = "hba:sas:0000000000000002"
+	for _, phase := range []struct {
+		name    string
+		report  string
+		wantIDs []string
+		err     error
+	}{
+		{name: "valid", report: valid, wantIDs: []string{iocID, boardID, otherID}},
+		{name: "present without temperatures", report: missing, wantIDs: []string{otherID}},
+		{name: "temperatures recover", report: recovered, wantIDs: []string{iocID, boardID, otherID}},
+		{name: "collection error preserves topology", err: errors.New("controller I/O failed"), wantIDs: []string{iocID, boardID, otherID}},
+		{name: "collection recovers", report: recovered, wantIDs: []string{iocID, boardID, otherID}},
+		{name: "controller removed from inventory", report: removed, wantIDs: []string{otherID}},
+		{name: "collection explicitly disabled"},
+	} {
+		t.Run(phase.name, func(t *testing.T) {
+			report, readErr = phase.report, phase.err
+			if phase.name == "controller removed from inventory" {
+				metadata = map[int]hbaMetadata{1: {id: "sas:0000000000000002"}}
+			}
+			if phase.name == "collection explicitly disabled" {
+				collector = newTestHBACollector(time.Minute, hbaModeDisabled)
+			} else {
+				collector.refresh(context.Background())
+			}
+			readings, err := collector.snapshot()
+			if (err != nil) != (phase.err != nil) {
+				t.Fatalf("snapshot error = %v; want %v", err, phase.err)
+			}
+			response := sensors.Response{Disks: []sensors.Disk{}, HBAs: readings}
+			if err != nil {
+				response.HBAError = err.Error()
+			}
+			_, samples := makeHWMonSamples(response)
+			prepareFakeHWMonKernel(t, configRoot, deviceRoot, "hba", samples)
+			for _, sensor := range publisher.hbas.sensors {
+				keep := false
+				for _, id := range phase.wantIDs {
+					keep = keep || id == sensor.id
+				}
+				if !keep {
+					// Ordinary directories need their synthetic attribute removed
+					// before rmdir; configfs itself owns its label attribute.
+					if err := os.Remove(filepath.Join(configRoot, "hba", hwmonSensorKey("hba", sensor.id), "label")); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			_, publishErr := publisher.publish(configRoot, deviceRoot, response)
+			if (publishErr != nil) != (phase.err != nil) {
+				t.Fatalf("publication error = %v; want collection error %v", publishErr, phase.err)
+			}
+			if len(publisher.hbas.sensors) != len(phase.wantIDs) {
+				t.Fatalf("hwmon inventory = %#v; want IDs %v", publisher.hbas.sensors, phase.wantIDs)
+			}
+			for _, id := range phase.wantIDs {
+				if _, err := os.Stat(filepath.Join(configRoot, "hba", hwmonSensorKey("hba", id))); err != nil {
+					t.Fatalf("expected HBA probe %q: %v", id, err)
+				}
+			}
+			entries, err := os.ReadDir(filepath.Join(configRoot, "hba"))
+			if err != nil || len(entries) != len(phase.wantIDs) {
+				t.Fatalf("configfs items = %v, %v; want %d", entries, err, len(phase.wantIDs))
+			}
+			if phase.err == nil && len(readings) > 0 && readings[len(readings)-1].Temp != 60 {
+				t.Fatalf("unaffected controller temperature = %#v; want 60", readings)
+			}
+			if phase.report == valid || phase.report == recovered {
+				wantIOC, wantBoard := 51.0, 43.0
+				if phase.report == recovered {
+					wantIOC, wantBoard = 57, 45
+				}
+				if len(readings) != 2 || readings[0].IOCTemp == nil || *readings[0].IOCTemp != wantIOC ||
+					readings[0].BoardTemp == nil || *readings[0].BoardTemp != wantBoard {
+					t.Fatalf("controller temperatures = %#v; want IOC %v Board %v", readings, wantIOC, wantBoard)
+				}
+				wantDeviceTemps := map[string]string{iocID: "51000\n", boardID: "43000\n"}
+				if phase.report == recovered {
+					wantDeviceTemps = map[string]string{iocID: "57000\n", boardID: "45000\n"}
+				}
+				for id, want := range wantDeviceTemps {
+					data, err := os.ReadFile(hwmonTemperatureDevicePath(deviceRoot, id))
+					if err != nil || string(data) != want {
+						t.Fatalf("temperature device %q = %q, %v; want %q", id, data, err, want)
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestHBAReaderCachesDiscovery(t *testing.T) {
 	discoveries := 0
