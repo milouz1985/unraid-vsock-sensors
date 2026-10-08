@@ -3,7 +3,7 @@
   "name": "disk1",
   "device": "sda",
   "transport": "ata",
-  "bus": "pci",
+  "bus": "non-USB",
   "policy": "include",
   "selected": true,
   "eligible": false,

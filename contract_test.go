@@ -80,7 +80,7 @@ func TestDiskPolicyContractFixture(t *testing.T) {
 		Name:            "disk1",
 		Device:          "sda",
 		Transport:       "ata",
-		Bus:             "pci",
+		Bus:             "non-USB",
 		Policy:          diskPolicyInclude,
 		Selected:        true,
 		Eligible:        false,
