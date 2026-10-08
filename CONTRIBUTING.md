@@ -444,6 +444,11 @@ persistant délimité par des retours à la ligne et validé dans
 `internal/sensors`. Toute rupture volontaire exige une nouvelle
 `ProtocolVersion` et les tests correspondants.
 
+Une trame est limitée à 1 Mio, retour à la ligne final compris, à l'émission
+comme à la réception. `WriteFrame` sérialise et vérifie cette taille avant
+toute écriture ; une trame trop grande retourne `sensors.ErrFrameTooLarge`
+sans écrire de données dans le flux.
+
 Configfs porte l'existence et les métadonnées des sondes ; les miscdevices
 `/dev/virt-temp/*` reçoivent leurs températures runtime. Le receiver est
 l'unique writer supporté de configfs pendant son fonctionnement. Les détails de

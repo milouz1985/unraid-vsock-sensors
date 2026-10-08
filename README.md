@@ -562,7 +562,9 @@ est détaillée dans [`tests/vm/README.md`](tests/vm/README.md).
 AF_VSOCK n'est pas un mécanisme général d'authentification.
 
 L'agent se connecte au CID hôte standard `2`. Le récepteur n'accepte que le CID
-configuré, vérifie la version du protocole et limite chaque snapshot à 1 Mio.
+configuré, vérifie la version du protocole et limite chaque snapshot à 1 Mio,
+retour à la ligne final compris. L'émetteur applique la même limite avant
+toute écriture et signale une erreur si le snapshot est trop volumineux.
 
 Le receiver reste lancé en `root` pour administrer configfs et écrire dans les
 miscdevices, mais son processus principal ne conserve que
