@@ -272,10 +272,12 @@ Scénarios (dans l'ordre) :
    - Worker A : lifecycle strict (create → label → write → publish → remove) ;
    - Worker B : lecture hwmon ciblé sur le sensor publié par A ;
    - Worker C : écriture miscdevice via Python (errno exact).
-   Preuve d'activité : `hwmon_reads > 0`, `misc_attempts > 0`.
-   La première sonde attend cette activité des deux observateurs avant son
-   retrait, avec une limite de cinq secondes, pour rendre les runs courts
-   vérifiables. Les sondes suivantes suivent le lifecycle concurrent normal.
+   Preuve d'activité : `hwmon_reads > 0`, `misc_successes > 0` (écritures
+   complètes). La première sonde reste présente jusqu'à l'acquittement d'une
+   lecture et d'une écriture réussies par les deux observateurs, avec une limite
+   de cinq secondes servant de garde-fou. Les erreurs de disparition ne
+   débloquent pas cette attente. Les sondes suivantes suivent le lifecycle
+   concurrent normal.
    Erreurs acceptées : ENOENT/ENODEV (disparition concurrente).
 6. **Unload/reload** : 30 cycles `rmmod` / `insmod` avec vérification de
    l'apparition/disparition de `/sys/kernel/config/virt_temp`.

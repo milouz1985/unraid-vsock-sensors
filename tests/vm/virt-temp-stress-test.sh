@@ -48,10 +48,12 @@ cleanup() {
     trap - EXIT
     local pid sensor
     for pid in "${pids[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-        fi
+        # Workers have private process groups, including their Python helpers.
+        kill -- "-$pid" 2>/dev/null || true
+    done
+    # Stop every worker before waiting, then reap even those already exited.
+    for pid in "${pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
     done
     for fd in "${open_fds[@]}"; do
         exec {fd}>&- 2>/dev/null || true
@@ -128,8 +130,8 @@ dmesg_line_count() {
     dmesg 2>/dev/null | wc -l
 }
 
-# Python helper: write to a device FD, exit 0 on success, 11 on ENODEV,
-# 10 on ENOENT (device gone before open), non-zero on unexpected error.
+# Python helper: write a complete sample, exit 0 on success, 11 on ENODEV
+# during write, 10 on ENOENT/ENODEV before open, non-zero on unexpected error.
 MISC_WRITE_PY=$(cat <<'PYEOF'
 import errno
 import os
@@ -144,7 +146,10 @@ except OSError as exc:
     raise
 
 try:
-    os.write(fd, b"37000\n")
+    sample = b"37000\n"
+    written = os.write(fd, sample)
+    if written != len(sample):
+        raise RuntimeError(f"short miscdevice write: {written}/{len(sample)} bytes")
 except OSError as exc:
     if exc.errno == errno.ENODEV:
         raise SystemExit(11)
@@ -169,7 +174,7 @@ except OSError as exc:
 PYEOF
 )
 
-# Python helper: read a sysfs file, exit 0 on success, 10 on ENOENT.
+# Python helper: read a sysfs file, exit 0 on success, 10 on ENOENT/ENODEV.
 HWMON_READ_PY=$(cat <<'PYEOF'
 import errno
 import sys
@@ -272,6 +277,8 @@ CURRENT_DEVICE_FILE="$WORK_DIR/current-device"
 CURRENT_HWMON_FILE="$WORK_DIR/current-hwmon"
 MISC_COUNTS_FILE="$WORK_DIR/misc-counts"
 HWMON_COUNTS_FILE="$WORK_DIR/hwmon-counts"
+MISC_ACTIVE_FILE="$WORK_DIR/misc-active"
+HWMON_ACTIVE_FILE="$WORK_DIR/hwmon-active"
 SENSOR_LOG_FILE="$WORK_DIR/sensor-log"
 WORKER_DONE_FILE="$WORK_DIR/lifecycle-done"
 : > "$CURRENT_DEVICE_FILE"
@@ -282,7 +289,7 @@ printf '0\n' > "$HWMON_COUNTS_FILE"
 
 worker_lifecycle() {
     local i id dev cfg hwmon_dir
-    local activity_deadline hwmon_reads misc_attempts _
+    local activity_deadline
     for i in $(seq 1 "$STRESS_ITERS"); do
         id="stress-lc-$i"
         dev="$(device_path_for disk "$id")"
@@ -303,14 +310,13 @@ worker_lifecycle() {
         done
         [[ -n "$hwmon_dir" ]] || return 1
         printf '%s\n' "$hwmon_dir" > "$CURRENT_HWMON_FILE"
-        # Let both observers exercise the first sensor before removing it.
-        # Short runs can otherwise finish before either observer is scheduled.
+        # Keep a live sensor until both observers acknowledge a successful I/O.
+        # An attempted write returning ENODEV/ENOENT cannot release this barrier.
+        # Later iterations retain the normal concurrent removal/recreation races.
         if (( i == 1 )); then
             activity_deadline=$((SECONDS + 5))
-            until read -r hwmon_reads < "$HWMON_COUNTS_FILE" &&
-                read -r misc_attempts _ < "$MISC_COUNTS_FILE" &&
-                (( hwmon_reads > 0 && misc_attempts > 0 )); do
-                (( SECONDS < activity_deadline )) || die "Stress observers did not exercise the first sensor"
+            until [[ -e "$HWMON_ACTIVE_FILE" && -e "$MISC_ACTIVE_FILE" ]]; do
+                (( SECONDS < activity_deadline )) || die "Stress observers did not successfully read and write the first sensor"
                 sleep 0.01
             done
         fi
@@ -333,7 +339,7 @@ worker_hwmon_reader() {
         count=0
         for path in "$hwmon_dir/temp1_input" "$hwmon_dir/temp1_label"; do
             [[ -f "$path" ]] || continue
-            if python3 -c "$HWMON_READ_PY" "$path" 2>/dev/null; then
+            if python3 -c "$HWMON_READ_PY" "$path"; then
                 rc=0
             else
                 rc=$?
@@ -350,6 +356,7 @@ worker_hwmon_reader() {
             local total
             total="$(cat "$HWMON_COUNTS_FILE" 2>/dev/null || echo 0)"
             printf '%s\n' "$((total + count))" > "$HWMON_COUNTS_FILE"
+            [[ -e "$HWMON_ACTIVE_FILE" ]] || : > "$HWMON_ACTIVE_FILE"
         fi
         sleep 0.01
     done
@@ -368,14 +375,17 @@ worker_misc_writer() {
         dev="$(cat "$CURRENT_DEVICE_FILE" 2>/dev/null || true)"
         [[ -n "$dev" ]] || { sleep 0.01; continue; }
         [[ -e "$dev" ]] || { sleep 0.01; continue; }
-        if python3 -c "$MISC_WRITE_PY" "$dev" 2>/dev/null; then
+        if python3 -c "$MISC_WRITE_PY" "$dev"; then
             rc=0
         else
             rc=$?
         fi
         (( ++attempts ))
         case "$rc" in
-            0) (( ++successes )) ;;
+            0)
+                (( ++successes ))
+                [[ -e "$MISC_ACTIVE_FILE" ]] || : > "$MISC_ACTIVE_FILE"
+                ;;
             11) (( ++enodev )) ;;
             10) (( ++enoent )) ;;
             *) return 1 ;;
@@ -386,12 +396,25 @@ worker_misc_writer() {
     return 0
 }
 
-worker_lifecycle &
+# Give each worker its own process group so failure cleanup also stops its
+# foreground helpers. Each leader reaps its children before exiting on TERM.
+set -m
+(
+    trap 'wait; exit 143' TERM
+    worker_lifecycle
+) &
 pids+=("$!")
-worker_hwmon_reader &
+(
+    trap 'wait; exit 143' TERM
+    worker_hwmon_reader
+) &
 pids+=("$!")
-worker_misc_writer &
+(
+    trap 'wait; exit 143' TERM
+    worker_misc_writer
+) &
 pids+=("$!")
+set +m
 
 local_failed=0
 # Stop observers as soon as the lifecycle finishes, including on failure.
@@ -410,6 +433,7 @@ hwmon_reads="$(cat "$HWMON_COUNTS_FILE" 2>/dev/null || echo 0)"
 
 read -r misc_attempts misc_successes misc_disappeared < "$MISC_COUNTS_FILE"
 (( misc_attempts > 0 )) || die "misc writer never exercised a stress device"
+(( misc_successes > 0 )) || die "misc writer never successfully wrote to a stress device"
 echo "Concurrent stress: OK ($STRESS_ITERS iters, hwmon_reads=$hwmon_reads, misc_attempts=$misc_attempts, misc: $misc_successes ok / $misc_disappeared disappeared)"
 
 check_dmesg_since "$dmesg_before_stress" "concurrent stress"
