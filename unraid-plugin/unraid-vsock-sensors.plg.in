@@ -33,6 +33,7 @@ temperatures over AF_VSOCK to Proxmox as native hwmon sensors.
 - Read native MPT3 temperatures through the IOC number exposed by mpt3sas, size IO Unit Page 7 from the firmware response, and accept additive page extensions.
 - Expose IOC and Board temperatures as independent hwmon sensors and Diagnostics values while retaining the legacy single-temperature protocol field for compatibility.
 - Make disk-policy writes and resets durable across abrupt power loss.
+- Enforce the 1 MiB VSOCK frame limit on both sender and receiver, rejecting oversized snapshots before transmission.
 
 ### 2.1.0 - 2026-09-19
 
