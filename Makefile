@@ -8,12 +8,6 @@ VERSION ?=
 DEBIAN_REVISION ?= 1
 FUZZTIME ?= 30s
 
-MPT3_FUZZ_TARGETS := FuzzParseMPT3PCIAddress \
-	FuzzParseMPT3Model \
-	FuzzParseMPT3SASAddress \
-	FuzzParseMPT3Temperature \
-	FuzzValidateMPT3ConfigReply
-
 BASH_SCRIPTS := version.sh \
 	version_test.sh \
 	unraid-plugin/package.sh \
@@ -28,11 +22,16 @@ BASH_SCRIPTS := version.sh \
 	virt-temp/package.sh \
 	virt-temp/prepare-dkms.sh \
 	virt-temp/debian/lifecycle_test.sh \
+	virt-temp/systemd_hardening_test.sh \
 	tests/vm/build-template.sh \
 	tests/vm/common.sh \
 	tests/vm/run.sh \
 	tests/vm/guest-tests.sh \
 	tests/vm/package-tests.sh \
+	tests/vm/topology-pipeline-test.sh \
+	tests/vm/systemd-hardening-test.sh \
+	tests/vm/virt-temp-stress-test.sh \
+	tests/vm/vsock-e2e-test.sh \
 	tests/vm/sync-builder.sh
 
 POSIX_SCRIPTS := virt-temp/debian/postinst.in \
@@ -56,7 +55,7 @@ help: ## Affiche les commandes disponibles
 		$(MAKEFILE_LIST)
 
 
-.PHONY: fmt fmt-check tidy tidy-check vet test test-race fuzz-mpt3 check-scripts lint-shell check all
+.PHONY: fmt fmt-check tidy tidy-check vet test test-race fuzz-mpt3 check-scripts test-php test-shell lint-shell check all
 
 fmt: ## Formate tous les fichiers Go
 	$(GOFMT) -w .
@@ -84,11 +83,8 @@ test: ## Exécute tous les tests Go
 test-race: ## Exécute tous les tests Go avec le détecteur de courses
 	$(GO) test -race ./...
 
-fuzz-mpt3: ## Lance successivement les campagnes de fuzzing MPT3
-	@for target in $(MPT3_FUZZ_TARGETS); do \
-		echo "Fuzzing $$target for $(FUZZTIME)"; \
-		$(GO) test -run='^$$' -fuzz="^$${target}$$" -fuzztime="$(FUZZTIME)" . || exit $$?; \
-	done
+fuzz-mpt3: ## Lance la campagne de fuzzing du parser MPT3
+	$(GO) test -run='^$$' -fuzz='^FuzzParseMPT3Temperatures$$' -fuzztime="$(FUZZTIME)" .
 
 lint-shell: ## Analyse les scripts shell avec ShellCheck
 	shellcheck -x -P SCRIPTDIR $(BASH_SCRIPTS) $(POSIX_SCRIPTS)
@@ -102,22 +98,29 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	done
 	php -l unraid-plugin/UnraidVsockSensors.page >/dev/null
 	php -l unraid-plugin/UnraidVsockSensorsDiagnostics.page >/dev/null
+	php -l unraid-plugin/diagnostics_page_test.php >/dev/null
 	php -l unraid-plugin/uvss_control.php >/dev/null
 	php -l unraid-plugin/uvss_action.php >/dev/null
+
+test-shell: ## Exécute les tests des scripts shell
 	bash version_test.sh
 	bash virt-temp/debian/lifecycle_test.sh
+	bash virt-temp/systemd_hardening_test.sh
 	bash unraid-plugin/package_test.sh
 	bash unraid-plugin/update_plg_test.sh
 	bash unraid-plugin/uvss_action_test.sh
 	bash unraid-plugin/rc_test.sh
+
+test-php: ## Exécute les tests PHP
+	php unraid-plugin/diagnostics_page_test.php >/dev/null
 	php unraid-plugin/uvss_control_test.php >/dev/null
 
-check: fmt-check tidy-check vet test check-scripts lint-shell ## Vérifie le projet sans créer d'artefacts
+check: fmt-check tidy-check vet test check-scripts test-shell test-php lint-shell ## Vérifie le projet sans créer d'artefacts
 
 all: check test-race artifacts ## Vérifie, compile et crée tous les paquets
 
 
-.PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package
+.PHONY: vm-template-sync vm-template-rebuild test-vm test-vm-core test-vm-package test-vm-kernel-stress test-vm-vsock
 
 vm-template-sync: ## Synchronise le builder du template vers Proxmox
 	bash tests/vm/sync-builder.sh
@@ -133,6 +136,12 @@ test-vm-core: ## Teste le module, hwmon et SMART sous noyau PVE
 
 test-vm-package: ## Teste le cycle complet du paquet Debian et de DKMS
 	VM_TEST_SUITE=package bash tests/vm/run.sh
+
+test-vm-kernel-stress: ## Stress virt-temp (lifecycle, concurrence, unload/reload)
+	VM_TEST_SUITE=kernel-stress bash tests/vm/run.sh
+
+test-vm-vsock: ## Acceptance AF_VSOCK réelle guest KVM imbriqué vers receiver/hwmon
+	VM_TEST_SUITE=vsock-e2e bash tests/vm/run.sh
 
 
 .PHONY: build

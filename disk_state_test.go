@@ -415,8 +415,6 @@ func TestInventoryFailureBreaksStandbyWakeContinuity(t *testing.T) {
 			collector.noteEmhttpPoll()
 			collector.refresh()
 			writeAssigned(scenario.spundown, scenario.temperature)
-			if scenario.temperature == "28" {
-			}
 			collector.refresh()
 			disk := requireSingleDisk(t, collector)
 			if disk.temp != scenario.wantTemperature || disk.unavailable != scenario.wantUnavailable ||

@@ -18,11 +18,12 @@ utilisables notamment par CoolerControl, fan2go, fancontrol ou lm-sensors.
 VM Unraid                                      Hôte Proxmox
 ┌────────────────────────────┐                 ┌─────────────────────────────┐
 │ emhttpd                    │                 │ unraid-vsock-sensors hwmon  │
-│  └─ disks.ini, devs.ini    │                 │            │                │
-│ /dev/mpt3ctl ou StorCLI    │     AF_VSOCK    │ configfs + /dev/virt-temp/* │
-│            │               │                 │            │                │
-│ unraid-vsock-sensors serve ├────────────────►│            ▼                │
-└────────────────────────────┘                 │ sondes hwmon natives        │
+│  └─ disks.ini, devs.ini    │                 │       │              │      │
+│ /dev/mpt3ctl ou StorCLI    │     AF_VSOCK    │       ▼              ▼      │
+│            │               │                 │ configfs + /dev   événement │
+│ unraid-vsock-sensors serve ├────────────────►│       │           systemd   │
+└────────────────────────────┘                 │       ▼              │      │
+                                               │ sondes hwmon    abonnements │
                                                └─────────────────────────────┘
 ```
 
@@ -131,8 +132,11 @@ apt install "proxmox-headers-$(uname -r)" \
   ./unraid-vsock-sensors-hwmon_X.Y.Z-1_amd64.deb
 ```
 
-Le paquet installe le récepteur, le module DKMS `virt-temp` et le service
-`unraid-vsock-hwmon.service`.
+Le paquet installe le récepteur, le module DKMS `virt-temp`, le service
+`unraid-vsock-hwmon.service` et les unités systemd de notification de
+topologie. Il dépend de `proxmox-default-headers` pour reconstruire le module
+lors des mises à jour de noyau. La configuration existante dans
+`/etc/default/unraid-vsock-hwmon` est conservée pendant les mises à jour.
 
 ## Configuration Proxmox
 
@@ -142,7 +146,6 @@ Configuration par défaut :
 UNRAID_VSOCK_CID=3
 UNRAID_VSOCK_PORT=990
 UNRAID_VSOCK_CACHE=/var/lib/unraid-vsock-sensors/hwmon-inventory.json
-# UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service
 ```
 
 Fichier :
@@ -151,32 +154,110 @@ Fichier :
 /etc/default/unraid-vsock-hwmon
 ```
 
-Pour relancer automatiquement des consommateurs hwmon après une modification
-de topologie :
+### Abonnement aux changements de topologie
 
-```sh
-UNRAID_VSOCK_RESTART_UNITS=coolercontrold.service,fan2go.service
+Après une réconciliation complète qui modifie la topologie hwmon, le récepteur
+modifie le fichier vide suivant :
+
+```text
+/run/unraid-vsock-sensors/topology-changed
 ```
 
-Seules les unités déjà actives sont relancées.
+L'événement est également émis au premier snapshot reçu de la VM lorsqu'une
+topologie a été restaurée depuis le cache, même si aucune sonde n'est ajoutée,
+retirée ou renommée. Il reste différé tant qu'une famille nécessite encore une
+réconciliation.
 
-Après modification :
+`unraid-vsock-hwmon-topology.path` convertit cet événement en activation de
+`unraid-vsock-hwmon-topology.service`. Le récepteur ne communique pas avec
+systemd et ne connaît aucun consommateur.
+
+Le fichier d'événement ne contient ni commande ni donnée de sonde. Il est
+conservé pendant les arrêts et redémarrages du receiver afin que sa suppression
+ne soit jamais interprétée comme un changement de topologie, puis disparaît
+naturellement au redémarrage de l'hôte ou lors de la purge du paquet.
+
+Lorsqu'un service doit simplement être redémarré s'il est déjà actif, activer
+une instance du template générique. L'instance est le nom simple du service,
+sans suffixe de type. Pour un service fictif `foo.service` :
+
+```sh
+systemctl enable unraid-vsock-hwmon-restart@foo.service
+```
+
+L'instance `unraid-vsock-hwmon-restart@foo.service` exécute
+`systemctl try-restart --no-block -- foo.service` : un service inactif n'est
+pas démarré. Ce template vise les services classiques non instanciés.
+Désabonnement :
+
+```sh
+systemctl disable unraid-vsock-hwmon-restart@foo.service
+```
+
+Un logiciel peut aussi fournir sa propre unité oneshot pour effectuer un
+reload, rescan ou refresh, puis déclarer :
+
+```ini
+[Unit]
+Description=Refresh foo when the hwmon topology changes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/foo --rescan
+
+[Install]
+WantedBy=unraid-vsock-hwmon-topology.service
+```
+
+L'abonnement est toujours une décision explicite de l'administrateur ou du
+logiciel concerné. Le paquet ne détecte aucun consommateur.
+
+`UNRAID_VSOCK_RESTART_UNITS` n'est plus pris en charge. Une ligne existante dans
+`/etc/default/unraid-vsock-hwmon` est conservée mais reste sans effet : le
+récepteur ne contrôle plus les unités consommatrices. Après une mise à jour,
+activer explicitement chaque abonnement nécessaire, par exemple :
+
+```sh
+systemctl enable unraid-vsock-hwmon-restart@coolercontrold.service
+```
+
+CoolerControl n'est ici qu'un exemple, pas un consommateur géré par UVSS. Le
+template utilise `try-restart` : lors d'un événement, une unité inactive reste
+inactive.
+
+Après une modification du CID, du port ou du chemin de cache :
 
 ```sh
 systemctl restart unraid-vsock-hwmon.service
 ```
+
+Si `UNRAID_VSOCK_CACHE` désigne un répertoire extérieur au chemin par défaut,
+l'autoriser également dans un drop-in systemd :
+
+```ini
+[Service]
+ReadWritePaths=/chemin/du/cache
+```
+
+Puis exécuter `systemctl daemon-reload` et redémarrer le service.
 
 ## Vérification
 
 Sur Proxmox :
 
 ```sh
+dpkg -s unraid-vsock-sensors-hwmon
 dkms status -m virt-temp
 systemctl status unraid-vsock-hwmon.service
+systemctl status unraid-vsock-hwmon-topology.path
 journalctl -u unraid-vsock-hwmon.service -n 50 --no-pager
 find /dev/virt-temp -maxdepth 1 -type c -ls
 sensors
 ```
+
+`dpkg -s` révèle notamment un paquet `half-configured`. L'état de l'unité
+`.path` permet de diagnostiquer séparément le watcher des changements de
+topologie.
 
 Des sondes telles que celles-ci doivent apparaître :
 
@@ -185,6 +266,33 @@ unraid_disk1
 unraid_hdd_maximum
 unraid_sas3008
 ```
+
+### Récupération du paquet Proxmox
+
+Si les headers du noyau courant manquent :
+
+```sh
+apt install "proxmox-headers-$(uname -r)"
+apt --fix-broken install
+```
+
+Après une installation interrompue :
+
+```sh
+dpkg --configure -a
+apt --fix-broken install
+```
+
+Lors d'un échec de compilation pendant une mise à jour, le paquet reste à
+réparer mais l'ancienne version DKMS et ses sources sont conservées sur disque
+pour le prochain démarrage. Les fichiers userspace de l'ancien paquet ne sont
+pas restaurés. Après correction de la cause, terminer avec
+`apt --fix-broken install`.
+
+Le downgrade en place d'une version 3.x vers une version 2.x antérieure à
+l'interface configfs n'est pas supporté et peut laisser le paquet dans un état
+half-configured. Dans cet état, `apt remove` retire toutes les versions DKMS et
+leurs sources de secours, tout en conservant la configuration et le cache.
 
 ## Collecte des disques
 
@@ -338,19 +446,35 @@ configuration Unraid.
 Deux backends sont disponibles :
 
 - `mpt3ctl` : requêtes MPI CONFIG en lecture seule via `/dev/mpt3ctl` ;
-- StorCLI : température ROC issue de sa sortie JSON.
+- StorCLI : température ROC et, lorsqu'elle existe, température du contrôleur
+  issues de sa sortie JSON.
 
-Le backend natif récupère également le modèle, l'adresse SAS et l'adresse PCI
-lorsqu'elles sont disponibles.
+Un HBA peut exposer deux sondes distinctes : `IOC` et `Board`. Le backend
+`mpt3ctl` suit les unités et indicateurs de présence de la page IO Unit 7 ;
+StorCLI associe `ROC temperature` à IOC et `Ctrl temperature` (ou
+`Controller temperature`) à Board. Une sonde absente ou dont l'unité n'est pas
+supportée n'est pas créée. L'identité du contrôleur reste commune aux deux
+sondes, dont les labels indiquent explicitement le type.
 
-StorCLI redécouvre l'identité des contrôleurs après une erreur ou un changement
-de l'ensemble de leurs index. Un remplacement ou une reconfiguration à chaud
-qui conserve les mêmes index peut nécessiter un redémarrage d'UVSS pour
-redécouvrir l'identité du matériel.
+Pour les deux backends, l'identité vient de `/sys/class/scsi_host` : UVSS relie
+le contrôleur à son adresse PCI, puis lit `host_sas_address` et `board_name`
+lorsqu'ils sont exposés par le pilote. Pour `mpt3sas`, le même host sysfs fournit
+aussi le numéro IOC via `unique_id` ; `/dev/mpt3ctl` sert uniquement à lire la
+température par MPI CONFIG. `mpt3ctl` ne lit donc plus les pages Manufacturing
+du firmware ; StorCLI ne fournit plus l'identité publiée.
 
-Une collecte HBA possède un deadline de 15 secondes. Un ioctl natif pouvant
-rester bloqué au-delà de ce délai, le dernier snapshot valide expire
-indépendamment et tout résultat revenu trop tard est rejeté.
+StorCLI redécouvre l'association entre ses index et l'inventaire sysfs après une
+erreur ou un changement de l'ensemble de leurs index. Un remplacement ou une
+reconfiguration à chaud qui conserve les mêmes index peut nécessiter un
+redémarrage d'UVSS pour redécouvrir l'identité du matériel.
+
+Une collecte HBA possède un contexte avec un délai de 15 secondes, mais ce délai
+ne peut pas interrompre un appel bloqué dans le noyau. L'I/O backend reste hors
+du verrou du collector : le dernier snapshot valide demeure lisible pendant
+l'intervalle normal augmenté de ces 15 secondes, puis expire pendant que la
+publication VSOCK et les diagnostics continuent. Aucun autre appel HBA n'est
+lancé avant le retour du précédent, et tout résultat revenu trop tard est
+rejeté.
 
 ## Topologie et failsafe
 
@@ -360,7 +484,7 @@ Chaque sonde possède son propre périphérique hwmon et reste donc toujours
 L'identité stable repose sur :
 
 - l'ID Unraid pour un disque ;
-- l'adresse SAS, PCI ou le numéro de série pour un HBA.
+- l'adresse SAS exposée par sysfs, ou à défaut l'adresse PCI, pour un HBA.
 
 Les noms `hwmonX`, `/dev/sdX` et les index locaux des contrôleurs ne sont pas
 utilisés comme identité.
@@ -394,56 +518,65 @@ Sur Proxmox :
 apt install ./unraid-vsock-sensors-hwmon_X.Y.Z-N_amd64.deb
 ```
 
+Un upgrade avec un processus extérieur conservant ouvert un FD
+`/dev/virt-temp/*` n'est pas supporté : fermer ces descripteurs avant
+l'installation. S'ils empêchent le déchargement du module, fermer le FD puis
+reprendre la configuration avec `dpkg --configure -a`.
+
+Un processus extérieur qui conserve ouvert le FD d'une sonde peut empêcher le
+déchargement de `virt_temp`. La suppression échoue alors proprement et, si le
+service était actif, tente de le relancer pour restaurer la topologie depuis le
+cache ; l'ancien FD retourne néanmoins `ENODEV`. Fermer le FD puis relancer la
+suppression. Le paquet ne tue pas le processus extérieur.
+
 Conserver la configuration :
 
 ```sh
 apt remove unraid-vsock-sensors-hwmon
 ```
 
-Tout supprimer :
+Les abonnements créés avec le template
+`unraid-vsock-hwmon-restart@.service` appartiennent à l'administrateur et sont
+conservés. Les désactiver explicitement avant la désinstallation s'ils ne sont
+plus nécessaires.
+
+Purger la configuration et le cache :
 
 ```sh
 apt purge unraid-vsock-sensors-hwmon
 ```
 
+La purge supprime la configuration et le cache. Elle ne retire spécialement ni
+les abonnements au template UVSS, ni les unités tierces directement abonnées au
+dispatcher de topologie : ces abonnements explicites restent sous la
+responsabilité de l'administrateur.
+
 ## Développement
 
-Prérequis :
-
-- Go 1.27.0 ou plus récent ;
-- ShellCheck.
-
-Commandes principales :
-
-```sh
-make check
-make test-race
-make fuzz-mpt3
-make artifacts
-make test-vm
-```
-
-Les tests d'intégration Proxmox sont documentés dans
-[`tests/vm/README.md`](tests/vm/README.md).
-
-Pour préparer une release :
-
-```sh
-make release VERSION=X.Y.Z
-```
-
-Cette commande exécute les vérifications, les tests VM, construit les artefacts
-et actualise le `.plg`. Elle ne crée ni commit, ni tag et ne pousse rien.
-
-Publier d'abord le tag et les assets GitHub, vérifier leurs URLs, puis seulement
-pousser le nouveau `main` contenant le `.plg`.
+Les prérequis, commandes de validation, constructions et procédures de release
+sont documentés dans [`CONTRIBUTING.md`](CONTRIBUTING.md). L'intégration Proxmox
+est détaillée dans [`tests/vm/README.md`](tests/vm/README.md).
 
 ## Sécurité
 
 AF_VSOCK n'est pas un mécanisme général d'authentification.
 
 L'agent se connecte au CID hôte standard `2`. Le récepteur n'accepte que le CID
-configuré, vérifie la version du protocole et limite chaque snapshot à 1 Mio.
+configuré, vérifie la version du protocole et limite chaque snapshot à 1 Mio,
+retour à la ligne final compris. L'émetteur applique la même limite avant
+toute écriture et signale une erreur si le snapshot est trop volumineux.
+
+Le receiver reste lancé en `root` pour administrer configfs et écrire dans les
+miscdevices, mais son processus principal ne conserve que
+`CAP_NET_BIND_SERVICE`, nécessaire au port privilégié `990`. L'unité restreint
+les sockets à `AF_VSOCK`, interdit l'accès D-Bus et systemd, masque les
+répertoires personnels et rend le système de fichiers non modifiable hors de
+son `StateDirectory`, de son `RuntimeDirectory` et des interfaces `virt_temp`.
+Le `modprobe` exécuté avant le daemon reste explicitement privilégié.
+
+Les abonnements de topologie restent créés par root. Un receiver compromis peut
+déclencher répétitivement les abonnés déjà autorisés, mais ne peut ni les
+choisir ni en créer de nouveaux.
 
 ## Licence
 

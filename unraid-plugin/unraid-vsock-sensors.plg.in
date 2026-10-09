@@ -21,13 +21,18 @@ Pushes disk temperatures from Unraid's disks.ini and devs.ini, and HBA
 temperatures over AF_VSOCK to Proxmox as native hwmon sensors.
 </DESCRIPTION>
 <CHANGES>
-### 3.0.0 - 2026-09-21
+### 3.0.0
 
-- Replace the shared /dev/virt-temp text protocol with a configfs topology and one write-only /dev/virt-temp/&lt;hex ID&gt; device per sensor.
-- Reconcile disk and HBA sensors incrementally so unchanged devices keep stable hwmon identities, while module reloads and partial updates are recovered from the last valid topology.
-- Validate complete families before changing the kernel topology, cap each family at 1,024 sensors, reject empty IDs and preserve the previous topology after invalid snapshots or reconciliation failures.
-- Initialize temperatures before exposing new hwmon sensors, preserve stale failsafe behavior for unavailable readings and sanitize fallback labels.
-- Update DKMS and systemd lifecycle handling, documentation and VM coverage for configfs, per-sensor devices, reload recovery and removal with open device descriptors.
+- BREAKING: Replace the legacy virt-temp control interface with per-sensor configfs topology and write-only miscdevice endpoints.
+- Reconcile Proxmox hwmon topology incrementally, preserve the last valid topology across partial failures, and restore cached sensors at the failsafe temperature until the Unraid VM reconnects.
+- BREAKING: Decouple topology notifications from consumers. UNRAID_VSOCK_RESTART_UNITS is no longer supported; explicitly enable unraid-vsock-hwmon-restart@SERVICE.service for each consumer that should be restarted.
+- Harden the Proxmox receiver service with systemd confinement restricted to AF_VSOCK.
+- Preserve the last working DKMS module across failed upgrades and make package rollback and removal recoverable.
+- BREAKING: In-place downgrades from 3.x to a pre-configfs 2.x package are not supported.
+- Discover stable HBA identities and PCI associations from /sys/class/scsi_host for both MPT3 and StorCLI, and keep snapshot publication responsive while a blocked HBA collection expires independently.
+- Read native MPT3 temperatures through the IOC number exposed by mpt3sas, size IO Unit Page 7 from the firmware response, and accept additive page extensions.
+- Expose IOC and Board temperatures as independent hwmon sensors and Diagnostics values while retaining the legacy single-temperature protocol field for compatibility.
+- Make disk-policy writes and resets durable across abrupt power loss.
 
 ### 2.1.0 - 2026-09-19
 

@@ -211,3 +211,68 @@ func TestSnapshotQueueKeepsOnlyFreshestReading(t *testing.T) {
 		t.Fatal("snapshot was accepted at its expiration deadline")
 	}
 }
+
+// TestReceiveSnapshotsRecoversAfterInvalidFrame locks the contract that an
+// invalid frame from an authorized peer (wrong CID is a different case) does
+// not terminate receiveSnapshots: the connection is closed, the accept loop
+// continues, and a subsequent valid connection is accepted and its snapshot
+// published. It detects a global `return err` in the read-error path that
+// would stop the whole receiver instead of just closing the connection.
+func TestReceiveSnapshotsRecoversAfterInvalidFrame(t *testing.T) {
+	const expectedCID = 3
+
+	badServer, badClient := net.Pipe()
+	goodServer, goodClient := net.Pipe()
+	listener := newSnapshotTestListener(
+		&snapshotPeerConn{Conn: badServer, cid: expectedCID},
+		&snapshotPeerConn{Conn: goodServer, cid: expectedCID},
+	)
+	defer listener.Close()
+	defer badClient.Close()
+	defer goodClient.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan receivedSnapshot)
+	done := make(chan error, 1)
+	go func() { done <- receiveSnapshots(ctx, listener, expectedCID, out) }()
+
+	// The first (bad) connection is accepted.
+	waitForSnapshotAccept(t, listener)
+
+	// Send the invalid frame.
+	if _, err := badClient.Write([]byte("{invalid-json}\n")); err != nil {
+		t.Fatalf("sending invalid frame: %v", err)
+	}
+
+	// The bad connection must be closed by the receiver.
+	assertSnapshotConnectionClosed(t, badClient, time.Second)
+
+	// The receiver must continue accepting: the second (good)
+	// connection is accepted.
+	waitForSnapshotAccept(t, listener)
+
+	// The good connection sends a valid frame.
+	want := sensors.Response{
+		Protocol: sensors.ProtocolVersion,
+		Disks:    []sensors.Disk{},
+		HBAs:     []sensors.HBA{},
+	}
+	if err := sensors.WriteFrame(goodClient, want); err != nil {
+		t.Fatal(err)
+	}
+
+	// The snapshot must be published.
+	select {
+	case got := <-out:
+		if got.response.Protocol != want.Protocol {
+			t.Fatalf("received protocol = %d, want %d", got.response.Protocol, want.Protocol)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("valid connection after invalid frame did not publish its snapshot")
+	}
+
+	cancel()
+	_ = goodClient.Close()
+	waitForSnapshotReceiver(t, done)
+}

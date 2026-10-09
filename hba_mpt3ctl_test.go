@@ -7,46 +7,91 @@ import (
 	"math"
 	"slices"
 	"testing"
+	"unsafe"
 )
 
+// mpt3ReferenceRequestPageHeader is the literal 28-byte MPI CONFIG PAGE_HEADER
+// request for IO Unit Page 7, transcribed from the MPI2 header layout (mpi2_cnfg.h)
+// and the in-kernel mpt3sas CONFIG helpers: byte 0 carries the action, byte 3 the
+// MPI function, and bytes 20-23 the PageVersion, reserved, PageNumber and
+// PageType. It is an independent reference vector that does not reuse
+// mpt3ConfigRequest, so a corruption of that helper is detected here.
+var mpt3ReferenceRequestPageHeader = [28]byte{
+	0:  0x00, // Action = PAGE_HEADER
+	3:  0x04, // MPI Function = MPI2_FUNCTION_CONFIG
+	20: 0x05, // PageVersion
+	21: 0x00, // reserved
+	22: 0x07, // PageNumber
+	23: 0x00, // PageType = IO Unit
+}
+
+// mpt3ReferenceRequestPageReadCurrent is the literal 28-byte MPI CONFIG
+// PAGE_READ_CURRENT request built from the firmware-returned header
+// {PageVersion 0x05, PageLength 0x04, PageNumber 0x07, PageType 0x00}. Like the
+// header request it is an independent reference vector.
+var mpt3ReferenceRequestPageReadCurrent = [28]byte{
+	0:  0x01, // Action = PAGE_READ_CURRENT
+	3:  0x04, // MPI Function = MPI2_FUNCTION_CONFIG
+	20: 0x05, // PageVersion
+	21: 0x04, // PageLength (in dwords)
+	22: 0x07, // PageNumber
+	23: 0x00, // PageType = IO Unit
+}
+
+func TestMPT3ConfigRequestVectors(t *testing.T) {
+	t.Run("PAGE_HEADER uses literal ABI vector", func(t *testing.T) {
+		got := mpt3ConfigRequest(0x00, 0x00, 7, 0x05, nil)
+		if !slices.Equal(got[:], mpt3ReferenceRequestPageHeader[:]) {
+			t.Fatalf("PAGE_HEADER request = %x, want %x", got, mpt3ReferenceRequestPageHeader)
+		}
+	})
+	t.Run("PAGE_READ_CURRENT uses literal ABI vector", func(t *testing.T) {
+		header := []byte{0x05, 0x04, 0x07, 0x00}
+		got := mpt3ConfigRequest(0x01, 0x00, 7, 0x05, header)
+		if !slices.Equal(got[:], mpt3ReferenceRequestPageReadCurrent[:]) {
+			t.Fatalf("PAGE_READ_CURRENT request = %x, want %x", got, mpt3ReferenceRequestPageReadCurrent)
+		}
+	})
+}
+
+// TestMPT3CommandIOCTL locks the numeric value of the MPT3COMMAND ioctl request
+// word (0xc0484c14) against the literal Linux mpt3sas ABI.
+func TestMPT3CommandIOCTL(t *testing.T) {
+	if got := mpt3CommandIOCTL; got != uintptr(0xc0484c14) {
+		t.Fatalf("mpt3CommandIOCTL = %#x, want 0xc0484c14", got)
+	}
+}
+
+// TestMPT3CommandABI locks UVSS's Linux/amd64 userspace transcription of
+// mpt3_ioctl_command. The expected 96-byte buffer is assembled from the literal
+// request vectors in TestMPT3ConfigRequestVectors, not from mpt3ConfigRequest,
+// so the two helpers cannot mask each other's corruption.
 func TestMPT3CommandABI(t *testing.T) {
-	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, nil)
-	got := makeMPT3Command(3, request, 256, 0x11223344, 0x55667788)
+	reply, data := new(byte), new(byte)
+	replyPointer, dataPointer := unsafe.Pointer(reply), unsafe.Pointer(data)
+	got := makeMPT3Command(3, mpt3ReferenceRequestPageReadCurrent, 256, replyPointer, dataPointer)
 	var want [96]byte
 	binary.LittleEndian.PutUint32(want[0:4], 3)
-	binary.LittleEndian.PutUint32(want[8:12], 256)
-	binary.LittleEndian.PutUint32(want[12:16], mpt3FirmwareTimeout)
-	binary.LittleEndian.PutUint64(want[16:24], 0x11223344)
-	binary.LittleEndian.PutUint64(want[24:32], 0x55667788)
-	binary.LittleEndian.PutUint32(want[48:52], mpt3ReplyBufferSize)
+	binary.LittleEndian.PutUint32(want[12:16], 10)
+	binary.LittleEndian.PutUint64(want[16:24], uint64(uintptr(replyPointer)))
+	binary.LittleEndian.PutUint64(want[24:32], uint64(uintptr(dataPointer)))
+	binary.LittleEndian.PutUint32(want[48:52], 128)
 	binary.LittleEndian.PutUint32(want[52:56], 256)
 	binary.LittleEndian.PutUint32(want[64:68], 7)
-	copy(want[68:96], request[:])
+	copy(want[68:96], mpt3ReferenceRequestPageReadCurrent[:])
 	if !slices.Equal(got[:], want[:]) {
 		t.Fatalf("command buffer = %x, want %x", got, want)
 	}
 }
 
 func TestMPT3ConfigRequestPageHeader(t *testing.T) {
-	for _, test := range []struct {
-		name                              string
-		pageType, pageNumber, pageVersion byte
-		want                              []byte
-	}{
-		{"Manufacturing 0", mpi2PageTypeManufacturing, 0, mpi2Manufacturing0Version, []byte{0x00, 0, 0, 0x09}},
-		{"Manufacturing 5", mpi2PageTypeManufacturing, 5, mpi2Manufacturing5Version, []byte{0x03, 0, 5, 0x09}},
-		{"IO Unit 7", mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, []byte{0x05, 0, 7, 0x00}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			request := mpt3ConfigRequest(mpi2ConfigPageHeader, test.pageType, test.pageNumber, test.pageVersion, nil)
-			if got := request[20:24]; !slices.Equal(got, test.want) {
-				t.Fatalf("CONFIG page header = %x, want %x", got, test.want)
-			}
-		})
+	request := mpt3ConfigRequest(mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, nil)
+	if got := request[20]; got != 0x05 {
+		t.Fatalf("IO Unit Page 7 request version = %#02x, want 0x05", got)
 	}
 
-	returnedHeader := []byte{0x04, 0x08, 7, mpi2PageTypeIOUnit}
-	request := mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, returnedHeader)
+	returnedHeader := []byte{0x06, 0xff, 0x07, 0x00}
+	request = mpt3ConfigRequest(mpi2ConfigPageReadCurrent, mpi2PageTypeIOUnit, 7, mpi2IOUnit7Version, returnedHeader)
 	if got := request[20:24]; !slices.Equal(got, returnedHeader) {
 		t.Fatalf("CONFIG read header = %x, want returned header %x", got, returnedHeader)
 	}
@@ -56,7 +101,7 @@ func TestMPT3ParsersRejectUndersizedBuffers(t *testing.T) {
 	if err := validateMPT3ConfigReply(make([]byte, 0x17), mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7); err == nil {
 		t.Fatal("undersized CONFIG reply accepted")
 	}
-	if _, err := parseMPT3Temperature(make([]byte, 0x12)); err == nil {
+	if _, err := parseMPT3Temperatures(make([]byte, 0x16)); err == nil {
 		t.Fatal("undersized IO Unit Page 7 accepted")
 	}
 }
@@ -64,11 +109,11 @@ func TestMPT3ParsersRejectUndersizedBuffers(t *testing.T) {
 func TestValidateMPT3ConfigReply(t *testing.T) {
 	validReply := func() []byte {
 		reply := make([]byte, 128)
-		reply[0x00] = mpi2ConfigPageHeader
-		reply[0x02] = mpi2ConfigReplyDWords
-		reply[0x03] = mpi2FunctionConfig
+		reply[0x00] = 0x00
+		reply[0x02] = 0x06
+		reply[0x03] = 0x04
 		reply[0x16] = 7
-		reply[0x17] = mpi2PageTypeIOUnit
+		reply[0x17] = 0x00
 		return reply
 	}
 	if err := validateMPT3ConfigReply(validReply(), mpi2ConfigPageHeader, mpi2PageTypeIOUnit, 7); err != nil {
@@ -77,14 +122,15 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 
 	for name, mutate := range map[string]func([]byte){
 		"zero length":      func(reply []byte) { reply[0x02] = 0 },
+		"short length":     func(reply []byte) { reply[0x02] = 0x06 - 1 },
 		"oversized length": func(reply []byte) { reply[0x02] = 33 },
 		"wrong function":   func(reply []byte) { reply[0x03] = 0xff },
-		"wrong action":     func(reply []byte) { reply[0x00] = mpi2ConfigPageReadCurrent },
+		"wrong action":     func(reply []byte) { reply[0x00] = 0x01 },
 		"failed status": func(reply []byte) {
 			binary.LittleEndian.PutUint16(reply[0x0e:0x10], 0x0002)
 			binary.LittleEndian.PutUint32(reply[0x10:0x14], 0x12345678)
 		},
-		"wrong page type":   func(reply []byte) { reply[0x17] = mpi2PageTypeManufacturing },
+		"wrong page type":   func(reply []byte) { reply[0x17] = 0x09 },
 		"wrong page number": func(reply []byte) { reply[0x16] = 6 },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -97,123 +143,125 @@ func TestValidateMPT3ConfigReply(t *testing.T) {
 	}
 }
 
-func TestParseMPT3Inventory(t *testing.T) {
-	info := make([]byte, 92)
-	binary.LittleEndian.PutUint32(info[84:88], 6<<8|16)
-	if got, want := parseMPT3PCIAddress(info), "0000:06:10.0"; got != want {
-		t.Fatalf("PCI = %q, want %q", got, want)
-	}
-	page0 := make([]byte, 0x4c)
-	copy(page0[0x1c:0x2c], "INSPUR 3008IT  ")
-	if got := parseMPT3Model(page0); got != "INSPUR 3008IT" {
-		t.Fatalf("model = %q", got)
-	}
-	copy(page0[0x04:0x14], "LSISAS3008")
-	for i := 0x1c; i < 0x2c; i++ {
-		page0[i] = 0
-	}
-	if got := parseMPT3Model(page0); got != "LSISAS3008" {
-		t.Fatalf("chip fallback model = %q", got)
-	}
-	page5 := make([]byte, 0x20)
-	page5[4] = 1
-	binary.LittleEndian.PutUint64(page5[0x10:0x18], 0x56c92bf0002e6705)
-	if got := parseMPT3SASAddress(page5); got != "56c92bf0002e6705" {
-		t.Fatalf("SAS address = %q", got)
-	}
-}
-
-func TestMPT3ReaderKeepsSASIdentityAfterTransientPageFailure(t *testing.T) {
-	reader := newMPT3Reader()
-	const pci = "0000:06:10.0"
-	if got, want := reader.stableID(pci, "56c92bf0002e6705", false), "sas:56c92bf0002e6705"; got != want {
-		t.Fatalf("initial ID = %q, want %q", got, want)
-	}
-	if got, want := reader.stableID(pci, "", true), "sas:56c92bf0002e6705"; got != want {
-		t.Fatalf("ID after Page 5 failure = %q, want %q", got, want)
-	}
-}
-
-func TestMPT3ReaderDropsSASIdentityAfterPCIDisappears(t *testing.T) {
-	reader := newMPT3Reader()
-	pci := "0000:06:10.0"
-
-	if got, want := reader.stableID(pci, "56c92bf0002e6705", false), "sas:56c92bf0002e6705"; got != want {
-		t.Fatalf("initial ID = %q, want %q", got, want)
-	}
-	reader.retainSASAddressesFor(map[string]struct{}{})
-
-	if got, want := reader.stableID(pci, "", true), "pci:0000:06:10.0"; got != want {
-		t.Fatalf("ID after PCI disappearance = %q, want %q", got, want)
-	}
-	if got, want := reader.stableID(pci, "500605b00abc1234", false), "sas:500605b00abc1234"; got != want {
-		t.Fatalf("replacement ID = %q, want %q", got, want)
-	}
-	if got, want := reader.stableID(pci, "", true), "sas:500605b00abc1234"; got != want {
-		t.Fatalf("replacement cached ID = %q, want %q", got, want)
-	}
-}
-
-func TestMPT3ReaderKeepsSASIdentityForPresentPCI(t *testing.T) {
-	reader := newMPT3Reader()
-	pci := "0000:06:10.0"
-
-	reader.stableID(pci, "56c92bf0002e6705", false)
-	reader.retainSASAddressesFor(map[string]struct{}{pci: {}})
-
-	if got, want := reader.stableID(pci, "", true), "sas:56c92bf0002e6705"; got != want {
-		t.Fatalf("ID after complete scan = %q, want %q", got, want)
-	}
-}
-
-func TestMPT3ReaderUsesPCIUntilSASIdentityIsKnown(t *testing.T) {
-	reader := newMPT3Reader()
-	if got, want := reader.stableID("0000:06:10.0", "", true), "pci:0000:06:10.0"; got != want {
-		t.Fatalf("ID = %q, want %q", got, want)
-	}
-}
-
-func TestMPT3ReaderDoesNotReuseCacheForValidPageWithoutSASAddress(t *testing.T) {
-	reader := newMPT3Reader()
-	const pci = "0000:06:10.0"
-	reader.stableID(pci, "56c92bf0002e6705", false)
-	if got, want := reader.stableID(pci, "", false), "pci:0000:06:10.0"; got != want {
-		t.Fatalf("ID = %q, want %q", got, want)
-	}
-}
-
-func TestParseMPT3Temperature(t *testing.T) {
-	for name, test := range map[string]struct {
-		raw     int16
-		units   byte
-		want    float64
-		invalid bool
+func TestParseMPT3Temperatures(t *testing.T) {
+	tests := []struct {
+		name       string
+		iocRaw     int16
+		iocUnits   byte
+		boardRaw   int16
+		boardUnits byte
+		wantIOC    *float64
+		wantBoard  *float64
 	}{
-		"Celsius":         {raw: 42, units: temperatureCelsius, want: 42},
-		"Celsius -1":      {raw: -1, units: temperatureCelsius, want: -1},
-		"Celsius -40":     {raw: -40, units: temperatureCelsius, want: -40},
-		"Celsius 151":     {raw: 151, units: temperatureCelsius, want: 151},
-		"Celsius 200":     {raw: 200, units: temperatureCelsius, want: 200},
-		"Celsius maximum": {raw: math.MaxInt16, units: temperatureCelsius, want: math.MaxInt16},
-		"Fahrenheit 32":   {raw: 32, units: temperatureFahrenheit, want: 0},
-		"Fahrenheit -40":  {raw: -40, units: temperatureFahrenheit, want: -40},
-		"Fahrenheit 104":  {raw: 104, units: temperatureFahrenheit, want: 40},
-		"Fahrenheit 212":  {raw: 212, units: temperatureFahrenheit, want: 100},
-		"Fahrenheit high": {raw: 1000, units: temperatureFahrenheit, want: 537.7777777777778},
-		"not present":     {units: temperatureNotPresent, invalid: true},
-		"unknown units":   {raw: 51, units: 3, invalid: true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			page := make([]byte, 0x17)
-			binary.LittleEndian.PutUint16(page[0x10:0x12], uint16(test.raw))
-			page[0x12] = test.units
-			got, err := parseMPT3Temperature(page)
-			if test.invalid && err == nil {
-				t.Fatalf("got %v, expected error", got)
+		{name: "IOC only", iocRaw: 42, iocUnits: 0x02, boardUnits: 0x00, wantIOC: float64Pointer(42)},
+		{name: "board only", iocUnits: 0x00, boardRaw: 43, boardUnits: 0x02, wantBoard: float64Pointer(43)},
+		{name: "IOC and board", iocRaw: 42, iocUnits: 0x02, boardRaw: 43, boardUnits: 0x02, wantIOC: float64Pointer(42), wantBoard: float64Pointer(43)},
+		{name: "no probes", iocUnits: 0x00, boardUnits: 0x00},
+		{name: "unknown IOC unit", iocRaw: 51, iocUnits: 0xff, boardRaw: 43, boardUnits: 0x02, wantBoard: float64Pointer(43)},
+		{name: "unknown board unit", iocRaw: 42, iocUnits: 0x02, boardRaw: 51, boardUnits: 0xff, wantIOC: float64Pointer(42)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			page := mpt3TemperaturePage(test.iocRaw, test.iocUnits, test.boardRaw, test.boardUnits)
+			got, err := parseMPT3Temperatures(page)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if !test.invalid && (err != nil || math.Abs(got-test.want) > 1e-12) {
-				t.Fatalf("got %v, %v; want %v", got, err, test.want)
+			if !equalOptionalTemperature(got.ioc, test.wantIOC) || !equalOptionalTemperature(got.board, test.wantBoard) {
+				t.Fatalf("temperatures = IOC %v, board %v; want IOC %v, board %v", got.ioc, got.board, test.wantIOC, test.wantBoard)
 			}
 		})
 	}
+}
+
+// Use literal firmware bytes at the MPI IO Unit Page 7 offsets. The real
+// ioctl boundary remains outside this test; this exercises the parser and
+// the reading construction shared with the MPT3 collector.
+func TestMPT3TemperatureAvailabilityTransitionsCurrentBehavior(t *testing.T) {
+	metadata := hbaMetadata{id: "sas:0000000000000001", model: "SAS3008"}
+	for _, phase := range []struct {
+		name      string
+		page      []byte
+		available bool
+		wantIOC   float64
+		wantBoard float64
+	}{
+		{name: "valid", page: []byte{0x10: 51, 0x12: 2, 0x14: 43, 0x16: 2}, available: true, wantIOC: 51, wantBoard: 43},
+		{name: "unsupported units", page: []byte{0x10: 51, 0x12: 0xff, 0x14: 43, 0x16: 0xff}},
+		{name: "probes absent", page: []byte{0x10: 51, 0x12: 0, 0x14: 43, 0x16: 0}},
+		{name: "recover", page: []byte{0x10: 57, 0x12: 2, 0x14: 45, 0x16: 2}, available: true, wantIOC: 57, wantBoard: 45},
+	} {
+		t.Run(phase.name, func(t *testing.T) {
+			temperatures, err := parseMPT3Temperatures(phase.page)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reading, available := makeHBAReading(metadata, temperatures)
+			// Current behavior omits a present controller with no usable probe;
+			// this documents the risk instead of endorsing deletion as failsafe.
+			if available != phase.available {
+				t.Fatalf("reading availability = %t; want %t", available, phase.available)
+			}
+			if available && (reading.ID != "sas:0000000000000001" || reading.Temp != phase.wantIOC ||
+				reading.IOCTemp == nil || *reading.IOCTemp != phase.wantIOC || reading.BoardTemp == nil || *reading.BoardTemp != phase.wantBoard) {
+				t.Fatalf("reading = %#v; want IOC %v Board %v", reading, phase.wantIOC, phase.wantBoard)
+			}
+		})
+	}
+}
+
+func TestParseMPT3TemperaturesIgnoresAdditiveExtensions(t *testing.T) {
+	page := mpt3TemperaturePage(42, 0x02, 113, 0x01)
+	page = append(page, make([]byte, 997)...)
+	got, err := parseMPT3Temperatures(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalOptionalTemperature(got.ioc, float64Pointer(42)) || !equalOptionalTemperature(got.board, float64Pointer(45)) {
+		t.Fatalf("temperatures = IOC %v, board %v; want IOC 42, board 45", got.ioc, got.board)
+	}
+}
+
+func TestDecodeMPT3Temperature(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   int16
+		units byte
+		want  *float64
+	}{
+		{name: "Celsius", raw: 42, units: 0x02, want: float64Pointer(42)},
+		{name: "negative Celsius", raw: -40, units: 0x02, want: float64Pointer(-40)},
+		{name: "high Celsius", raw: math.MaxInt16, units: 0x02, want: float64Pointer(math.MaxInt16)},
+		{name: "freezing Fahrenheit", raw: 32, units: 0x01, want: float64Pointer(0)},
+		{name: "negative Fahrenheit", raw: -40, units: 0x01, want: float64Pointer(-40)},
+		{name: "high Fahrenheit", raw: 1000, units: 0x01, want: float64Pointer(537.7777777777778)},
+		{name: "not present", units: 0x00},
+		{name: "unknown units", raw: 51, units: 3},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := make([]byte, 2)
+			binary.LittleEndian.PutUint16(raw, uint16(test.raw))
+			got := decodeMPT3Temperature(raw, test.units)
+			if !equalOptionalTemperature(got, test.want) {
+				t.Fatalf("temperature = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func mpt3TemperaturePage(iocRaw int16, iocUnits byte, boardRaw int16, boardUnits byte) []byte {
+	page := make([]byte, 0x17)
+	binary.LittleEndian.PutUint16(page[0x10:0x12], uint16(iocRaw))
+	page[0x12] = iocUnits
+	binary.LittleEndian.PutUint16(page[0x14:0x16], uint16(boardRaw))
+	page[0x16] = boardUnits
+	return page
+}
+
+func equalOptionalTemperature(got, want *float64) bool {
+	if got == nil || want == nil {
+		return got == nil && want == nil
+	}
+	return math.Abs(*got-*want) <= 1e-12
 }

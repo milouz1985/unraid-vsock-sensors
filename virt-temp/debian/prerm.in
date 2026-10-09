@@ -4,6 +4,7 @@ set -e
 module="virt-temp"
 version="@VERSION@"
 service="unraid-vsock-hwmon.service"
+topology_path="unraid-vsock-hwmon-topology.path"
 saved_sources="/var/lib/unraid-vsock-sensors/dkms-sources"
 
 clear_virt_temp_config() {
@@ -39,6 +40,7 @@ case "$1" in
         if systemctl is-active --quiet "$service"; then
             was_active=1
         fi
+        systemctl stop "$topology_path" 2>/dev/null || true
         systemctl stop "$service" 2>/dev/null || true
         if grep -q '^virt_temp ' /proc/modules; then
             clear_virt_temp_config

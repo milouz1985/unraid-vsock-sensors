@@ -41,6 +41,26 @@ func TestMakeHWMonSamples(t *testing.T) {
 	}
 }
 
+func TestMakeHWMonSamplesCreatesSeparateHBAProbes(t *testing.T) {
+	state := sensors.Response{HBAs: []sensors.HBA{{
+		ID:         "sas:1234",
+		Model:      "SAS3008",
+		PCIAddress: "0000:06:10.0",
+		Temp:       51,
+		IOCTemp:    float64Pointer(51),
+		BoardTemp:  float64Pointer(47),
+	}}}
+
+	_, got := makeHWMonSamples(state)
+	want := []hwmonSample{
+		hwmonTestSample("hba:sas:1234", "SAS3008 IOC (0000:06:10.0)", 51),
+		hwmonTestSample("hba:board:sas:1234", "SAS3008 Board (0000:06:10.0)", 47),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("HBA readings = %#v, want %#v", got, want)
+	}
+}
+
 func TestMakeHWMonSamplesFailsSafeUnavailableDiskAndItsGroup(t *testing.T) {
 	state := sensors.Response{Disks: []sensors.Disk{
 		{ID: "1", Name: "disk1", Device: "sda", Rotational: true, Temp: 35},
@@ -87,18 +107,17 @@ func TestUpdateHWMonFamilySkipsUnavailableSensors(t *testing.T) {
 	if err := updateHWMonFamily(deviceRoot, readings, values); err != nil {
 		t.Fatal(err)
 	}
-	for _, reading := range readings {
-		path := hwmonTemperatureDevicePath(deviceRoot, reading.sensor.id)
-		data, err := os.ReadFile(path)
+	for id, want := range map[string]string{
+		"disk:1": "35000", "disk:2": "unchanged",
+		"disk:3": "46000", "disk:group:hdd": "unchanged",
+	} {
+		data, err := os.ReadFile(hwmonTemperatureDevicePath(deviceRoot, id))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if reading.skipRefresh {
-			if !strings.HasPrefix(string(data), "unchanged") {
-				t.Fatalf("%s was refreshed despite skipRefresh: %q", reading.sensor.id, data)
-			}
-		} else if strings.HasPrefix(string(data), "unchanged") {
-			t.Fatalf("%s was not refreshed", reading.sensor.id)
+		// Regular-file fixtures retain a suffix after a shorter device write.
+		if got := strings.SplitN(string(data), "\n", 2)[0]; got != want {
+			t.Fatalf("%s temperature = %q, want %q", id, got, want)
 		}
 	}
 }
@@ -188,8 +207,17 @@ func TestPublishHWMonFamilyPreservesLastValidInventoryAfterReconciliationFailure
 	if !reflect.DeepEqual(inventory.sensors, lastValid) {
 		t.Fatalf("inventory after failed reconciliation = %#v, want last valid %#v", inventory.sensors, lastValid)
 	}
-	if !inventory.needsReconcile {
-		t.Fatal("failed reconciliation did not mark the kernel state for retry")
+	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", current)
+	reconfigured, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reconfigured {
+		t.Fatal("publish after partial reconciliation failure did not report a reconfiguration")
+	}
+	wantSensors := []hwmonSensor{{id: "disk:new", label: "New disk"}}
+	if !reflect.DeepEqual(inventory.sensors, wantSensors) {
+		t.Fatalf("inventory after successful retry = %#v, want %#v", inventory.sensors, wantSensors)
 	}
 }
 
@@ -200,7 +228,8 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconciliationFailure(t *testing.T) 
 		t.Fatal(err)
 	}
 	current := []hwmonSample{hwmonTestSample("disk:serial", "disk1", 35)}
-	inventory := hwmonInventory{sensors: sensorsFromSamples(current)}
+	wantSensors := []hwmonSensor{{id: "disk:serial", label: "disk1"}}
+	inventory := hwmonInventory{sensors: wantSensors}
 
 	_, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &inventory, current)
 	if err == nil {
@@ -209,11 +238,8 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconciliationFailure(t *testing.T) 
 	if !strings.Contains(err.Error(), "reconcile stale disk inventory:") {
 		t.Fatalf("stale reconciliation error = %q", err)
 	}
-	if !reflect.DeepEqual(inventory.sensors, sensorsFromSamples(current)) {
-		t.Fatalf("inventory after failed stale reconciliation = %#v, want last valid %#v", inventory.sensors, sensorsFromSamples(current))
-	}
-	if !inventory.needsReconcile {
-		t.Fatal("failed stale reconciliation did not mark the kernel state for retry")
+	if !reflect.DeepEqual(inventory.sensors, wantSensors) {
+		t.Fatalf("inventory after failed stale reconciliation = %#v, want last valid %#v", inventory.sensors, wantSensors)
 	}
 
 	prepareFakeHWMonKernel(t, configRoot, deviceRoot, "disk", current)
@@ -224,19 +250,14 @@ func TestPublishHWMonFamilyRetriesAfterStaleReconciliationFailure(t *testing.T) 
 	if !reconfigured {
 		t.Fatal("publish after failed stale reconciliation did not retry reconciliation")
 	}
-	if !reflect.DeepEqual(inventory.sensors, sensorsFromSamples(current)) {
-		t.Fatalf("inventory after successful retry = %#v, want %#v", inventory.sensors, sensorsFromSamples(current))
-	}
-	if inventory.needsReconcile {
-		t.Fatal("successful retry left the kernel state marked for reconciliation")
+	if !reflect.DeepEqual(inventory.sensors, wantSensors) {
+		t.Fatalf("inventory after successful retry = %#v, want %#v", inventory.sensors, wantSensors)
 	}
 }
 
 func TestValidateHWMonSamplesIDSizeBoundary(t *testing.T) {
-	maximumID := "disk:" + strings.Repeat("a", maxHWMonIDSize-len("disk:"))
-	if got := len(maximumID); got != maxHWMonIDSize {
-		t.Fatalf("maximum disk hwmon ID is %d bytes, want %d", got, maxHWMonIDSize)
-	}
+	// The kernel ABI allows 84 bytes including the namespace.
+	maximumID := "disk:" + strings.Repeat("a", 79)
 	if _, err := validateHWMonSamples("disk", []hwmonSample{
 		hwmonTestSample(maximumID, "Maximum ID", 30),
 	}); err != nil {
@@ -245,7 +266,7 @@ func TestValidateHWMonSamplesIDSizeBoundary(t *testing.T) {
 	if _, err := validateHWMonSamples("disk", []hwmonSample{
 		hwmonTestSample(maximumID+"X", "Oversized ID", 30),
 	}); err == nil {
-		t.Fatal("ID larger than maxHWMonIDSize accepted")
+		t.Fatal("ID larger than the 84-byte kernel ABI accepted")
 	}
 }
 

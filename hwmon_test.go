@@ -3,44 +3,15 @@
 package main
 
 import (
-	"reflect"
-	"strings"
+	"encoding/binary"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
-func TestParseRestartUnits(t *testing.T) {
-	units, err := parseRestartUnits("coolercontrold.service, fan2go.service,coolercontrold.service")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"coolercontrold.service", "fan2go.service"}; !reflect.DeepEqual(units, want) {
-		t.Fatalf("units = %#v, want %#v", units, want)
-	}
-	for _, value := range []string{
-		"--no-block",
-		"coolercontrold*",
-		"fan?go.service",
-		"[cf]an.service",
-	} {
-		t.Run("reject "+value, func(t *testing.T) {
-			if _, err := parseRestartUnits(value); err == nil {
-				t.Fatalf("invalid unit %q accepted", value)
-			}
-		})
-	}
-	for _, value := range []string{
-		"unraid-vsock-hwmon",
-		"unraid-vsock-hwmon.service",
-	} {
-		t.Run("reject self "+value, func(t *testing.T) {
-			if _, err := parseRestartUnits(value); err == nil || !strings.Contains(err.Error(), "cannot restart itself") {
-				t.Fatalf("self-restart unit %q returned %v", value, err)
-			}
-		})
-	}
-}
-
-func TestShouldRestartConsumers(t *testing.T) {
+func TestShouldNotifyTopologyChanged(t *testing.T) {
 	tests := []struct {
 		name               string
 		reconfigured       bool
@@ -93,10 +64,48 @@ func TestShouldRestartConsumers(t *testing.T) {
 				// A known, authoritatively empty family is initialized; nil is not.
 				publisher.disks.sensors = []hwmonSensor{}
 			}
-			got := publisher.shouldRestartConsumers(test.reconfigured, test.firstGuestSnapshot)
+			got := publisher.shouldNotifyTopologyChanged(test.reconfigured, test.firstGuestSnapshot)
 			if got != test.want {
-				t.Fatalf("shouldRestartConsumers() = %v, want %v", got, test.want)
+				t.Fatalf("shouldNotifyTopologyChanged() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestNotifyTopologyChanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "topology-changed")
+	watch, err := unix.InotifyInit1(unix.IN_NONBLOCK | unix.IN_CLOEXEC)
+	if err != nil {
+		t.Fatalf("create topology event watcher: %v", err)
+	}
+	defer unix.Close(watch)
+	if _, err := unix.InotifyAddWatch(watch, filepath.Dir(path), unix.IN_CLOSE_WRITE); err != nil {
+		t.Fatalf("watch topology event directory: %v", err)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := notifyTopologyChanged(path); err != nil {
+			t.Fatalf("notification %d: %v", attempt, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat notification %d: %v", attempt, err)
+		}
+		if info.Size() != 0 {
+			t.Fatalf("notification %d size = %d, want an empty event file", attempt, info.Size())
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("notification %d mode = %o, want 600", attempt, got)
+		}
+		// PathChanged observes files closed after writing. Drain each event so
+		// the next notification must produce its own event on the retained file.
+		var event [unix.SizeofInotifyEvent + 256]byte
+		n, err := unix.Read(watch, event[:])
+		if err != nil {
+			t.Fatalf("notification %d filesystem event: %v", attempt, err)
+		}
+		if n < unix.SizeofInotifyEvent || binary.NativeEndian.Uint32(event[4:8])&unix.IN_CLOSE_WRITE == 0 {
+			t.Fatalf("notification %d: missing IN_CLOSE_WRITE event", attempt)
+		}
 	}
 }

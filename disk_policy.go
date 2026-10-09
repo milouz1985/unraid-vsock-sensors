@@ -225,11 +225,15 @@ func (s *diskPolicyStore) Reset() error {
 	if err != nil {
 		return fmt.Errorf("remove disk policies %q: %w", s.path, err)
 	}
+	if err := syncDirectory(filepath.Dir(s.path)); err != nil {
+		return fmt.Errorf("sync disk policies directory for %q: %w", s.path, err)
+	}
 	return nil
 }
 
 // writeDiskPoliciesAtomic persists the policy file with a temporary file,
-// flush, sync and rename so a crash never leaves a truncated file.
+// flush, sync and rename so a crash never leaves a truncated file. The parent
+// directory is synced after the rename to make the replacement durable.
 func writeDiskPoliciesAtomic(path string, policies map[string]diskPolicy) error {
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -257,6 +261,9 @@ func writeDiskPoliciesAtomic(path string, policies map[string]diskPolicy) error 
 	}
 	if err := os.Rename(file.Name(), path); err != nil {
 		return fmt.Errorf("replace disk policies %q: %w", path, err)
+	}
+	if err := syncDirectory(directory); err != nil {
+		return fmt.Errorf("sync disk policies directory for %q: %w", path, err)
 	}
 	return nil
 }

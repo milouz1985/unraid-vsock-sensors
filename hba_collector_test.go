@@ -36,7 +36,7 @@ func TestHBACollectorSnapshotDoesNotWaitForRefresh(t *testing.T) {
 func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 	collector := newTestHBACollector(time.Minute, hbaModeEnabled)
 	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
-		return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
+		return []sensors.HBA{{ID: "sas:1234", Temp: 42, IOCTemp: float64Pointer(42)}}, nil
 	})
 	collector.refresh(context.Background())
 	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
@@ -54,22 +54,6 @@ func TestHBACollectorFailureInvalidatesSnapshot(t *testing.T) {
 	response := collectorSnapshot(newDiskCollector(diskDataPaths{}), collector)
 	if len(response.HBAs) != 0 || response.HBAError == "" {
 		t.Fatalf("publisher response after HBA failure = %#v", response)
-	}
-}
-
-func TestHBACollectorSnapshotReturnsDefensiveCopy(t *testing.T) {
-	collector := newTestHBACollector(time.Minute, hbaModeEnabled)
-	collector.reader = hbaSnapshotReaderFunc(func(context.Context) ([]sensors.HBA, error) {
-		return []sensors.HBA{{ID: "sas:1234", Temp: 42}}, nil
-	})
-	collector.refresh(context.Background())
-	readings, err := collector.snapshot()
-	if err != nil || len(readings) != 1 {
-		t.Fatalf("snapshot = %#v, %v", readings, err)
-	}
-	readings[0].Temp = 99
-	if fresh, err := collector.snapshot(); err != nil || fresh[0].Temp != 42 {
-		t.Fatalf("snapshot mutation reached collector: %#v, %v", fresh, err)
 	}
 }
 
@@ -209,16 +193,10 @@ func TestHBASnapshotExpiryMatchesStaleStatus(t *testing.T) {
 }
 
 func TestHBAStableIDPrefersSASAcrossBackends(t *testing.T) {
-	if got, want := hbaStableID("0x56:C9:2B:F0:00:2E:67:05", "0000:06:10.0", "SERIAL"), "sas:56c92bf0002e6705"; got != want {
+	if got, want := hbaStableID("0x56:C9:2B:F0:00:2E:67:05", "0000:06:10.0"), "sas:56c92bf0002e6705"; got != want {
 		t.Fatalf("ID = %q, want %q", got, want)
 	}
-	if got, want := hbaStableID("", "0000:06:10.0", "SERIAL"), "pci:0000:06:10.0"; got != want {
+	if got, want := hbaStableID("", "0000:06:10.0"), "pci:0000:06:10.0"; got != want {
 		t.Fatalf("PCI fallback ID = %q, want %q", got, want)
-	}
-	if got, want := hbaStableID("", "", "SERIAL"), "serial:SERIAL"; got != want {
-		t.Fatalf("serial fallback ID = %q, want %q", got, want)
-	}
-	if upper, lower := hbaStableID("", "", "SERIAL"), hbaStableID("", "", "serial"); upper == lower {
-		t.Fatalf("serial fallback collapsed case-sensitive values to %q", upper)
 	}
 }

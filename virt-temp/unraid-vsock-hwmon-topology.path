@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for Unraid hwmon topology changes
+
+[Path]
+PathChanged=/run/unraid-vsock-sensors/topology-changed
+Unit=unraid-vsock-hwmon-topology.service
+
+[Install]
+WantedBy=multi-user.target

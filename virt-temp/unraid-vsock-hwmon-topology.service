@@ -1,0 +1,6 @@
+[Unit]
+Description=Dispatch an Unraid hwmon topology change
+
+[Service]
+Type=oneshot
+ExecStart=/bin/true

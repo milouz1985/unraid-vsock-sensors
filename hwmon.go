@@ -8,7 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os/exec"
+	"os"
 	"os/signal"
 	"strings"
 	"time"
@@ -22,11 +22,10 @@ import (
 )
 
 const (
-	virtTempConfigPath    = "/sys/kernel/config/virt_temp"
-	virtTempDeviceDir     = "/dev"
-	defaultHWMonCache     = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"
-	systemdRestartTimeout = 10 * time.Second
-	restartRetryDelay     = 30 * time.Second
+	virtTempConfigPath  = "/sys/kernel/config/virt_temp"
+	virtTempDeviceDir   = "/dev"
+	defaultHWMonCache   = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"
+	topologyChangedPath = "/run/unraid-vsock-sensors/topology-changed"
 )
 
 type hwmonPublisher struct {
@@ -37,10 +36,9 @@ type hwmonPublisher struct {
 }
 
 type hwmonConfig struct {
-	cid          uint32
-	port         uint32
-	cachePath    string
-	restartUnits []string
+	cid       uint32
+	port      uint32
+	cachePath string
 }
 
 func hwmon(args []string) error {
@@ -48,7 +46,6 @@ func hwmon(args []string) error {
 	cid := fs.Uint("cid", 3, "guest vsock CID")
 	port := fs.Uint("port", defaultPort, "vsock port")
 	cache := fs.String("cache", defaultHWMonCache, "persistent hwmon inventory cache")
-	restartUnitsFlag := fs.String("restart-units", "", "comma-separated systemd units restarted after hwmon reconfiguration")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -64,18 +61,13 @@ func hwmon(args []string) error {
 	if strings.TrimSpace(*cache) == "" {
 		return errors.New("cache path must not be empty")
 	}
-	restartUnits, err := parseRestartUnits(*restartUnitsFlag)
-	if err != nil {
-		return err
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), unix.SIGINT, unix.SIGTERM)
 	defer stop()
 	return runHWMon(ctx, hwmonConfig{
-		cid:          uint32(*cid),
-		port:         uint32(*port),
-		cachePath:    *cache,
-		restartUnits: restartUnits,
+		cid:       uint32(*cid),
+		port:      uint32(*port),
+		cachePath: *cache,
 	})
 }
 
@@ -92,35 +84,29 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 		log.Printf("hwmon inventory cache warning: %s", err)
 	}
 	// Restoring the cache creates the expected virtual sensors before the guest is
-	// reachable, but it is too early to restart consumers: CoolerControl could
-	// still retain disks discovered through drivetemp before the host released the
-	// HBA to the VM. Wait for a decoded VSOCK snapshot and an initialized hwmon
-	// family before restarting consumers to discover the virtual sensors.
+	// reachable, but it is too early to announce a usable topology. Wait for a
+	// decoded VSOCK snapshot and an initialized hwmon family before notifying
+	// subscribers that they can rediscover the virtual sensors.
 	snapshots := make(chan receivedSnapshot, 1)
 	backgroundErrors := make(chan error, 1)
 	go func() {
 		backgroundErrors <- receiveSnapshots(ctx, listener, config.cid, snapshots)
 	}()
+	return hwmonOrchestrationLoop(ctx, snapshots, backgroundErrors, publisher, virtTempConfigPath, virtTempDeviceDir, topologyChangedPath)
+}
 
+// hwmonOrchestrationLoop is the main hwmon event loop. The select blocks while
+// no event is ready, so this loop does not poll or run continuously. It wakes
+// only for guest snapshots, receiver failures, or context cancellation.
+func hwmonOrchestrationLoop(
+	ctx context.Context,
+	snapshots <-chan receivedSnapshot,
+	backgroundErrors <-chan error,
+	publisher *hwmonPublisher,
+	configRoot, deviceRoot, topologyPath string,
+) error {
 	updateLog := stickyErrorLog{context: "hwmon update"}
 	seenGuestSnapshot := false
-	tryRestartConsumers := func() <-chan time.Time {
-		if err := restartSystemdUnits(ctx, config.restartUnits); err != nil {
-			log.Printf("topology consumer restart warning: %s; retrying in %s", err, restartRetryDelay)
-			return time.After(restartRetryDelay)
-		}
-		if len(config.restartUnits) != 0 {
-			log.Printf("requested restart of topology consumers: %s", strings.Join(config.restartUnits, ", "))
-		}
-		return nil
-	}
-	// A nil channel disables the retry case until a failed attempt schedules it.
-	var restartRetry <-chan time.Time
-	// Main hwmon event loop. The select blocks while no event is ready, so this
-	// loop does not poll or run continuously. It wakes only for guest snapshots,
-	// receiver failures, deferred consumer restart retries, or context cancellation.
-	// A successful consumer restart only disables its retry; only a receiver
-	// failure or context cancellation stops the hwmon service.
 	for {
 		select {
 		case snapshot := <-snapshots:
@@ -128,14 +114,16 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 				updateLog.update(fmt.Errorf("discard snapshot queued for %s", time.Since(snapshot.receivedAt).Round(time.Millisecond)))
 				continue
 			}
-			reconfigured, publishErr := publisher.publish(virtTempConfigPath, virtTempDeviceDir, snapshot.response)
+			reconfigured, publishErr := publisher.publish(configRoot, deviceRoot, snapshot.response)
 			firstGuestSnapshot := !seenGuestSnapshot
 			seenGuestSnapshot = true
-			// The first guest snapshot also restarts consumers when a family
-			// already exists from cache, even if no reconfiguration was needed,
-			// but never while another family still needs reconciliation.
-			if publisher.shouldRestartConsumers(reconfigured, firstGuestSnapshot) && restartRetry == nil {
-				restartRetry = tryRestartConsumers()
+			// The first guest snapshot also announces a topology restored from
+			// cache, even if no reconfiguration was needed, but never while
+			// another family still needs reconciliation.
+			if publisher.shouldNotifyTopologyChanged(reconfigured, firstGuestSnapshot) {
+				if err := notifyTopologyChanged(topologyPath); err != nil {
+					publishErr = errors.Join(publishErr, err)
+				}
 			}
 			updateLog.update(publishErr)
 		case err := <-backgroundErrors:
@@ -143,12 +131,6 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 				return nil
 			}
 			return err
-		case <-restartRetry:
-			restartRetry = nil
-			// A successful future reconciliation emits a fresh reconfigured event.
-			if !publisher.reconciliationPending() {
-				restartRetry = tryRestartConsumers()
-			}
 		case <-ctx.Done():
 			return nil
 		}
@@ -159,10 +141,21 @@ func (publisher *hwmonPublisher) reconciliationPending() bool {
 	return publisher.disks.needsReconcile || publisher.hbas.needsReconcile
 }
 
-func (publisher *hwmonPublisher) shouldRestartConsumers(reconfigured, firstGuestSnapshot bool) bool {
+func (publisher *hwmonPublisher) shouldNotifyTopologyChanged(reconfigured, firstGuestSnapshot bool) bool {
 	familyInitialized := publisher.disks.sensors != nil || publisher.hbas.sensors != nil
 	return !publisher.reconciliationPending() &&
 		(reconfigured || firstGuestSnapshot && familyInitialized)
+}
+
+func notifyTopologyChanged(path string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("notify hwmon topology change: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("notify hwmon topology change: %w", err)
+	}
+	return nil
 }
 
 func (publisher *hwmonPublisher) publish(configRoot, deviceRoot string, state sensors.Response) (bool, error) {
@@ -209,41 +202,4 @@ func (publisher *hwmonPublisher) publish(configRoot, deviceRoot string, state se
 		publisher.cacheDirty = false
 	}
 	return reconfigured, errors.Join(diskErr, hbaErr)
-}
-
-func parseRestartUnits(value string) ([]string, error) {
-	if strings.TrimSpace(value) == "" {
-		return nil, nil
-	}
-	var units []string
-	seen := make(map[string]struct{})
-	for _, item := range strings.Split(value, ",") {
-		unit := strings.TrimSpace(item)
-		if unit == "" || strings.HasPrefix(unit, "-") || strings.ContainsAny(unit, " \t\r\n/*?[]") {
-			return nil, fmt.Errorf("invalid systemd unit %q", unit)
-		}
-		if unit == "unraid-vsock-hwmon" || unit == "unraid-vsock-hwmon.service" {
-			return nil, errors.New("unraid-vsock-hwmon.service cannot restart itself")
-		}
-		if _, duplicate := seen[unit]; duplicate {
-			continue
-		}
-		seen[unit] = struct{}{}
-		units = append(units, unit)
-	}
-	return units, nil
-}
-
-func restartSystemdUnits(ctx context.Context, units []string) error {
-	if len(units) == 0 {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, systemdRestartTimeout)
-	defer cancel()
-	args := append([]string{"try-restart", "--no-block", "--"}, units...)
-	output, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("restart topology consumers: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return nil
 }

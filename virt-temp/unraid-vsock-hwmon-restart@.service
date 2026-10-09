@@ -1,0 +1,9 @@
+[Unit]
+Description=Try-restart %i.service after an Unraid hwmon topology change
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart --no-block -- %i.service
+
+[Install]
+WantedBy=unraid-vsock-hwmon-topology.service

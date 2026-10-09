@@ -52,11 +52,16 @@ func (d Disk) Kind() DiskKind {
 }
 
 // HBA describes a host bus adapter by its backend-independent stable identity.
+// Temp is the legacy single-sensor projection kept for protocol compatibility:
+// it contains the IOC temperature when available, otherwise the board
+// temperature. New consumers must use IOCTemp and BoardTemp when either is set.
 type HBA struct {
-	ID         string  `json:"id"`
-	Model      string  `json:"model,omitempty"`
-	PCIAddress string  `json:"pci_address,omitempty"`
-	Temp       float64 `json:"temp_c"`
+	ID         string   `json:"id"`
+	Model      string   `json:"model,omitempty"`
+	PCIAddress string   `json:"pci_address,omitempty"`
+	Temp       float64  `json:"temp_c"`
+	IOCTemp    *float64 `json:"ioc_temp_c,omitempty"`
+	BoardTemp  *float64 `json:"board_temp_c,omitempty"`
 }
 
 // Response contains a snapshot of every sensor exposed by the Unraid agent.

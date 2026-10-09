@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -141,11 +142,15 @@ func runFallbackCommand(ctx context.Context, path string, args ...string) ([]byt
 	commandCtx, cancel := context.WithTimeout(ctx, fallbackCommandTimeout)
 	defer cancel()
 	command := exec.CommandContext(commandCtx, path, args...)
-	// smartctl_type may spawn smartctl. Kill its process group on timeout so a
-	// hung child cannot outlive the bounded collection cycle.
+	// smartctl_type is a wrapper around smartctl. Keep both processes in one
+	// group so cancellation terminates the complete command chain.
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Cancel = func() error {
-		return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
 	}
 	command.WaitDelay = time.Second
 	output, err := command.Output()

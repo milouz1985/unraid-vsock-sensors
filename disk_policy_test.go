@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -325,6 +326,47 @@ func TestInvalidDiskPolicyFileDoesNotBlockCollector(t *testing.T) {
 	}
 	if _, err := os.Stat(environment.paths.policyFile); !os.IsNotExist(err) {
 		t.Fatalf("policy file after reset: %v; want absent", err)
+	}
+}
+
+func TestDiskPolicyStoreReset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disk-policies.json")
+	if err := os.WriteFile(path, []byte(`{"disk1":"include"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := newDiskPolicyStore(path)
+	if err := store.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("policy file after reset = %v; want absent", err)
+	}
+	if err := store.Reset(); err != nil {
+		t.Fatalf("reset absent policy file: %v", err)
+	}
+}
+
+func TestDiskPolicyStoreResetReportsRemoveError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can remove files from a read-only directory")
+	}
+	directory := t.TempDir()
+	path := filepath.Join(directory, "disk-policies.json")
+	if err := os.WriteFile(path, []byte(`{"disk1":"include"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(directory, 0700); err != nil {
+			t.Errorf("restore temporary directory permissions: %v", err)
+		}
+	})
+
+	err := newDiskPolicyStore(path).Reset()
+	if err == nil || !strings.Contains(err.Error(), "remove disk policies") {
+		t.Fatalf("reset error = %v; want remove disk policies error", err)
 	}
 }
 

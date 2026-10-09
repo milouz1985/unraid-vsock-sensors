@@ -44,21 +44,45 @@ type hbaMetadata struct {
 	pciAddress string
 }
 
+type hbaTemperatures struct {
+	ioc   *float64
+	board *float64
+}
+
+func makeHBAReading(metadata hbaMetadata, temperatures hbaTemperatures) (sensors.HBA, bool) {
+	legacy := temperatures.ioc
+	if legacy == nil {
+		legacy = temperatures.board
+	}
+	if legacy == nil {
+		return sensors.HBA{}, false
+	}
+	return sensors.HBA{
+		ID:         metadata.id,
+		Model:      metadata.model,
+		PCIAddress: metadata.pciAddress,
+		Temp:       *legacy,
+		IOCTemp:    temperatures.ioc,
+		BoardTemp:  temperatures.board,
+	}, true
+}
+
 const (
-	maxSASAddressSize           = 16
-	maxPCIAddressSize           = len("0000:00:00.0")
-	maxMegaRAIDControllerSerial = 32 // Firmware controller information uses serial_no[32].
-	maxSASHBAStableIDSize       = len("sas:") + maxSASAddressSize
-	maxPCIHBAStableIDSize       = len("pci:") + maxPCIAddressSize
-	maxSerialHBAStableIDSize    = len("serial:") + maxMegaRAIDControllerSerial
-	maxHBAStableIDSize          = max(maxSASHBAStableIDSize, maxPCIHBAStableIDSize, maxSerialHBAStableIDSize)
+	maxSASAddressSize     = 16
+	maxPCIAddressSize     = len("0000:00:00.0")
+	maxSASHBAStableIDSize = len("sas:") + maxSASAddressSize
+	maxPCIHBAStableIDSize = len("pci:") + maxPCIAddressSize
+	// Keep accepting topology caches created by versions that used a StorCLI
+	// controller serial as a fallback identity.
+	maxLegacySerialHBAStableIDSize = len("serial:") + 32
+	maxHBAStableIDSize             = max(maxSASHBAStableIDSize, maxPCIHBAStableIDSize, maxLegacySerialHBAStableIDSize)
 )
 
-// hbaStableID gives every backend the same stable sensor key. Prefer the SAS
-// address shared by mpt3ctl and StorCLI, then progressively weaker fallbacks.
+// hbaStableID derives the stable sensor key from the sysfs identity. Prefer the
+// SAS address, then fall back to the current PCI location.
 // A pci: fallback identifies the current PCI location, not necessarily the same
 // physical controller after hardware replacement.
-func hbaStableID(sasAddress, pciAddress, serial string) string {
+func hbaStableID(sasAddress, pciAddress string) string {
 	if sasAddress = hbaIdentityValue(sasAddress); sasAddress != "" {
 		if sasAddress = normalizeSASAddress(sasAddress); sasAddress != "" {
 			return "sas:" + sasAddress
@@ -66,10 +90,6 @@ func hbaStableID(sasAddress, pciAddress, serial string) string {
 	}
 	if pciAddress != "" {
 		return "pci:" + pciAddress
-	}
-	if serial = hbaIdentityValue(serial); serial != "" {
-		// Serial numbers are opaque identifiers; preserve their case.
-		return "serial:" + serial
 	}
 	return ""
 }
@@ -176,8 +196,9 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 
-	// Do not hold c.mu during backend I/O: a synchronous ioctl may outlive its
-	// context, while snapshots must remain readable and expire independently.
+	// Do not hold c.mu during backend I/O: a synchronous backend call may
+	// outlive its context, while snapshots must remain readable and expire
+	// independently.
 	readings, err := c.reader.collect(ctx)
 	finishedAt := time.Now()
 	if !finishedAt.Before(deadline) {
@@ -196,6 +217,8 @@ func (c *hbaCollector) refresh(parent context.Context) {
 	}
 	c.lastSuccessfulAt = finishedAt
 	c.lastErrorAt = time.Time{}
+	// Backends and consumers treat temperature pointers as immutable. Clone the
+	// slice so callers cannot replace entries retained by the collector.
 	c.lastSuccessfulSnapshot = slices.Clone(readings)
 }
 
