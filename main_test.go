@@ -168,8 +168,26 @@ func capturePublishedSnapshots(
 
 func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		env := newDiskTestEnvironment(t, "30")
+		env.write(t, env.paths.disksINI, "[disk1]\nid=serial-hdd\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=35\n"+
+			"[pool1]\nid=serial-nvme\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=*\n")
+		disks := env.collector()
+		disks.refresh()
+		initial := map[string]sensors.Disk{
+			"serial-hdd":  {ID: "serial-hdd", Name: "disk1", Device: "sda", Transport: "ata", Rotational: true, Temp: 35},
+			"serial-nvme": {ID: "serial-nvme", Name: "pool1", Device: "nvme0n1", Transport: "nvme", Temp: 0, Unavailable: true},
+		}
+		updated := map[string]sensors.Disk{
+			"serial-hdd":  {ID: "serial-hdd", Name: "disk1", Device: "sda", Transport: "ata", Rotational: true, Temp: 42},
+			"serial-nvme": {ID: "serial-nvme", Name: "pool1", Device: "nvme0n1", Transport: "nvme", Temp: 48},
+		}
+
 		firstServer, firstClient := net.Pipe()
 		secondServer, secondClient := net.Pipe()
+		defer firstServer.Close()
+		defer firstClient.Close()
+		defer secondServer.Close()
+		defer secondClient.Close()
 		connections := []snapshotConnection{firstClient, secondClient}
 		dials := 0
 		ctx, cancel := context.WithCancel(context.Background())
@@ -179,7 +197,7 @@ func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
 		go func() {
 			done <- publishSnapshotsWithDialer(
 				ctx,
-				newDiskCollector(diskDataPaths{}),
+				disks,
 				newTestHBACollector(time.Minute, hbaModeDisabled),
 				func(context.Context) (snapshotConnection, error) {
 					if dials >= len(connections) {
@@ -193,19 +211,40 @@ func TestPublisherStreamsSuccessiveSnapshotsAndReconnects(t *testing.T) {
 			)
 		}()
 
-		readFrames := func(conn net.Conn, count int) {
+		readSnapshot := func(reader *sensors.FrameReader, want map[string]sensors.Disk) {
 			t.Helper()
-			reader := sensors.NewFrameReader(conn)
-			for range count {
-				if _, err := reader.Read(); err != nil {
-					t.Fatal(err)
+			got, err := reader.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Protocol != 1 || got.Error != "" || got.HBAError != "" || got.HBAs == nil || len(got.HBAs) != 0 {
+				t.Fatalf("snapshot metadata = %#v; want protocol 1, no errors and an empty disabled HBA inventory", got)
+			}
+			if len(got.Disks) != len(want) {
+				t.Fatalf("snapshot disks = %#v; want %#v", got.Disks, want)
+			}
+			seen := make(map[string]bool)
+			for _, disk := range got.Disks {
+				if expected, ok := want[disk.ID]; !ok || seen[disk.ID] || disk != expected {
+					t.Fatalf("published disk = %#v; want unique entry %#v", disk, expected)
 				}
+				seen[disk.ID] = true
 			}
 		}
 
-		readFrames(firstServer, 2)
+		firstReader := sensors.NewFrameReader(firstServer)
+		readSnapshot(firstReader, initial)
+		// Settle the completed publication before changing the source. The
+		// bubble's clock stays fixed while this goroutine refreshes the fixture.
+		synctest.Wait()
+		env.write(t, env.paths.disksINI, "[disk1]\nid=serial-hdd\ndevice=sda\ntransport=ata\nrotational=1\nspundown=0\ntemp=42\n"+
+			"[pool1]\nid=serial-nvme\ndevice=nvme0n1\ntransport=nvme\nrotational=0\nspundown=0\ntemp=48\n")
+		disks.refresh()
+		readSnapshot(firstReader, updated)
 		_ = firstServer.Close()
-		readFrames(secondServer, 2)
+		secondReader := sensors.NewFrameReader(secondServer)
+		readSnapshot(secondReader, updated)
+		readSnapshot(secondReader, updated)
 		cancel()
 		_ = secondServer.Close()
 		if err := <-done; err != nil {
