@@ -362,7 +362,7 @@ func TestFailedFallbackLeavesOldTemperatureUnavailable(t *testing.T) {
 		t.Fatalf("failed fallback state = %#v", state)
 	}
 	samples, _ := makeHWMonSamples(sensors.Response{Disks: []sensors.Disk{{ID: disk.id, Name: disk.name, Device: disk.device, Transport: "nvme", Unavailable: disk.unavailable}}})
-	if len(samples) != 1 || !samples[0].omitOnCommit {
+	if len(samples) != 1 || !samples[0].skipRefresh {
 		t.Fatalf("hwmon should let the 10-second failsafe expire: %#v", samples)
 	}
 	// A poll event without a new temperature must not re-enable the usual

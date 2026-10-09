@@ -140,11 +140,11 @@ temp="31"
 		}
 	}
 
-	device := loadTestVirtTemp(t)
+	loadTestVirtTemp(t)
 	publisher := &hwmonPublisher{cachePath: filepath.Join(directory, "hwmon-inventory.json")}
 	publish := func(disks []sensors.Disk, wantChanged bool) {
 		t.Helper()
-		changed, err := publisher.publish(device, sensors.Response{
+		changed, err := publisher.publish(virtTempConfigPath, virtTempDeviceDir, sensors.Response{
 			Disks: disks,
 			HBAs:  []sensors.HBA{},
 		})

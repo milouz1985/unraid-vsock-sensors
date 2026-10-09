@@ -8,7 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,18 +19,19 @@ import (
 // This test owns the module for its entire lifetime. It must never run on the
 // Proxmox host that supplies production fan-control sensors.
 func TestVMHWMon(t *testing.T) {
-	device := loadTestVirtTemp(t)
+	loadTestVirtTemp(t)
 	disks, hbas := hwmonInventory{}, hwmonInventory{}
 	diskSamples := []hwmonSample{hwmonTestSample("disk:vm-a", "VM disk A", 34)}
 	hbaSamples := []hwmonSample{hwmonTestSample("hba:vm-a", "VM HBA A", 48)}
 	publish := func(namespace string, inventory *hwmonInventory, samples []hwmonSample, wantChanged bool) {
 		t.Helper()
-		changed, err := publishHWMonFamily(device, namespace, inventory, samples)
+		changed, err := publishHWMonFamily(virtTempConfigPath, virtTempDeviceDir, namespace, inventory, samples)
 		if err != nil || changed != wantChanged {
 			t.Fatalf("publish %s: changed=%v, want %v; err=%v", namespace, changed, wantChanged, err)
 		}
 	}
-	t.Log("configure disk/HBA families and read real sysfs temperatures")
+
+	t.Log("create disk/HBA configfs items and write per-sensor temperature devices")
 	publish("disk", &disks, diskSamples, true)
 	publish("hba", &hbas, hbaSamples, true)
 	requireVMHWMonTemp(t, "disk", "disk:vm-a", "34000")
@@ -55,13 +56,26 @@ func TestVMHWMon(t *testing.T) {
 	}
 	publish("disk", &disks, diskSamples, true)
 
+	t.Log("control characters in IDs cross the hex-encoded kernel interfaces")
+	controlSamples := []hwmonSample{
+		diskSamples[0],
+		hwmonTestSample("disk:tab\tid", "Tab ID", 36),
+		hwmonTestSample("disk:carriage\rreturn", "Carriage return ID", 37),
+		hwmonTestSample("disk:new\nline", "Newline ID", 38),
+	}
+	publish("disk", &disks, controlSamples, true)
+	for _, sample := range controlSamples[1:] {
+		requireVMHWMonTemp(t, "disk", sample.sensor.id, strconv.FormatInt(int64(sample.temperature*1000), 10))
+	}
+	publish("disk", &disks, diskSamples, true)
+
 	t.Log("a signed atypical temperature crosses the real kernel boundary")
 	hbaSamples[0].temperature = -40
 	publish("hba", &hbas, hbaSamples, false)
 	requireVMHWMonTemp(t, "hba", "hba:vm-a", "-40000")
 	hbaSamples[0].temperature = 48
 
-	t.Log("a label change reconfigures the family")
+	t.Log("a label change re-registers only that hwmon sensor")
 	diskSamples[0].temperature = 35.125
 	diskSamples[0].sensor.label = "New label"
 	publish("disk", &disks, diskSamples, true)
@@ -70,37 +84,53 @@ func TestVMHWMon(t *testing.T) {
 		t.Fatal("reconfiguration did not apply the new label")
 	}
 
-	t.Log("a session closed without commit has no effect")
-	staged, err := os.OpenFile(device, os.O_WRONLY, 0)
+	t.Log("an invalid direct write does not replace the previous temperature")
+	device := hwmonTemperatureDevicePath(virtTempDeviceDir, "disk:vm-a")
+	if err := os.WriteFile(device, []byte("not-a-temperature\n"), 0200); err == nil {
+		t.Fatal("invalid temperature write unexpectedly succeeded")
+	}
+	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
+
+	t.Log("reload loses configfs topology; even an unavailable sensor recreates it")
+	diskSamples[0].temperature = hwmonFailsafeTemp
+	diskSamples[0].skipRefresh = true
+	reloadTestVirtTemp(t)
+	publish("disk", &disks, diskSamples, true)
+	publish("hba", &hbas, hbaSamples, true)
+	requireVMHWMonTemp(t, "disk", "disk:vm-a", "100000")
+	requireVMHWMonTemp(t, "hba", "hba:vm-a", "48000")
+	if readVMHWMonAttribute(t, "disk", "disk:vm-a", "temp1_label") != "New label" {
+		t.Fatal("reconciliation did not apply the current label")
+	}
+	diskSamples[0].temperature = 35.125
+	diskSamples[0].skipRefresh = false
+	publish("disk", &disks, diskSamples, false)
+	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
+
+	t.Log("an open temperature fd remains memory-safe across sensor removal")
+	heldDevice := hwmonTemperatureDevicePath(virtTempDeviceDir, "disk:vm-a")
+	held, err := os.OpenFile(heldDevice, os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, writeErr := staged.WriteString("sample\tdisk:vm-a\t99000\tIgnored\n")
-	if err := errors.Join(writeErr, staged.Close()); err != nil {
+	key := hwmonSensorKey("disk", "disk:vm-a")
+	if err := os.Remove(filepath.Join(virtTempConfigPath, "disk", key)); err != nil {
+		held.Close()
 		t.Fatal(err)
 	}
-	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
-
-	t.Log("a real ENOSPC write error is propagated without changing inventory")
-	before := append([]hwmonSensor(nil), disks.sensors...)
-	changed, err := publishHWMonFamily("/dev/full", "disk", &disks, diskSamples)
-	if changed || !errors.Is(err, unix.ENOSPC) || strings.Contains(err.Error(), "reconfigure") || !reflect.DeepEqual(before, disks.sensors) {
-		t.Fatalf("changed=%v, err=%v, inventory=%v", changed, err, disks.sensors)
+	if len(vmHWMonPaths(t, "disk", "disk:vm-a")) != 0 {
+		held.Close()
+		t.Fatal("removed disk still exists in sysfs while its old fd is open")
 	}
-	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
-
-	t.Log("reload loses kernel inventory; a real ESTALE triggers reconfiguration")
-	reloadTestVirtTemp(t)
-	if err := writeHWMonSamples(device, "disk", "commit", diskSamples); !errors.Is(err, unix.ESTALE) {
-		t.Fatalf("commit after reload = %v, want ESTALE", err)
+	if _, err := held.WriteString("36000\n"); !errors.Is(err, unix.ENODEV) {
+		held.Close()
+		t.Fatalf("write through removed sensor fd = %v, want ENODEV", err)
+	}
+	if err := held.Close(); err != nil {
+		t.Fatal(err)
 	}
 	publish("disk", &disks, diskSamples, true)
-	publish("hba", &hbas, hbaSamples, true)
 	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
-	requireVMHWMonTemp(t, "hba", "hba:vm-a", "48000")
-	if readVMHWMonAttribute(t, "disk", "disk:vm-a", "temp1_label") != "New label" {
-		t.Fatal("reconfigure did not apply the current label")
-	}
 
 	t.Log("topology removal leaves the other family intact")
 	publish("disk", &disks, nil, true)
@@ -130,7 +160,7 @@ func TestVMHWMon(t *testing.T) {
 	publish("disk", &disks, diskSamples, false)
 	requireVMHWMonTemp(t, "disk", "disk:vm-a", "35125")
 
-	t.Log("cached topology is restored through the real module at failsafe")
+	t.Log("cached topology is restored through configfs at failsafe")
 	cachePath := filepath.Join(t.TempDir(), "hwmon-inventory.json")
 	cache := cachedHWMonInventory{
 		Version: 1,
@@ -150,7 +180,7 @@ func TestVMHWMon(t *testing.T) {
 	}
 	reloadTestVirtTemp(t)
 	restored := &hwmonPublisher{cachePath: cachePath}
-	if err := restored.restore(device); err != nil {
+	if err := restored.restore(virtTempConfigPath, virtTempDeviceDir); err != nil {
 		t.Fatal(err)
 	}
 	requireVMHWMonTemp(t, "disk", "disk:cached", "100000")
@@ -161,4 +191,5 @@ func TestVMHWMon(t *testing.T) {
 	if got := readVMHWMonAttribute(t, "hba", "hba:cached", "name"); got != "unraid_cached_hba" {
 		t.Fatalf("restored HBA hwmon name = %q, want unraid_cached_hba", got)
 	}
+
 }

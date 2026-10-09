@@ -1,6 +1,7 @@
 [Unit]
 Description=Publish Unraid VSOCK temperatures through hwmon
-After=systemd-modules-load.service
+Requires=sys-kernel-config.mount
+After=systemd-modules-load.service sys-kernel-config.mount
 
 [Service]
 Type=simple

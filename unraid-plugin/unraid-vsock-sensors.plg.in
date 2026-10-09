@@ -21,6 +21,14 @@ Pushes disk temperatures from Unraid's disks.ini and devs.ini, and HBA
 temperatures over AF_VSOCK to Proxmox as native hwmon sensors.
 </DESCRIPTION>
 <CHANGES>
+### 3.0.0 - 2026-09-21
+
+- Replace the shared /dev/virt-temp text protocol with a configfs topology and one write-only /dev/virt-temp/&lt;hex ID&gt; device per sensor.
+- Reconcile disk and HBA sensors incrementally so unchanged devices keep stable hwmon identities, while module reloads and partial updates are recovered from the last valid topology.
+- Validate complete families before changing the kernel topology, cap each family at 1,024 sensors, reject empty IDs and preserve the previous topology after invalid snapshots or reconciliation failures.
+- Initialize temperatures before exposing new hwmon sensors, preserve stale failsafe behavior for unavailable readings and sanitize fallback labels.
+- Update DKMS and systemd lifecycle handling, documentation and VM coverage for configfs, per-sensor devices, reload recovery and removal with open device descriptors.
+
 ### 2.1.0 - 2026-09-19
 
 - Add a read-only Diagnostics page that displays the daemon's runtime state: VSOCK link, emhttpd polling and fallback, per-disk thermal status and HBA readings.

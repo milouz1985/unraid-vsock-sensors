@@ -19,7 +19,7 @@ VM Unraid                                      Hôte Proxmox
 ┌────────────────────────────┐                 ┌─────────────────────────────┐
 │ emhttpd                    │                 │ unraid-vsock-sensors hwmon  │
 │  └─ disks.ini, devs.ini    │                 │            │                │
-│ /dev/mpt3ctl ou StorCLI    │     AF_VSOCK    │ /dev/virt-temp              │
+│ /dev/mpt3ctl ou StorCLI    │     AF_VSOCK    │ configfs + /dev/virt-temp/* │
 │            │               │                 │            │                │
 │ unraid-vsock-sensors serve ├────────────────►│            ▼                │
 └────────────────────────────┘                 │ sondes hwmon natives        │
@@ -174,7 +174,7 @@ Sur Proxmox :
 dkms status -m virt-temp
 systemctl status unraid-vsock-hwmon.service
 journalctl -u unraid-vsock-hwmon.service -n 50 --no-pager
-ls -l /dev/virt-temp
+find /dev/virt-temp -maxdepth 1 -type c -ls
 sensors
 ```
 
@@ -379,8 +379,8 @@ Par défaut, après dix secondes sans mise à jour, une sonde `virt_temp` passe 
 
 Une nouvelle donnée valide rétablit automatiquement la température.
 
-Les détails du module et du protocole `/dev/virt-temp` sont documentés dans
-[`virt-temp/README.md`](virt-temp/README.md).
+Les détails de la création des sondes via configfs et de leur alimentation via
+`/dev/virt-temp/*` sont documentés dans [`virt-temp/README.md`](virt-temp/README.md).
 
 ## Mise à jour et désinstallation
 

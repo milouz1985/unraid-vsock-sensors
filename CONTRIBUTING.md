@@ -99,11 +99,12 @@ Les tests VM doivent être privilégiés lorsqu'ils permettent de vérifier une
 véritable frontière système, par exemple :
 
 - module noyau ;
-- `/dev/virt-temp` ;
+- configfs `virt_temp` ;
+- les nodes `/dev/virt-temp/*` ;
 - hwmon/sysfs ;
 - DKMS ;
 - systemd ;
-- erreurs réelles telles que `ESTALE`.
+- suppression/recréation réelle de la topologie kernel.
 
 Les tests unitaires restent préférables pour les cas qui nécessiteraient sinon
 de simuler du matériel dans la VM, notamment :
@@ -160,8 +161,8 @@ La collecte HBA reste séparée de la collecte disque.
 Le récepteur :
 
 - valide les snapshots ;
-- maintient la topologie hwmon ;
-- pilote `/dev/virt-temp` ;
+- maintient la topologie hwmon via configfs ;
+- pousse chaque température vers le node `/dev/virt-temp/*` de sa sonde ;
 - persiste uniquement la topologie, jamais les températures.
 
 Le module kernel doit rester simple. La logique métier et la découverte

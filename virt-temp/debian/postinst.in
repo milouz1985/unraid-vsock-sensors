@@ -9,6 +9,16 @@ config="/etc/default/unraid-vsock-hwmon"
 default_config="/usr/share/unraid-vsock-sensors-hwmon/unraid-vsock-hwmon.default"
 saved_sources="/var/lib/unraid-vsock-sensors/dkms-sources"
 
+clear_virt_temp_config() {
+    for family in /sys/kernel/config/virt_temp/disk /sys/kernel/config/virt_temp/hba; do
+        [ -d "$family" ] || continue
+        for sensor in "$family"/*; do
+            [ -d "$sensor" ] || continue
+            rmdir -- "$sensor"
+        done
+    done
+}
+
 build_and_install_targets() {
     # Keep the maintainer script arguments intact for debhelper's snippet.
     set --
@@ -64,6 +74,7 @@ if [ "$1" = "configure" ]; then
     fi
     systemctl stop "$service" 2>/dev/null || true
     if grep -q '^virt_temp ' /proc/modules; then
+        clear_virt_temp_config
         modprobe -r virt_temp
     fi
     modprobe virt_temp
@@ -79,8 +90,8 @@ if [ "$1" = "configure" ]; then
         deb-systemd-invoke start "$service"
     fi
 
-    if [ ! -c /dev/virt-temp ]; then
-        echo "Le module est chargé, mais /dev/virt-temp reste introuvable." >&2
+    if [ ! -d /sys/kernel/config/virt_temp ]; then
+        echo "Le module est chargé, mais son interface configfs reste introuvable." >&2
         exit 1
     fi
 

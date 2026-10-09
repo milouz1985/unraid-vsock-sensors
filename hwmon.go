@@ -22,7 +22,8 @@ import (
 )
 
 const (
-	virtTempDevicePath    = "/dev/virt-temp"
+	virtTempConfigPath    = "/sys/kernel/config/virt_temp"
+	virtTempDeviceDir     = "/dev"
 	defaultHWMonCache     = "/var/lib/unraid-vsock-sensors/hwmon-inventory.json"
 	systemdRestartTimeout = 10 * time.Second
 	restartRetryDelay     = 30 * time.Second
@@ -84,9 +85,9 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 		return fmt.Errorf("listen on vsock port %d: %w", config.port, err)
 	}
 	defer listener.Close()
-	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through %s", config.port, virtTempDevicePath)
+	log.Printf("receiving Unraid snapshots on VSOCK port %d and publishing them through virt_temp configfs and per-sensor devices", config.port)
 	publisher := &hwmonPublisher{cachePath: config.cachePath}
-	err = publisher.restore(virtTempDevicePath)
+	err = publisher.restore(virtTempConfigPath, virtTempDeviceDir)
 	if err != nil {
 		log.Printf("hwmon inventory cache warning: %s", err)
 	}
@@ -109,7 +110,7 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 			return time.After(restartRetryDelay)
 		}
 		if len(config.restartUnits) != 0 {
-			log.Printf("restarted topology consumers: %s", strings.Join(config.restartUnits, ", "))
+			log.Printf("requested restart of topology consumers: %s", strings.Join(config.restartUnits, ", "))
 		}
 		return nil
 	}
@@ -127,13 +128,13 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 				updateLog.update(fmt.Errorf("discard snapshot queued for %s", time.Since(snapshot.receivedAt).Round(time.Millisecond)))
 				continue
 			}
-			reconfigured, publishErr := publisher.publish(virtTempDevicePath, snapshot.response)
+			reconfigured, publishErr := publisher.publish(virtTempConfigPath, virtTempDeviceDir, snapshot.response)
 			firstGuestSnapshot := !seenGuestSnapshot
 			seenGuestSnapshot = true
-			familyInitialized := publisher.disks.sensors != nil || publisher.hbas.sensors != nil
 			// The first guest snapshot also restarts consumers when a family
-			// already exists from cache, even if no reconfiguration was needed.
-			if (reconfigured || (firstGuestSnapshot && familyInitialized)) && restartRetry == nil {
+			// already exists from cache, even if no reconfiguration was needed,
+			// but never while another family still needs reconciliation.
+			if publisher.shouldRestartConsumers(reconfigured, firstGuestSnapshot) && restartRetry == nil {
 				restartRetry = tryRestartConsumers()
 			}
 			updateLog.update(publishErr)
@@ -143,27 +144,41 @@ func runHWMon(ctx context.Context, config hwmonConfig) error {
 			}
 			return err
 		case <-restartRetry:
-			restartRetry = tryRestartConsumers()
+			restartRetry = nil
+			// A successful future reconciliation emits a fresh reconfigured event.
+			if !publisher.reconciliationPending() {
+				restartRetry = tryRestartConsumers()
+			}
 		case <-ctx.Done():
 			return nil
 		}
 	}
 }
 
-func (publisher *hwmonPublisher) publish(device string, state sensors.Response) (bool, error) {
+func (publisher *hwmonPublisher) reconciliationPending() bool {
+	return publisher.disks.needsReconcile || publisher.hbas.needsReconcile
+}
+
+func (publisher *hwmonPublisher) shouldRestartConsumers(reconfigured, firstGuestSnapshot bool) bool {
+	familyInitialized := publisher.disks.sensors != nil || publisher.hbas.sensors != nil
+	return !publisher.reconciliationPending() &&
+		(reconfigured || firstGuestSnapshot && familyInitialized)
+}
+
+func (publisher *hwmonPublisher) publish(configRoot, deviceRoot string, state sensors.Response) (bool, error) {
 	disks, hbas := makeHWMonSamples(state)
 	var diskErr, hbaErr error
-	reconfigured := false
+	var disksReconfigured, hbasReconfigured bool
 	// A non-nil empty inventory is authoritative and removes the last cached
 	// family instead of leaving a permanent failsafe device behind.
 	if state.Error != "" {
 		diskErr = fmt.Errorf("disks: %s", state.Error)
 	} else if state.Disks == nil {
 		diskErr = errors.New("disks: inventory is missing; waiting for sensors")
-	} else if changed, err := publishHWMonFamily(device, "disk", &publisher.disks, disks); err != nil {
+	} else if changed, err := publishHWMonFamily(configRoot, deviceRoot, "disk", &publisher.disks, disks); err != nil {
 		diskErr = fmt.Errorf("disks: %w", err)
 	} else {
-		reconfigured = reconfigured || changed
+		disksReconfigured = changed
 		if changed {
 			log.Printf("configured storage hwmon inventory with %d sensors", len(disks))
 		}
@@ -172,17 +187,19 @@ func (publisher *hwmonPublisher) publish(device string, state sensors.Response) 
 		hbaErr = fmt.Errorf("HBA: %s", state.HBAError)
 	} else if state.HBAs == nil {
 		hbaErr = errors.New("HBA: inventory is missing; waiting for sensors")
-	} else if changed, err := publishHWMonFamily(device, "hba", &publisher.hbas, hbas); err != nil {
+	} else if changed, err := publishHWMonFamily(configRoot, deviceRoot, "hba", &publisher.hbas, hbas); err != nil {
 		hbaErr = fmt.Errorf("HBA: %w", err)
 	} else {
-		reconfigured = reconfigured || changed
+		hbasReconfigured = changed
 		if changed {
 			log.Printf("configured HBA hwmon inventory with %d sensors", len(hbas))
 		}
 	}
-	if reconfigured {
+	topologyChanged := disksReconfigured || hbasReconfigured
+	if topologyChanged {
 		publisher.cacheDirty = true
 	}
+	reconfigured := topologyChanged && !publisher.reconciliationPending()
 	// Clear cacheDirty only after a durable save. On failure, the next snapshot
 	// retries persistence even if no further topology change occurs.
 	if publisher.cacheDirty {
