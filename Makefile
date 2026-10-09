@@ -101,6 +101,8 @@ check-scripts: ## Vérifie la syntaxe des scripts et de l'interface
 	php -l unraid-plugin/diagnostics_page_test.php >/dev/null
 	php -l unraid-plugin/uvss_control.php >/dev/null
 	php -l unraid-plugin/uvss_action.php >/dev/null
+	php -l unraid-plugin/uvss_action_test.php >/dev/null
+	php -l unraid-plugin/uvss_control_test.php >/dev/null
 
 test-shell: ## Exécute les tests des scripts shell
 	bash version_test.sh
@@ -113,7 +115,7 @@ test-shell: ## Exécute les tests des scripts shell
 
 test-php: ## Exécute les tests PHP
 	php unraid-plugin/diagnostics_page_test.php >/dev/null
-	php unraid-plugin/uvss_control_test.php >/dev/null
+	php unraid-plugin/uvss_control_test.php
 
 check: fmt-check tidy-check vet test check-scripts test-shell test-php lint-shell ## Vérifie le projet sans créer d'artefacts
 

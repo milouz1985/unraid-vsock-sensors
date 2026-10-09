@@ -98,6 +98,11 @@ Le race detector est exécuté séparément :
 make test-race
 ```
 
+Les tests PHP du client et des actions sur socket Unix exigent leurs
+dépendances d'intégration, notamment cURL, les fonctions de sockets stream et
+PCNTL. Leur absence provoque toujours un échec explicite, y compris lors de
+`make test-php`, `make test-shell` ou `make check`.
+
 ## Fuzzing MPT3
 
 Le parser binaire de IO Unit Page 7 dispose d'une cible de fuzzing.
