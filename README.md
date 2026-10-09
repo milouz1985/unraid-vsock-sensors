@@ -441,6 +441,8 @@ défaut interne de `30s`. La valeur valide `0` est conservée comme telle et ne
 peut pas être confondue avec l'absence de configuration. UVSS ne modifie pas la
 configuration Unraid.
 
+Pour la régulation des ventilateurs, il est recommandé de configurer `poll_attributes` à 60 secondes maximum. Au-delà, UVSS émet un avertissement dans les logs, mais respecte la configuration Unraid. Un intervalle plus long augmente également la durée maximale pendant laquelle un disque en cours de réveil peut conserver la sentinelle synthétique à `0 °C`.
+
 ## Contrôleurs HBA
 
 Deux backends sont disponibles :
