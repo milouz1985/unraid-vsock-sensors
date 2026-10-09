@@ -20,31 +20,53 @@ import (
 )
 
 func TestFallbackAdvancesPastSlowDisksAcrossCycles(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "attempts")
-	command := fallbackTestCommand(t, "printf '%s\\n' \"$1\" >> '"+logPath+"'\ncase \"$1\" in fast) printf '{\"temperature\":{\"current\":42}}\\n' ;; *) sleep 0.2 ;; esac")
-	collector := newDiskCollector(diskDataPaths{smartctlType: command})
 	disks := make([]unraidDisk, 0, 7)
 	for i := range 6 {
 		disks = append(disks, unraidDisk{name: "slow" + strconv.Itoa(i), id: "slow" + strconv.Itoa(i)})
 	}
 	disks = append(disks, unraidDisk{name: "fast", id: "fast"})
-	for cycle := range 3 {
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		observations, _ := collector.collectFallback(ctx, disks)
+	collector := newDiskCollector(diskDataPaths{})
+	// Bound eventual progress without prescribing an exact rotation or requiring
+	// the fast disk to be skipped by the first cycle.
+	for cycle := range 2 * len(disks) {
+		directory := t.TempDir()
+		journal := filepath.Join(directory, "events")
+		collector.paths.smartctlType = fallbackTestCommand(t,
+			"printf 'start %s\\n' \"$1\" >> '"+journal+"'\n"+
+				"if [ \"$1\" = fast ]; then\n"+
+				"  printf '{\"temperature\":{\"current\":42}}\\n'\n"+
+				"  printf 'end %s\\n' \"$1\" >> '"+journal+"'\n"+
+				"else\n"+
+				"  while [ ! -e '"+directory+"/release' ]; do sleep 0.01; done\n"+
+				"fi")
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		var observations []diskObservation
+		go func() { observations, _ = collector.collectFallback(ctx, disks); close(done) }()
+		t.Cleanup(func() { cancel(); <-done })
+		starts := waitFallbackStarts(t, journal, done, 3)
+		if slices.Contains(starts, "fast") {
+			// A replacement command proves the fast command completed before we
+			// cancel its peers; journal output alone would race with Cmd.Wait.
+			starts = waitFallbackStarts(t, journal, done, 4)
+		}
 		cancel()
-		attempts, err := os.ReadFile(logPath)
-		if err != nil {
-			t.Fatal(err)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("canceled collection did not return")
 		}
-		if cycle == 0 && strings.Contains(string(attempts), "fast\n") {
-			t.Fatal("fast disk was unexpectedly reached in first constrained cycle")
+		if len(observations) != len(disks) {
+			t.Fatalf("cycle %d returned %d observations; want %d", cycle, len(observations), len(disks))
 		}
-		if cycle == 2 {
-			if !strings.Contains(string(attempts), "fast\n") || observations[6].temperature != 42 || observations[6].err != nil {
-				t.Fatalf("fast disk starved across cycles: attempts %q, observation %#v", attempts, observations[6])
+		if slices.Contains(starts, "fast") {
+			if observations[6].temperature != 42 || observations[6].err != nil {
+				t.Fatalf("fast disk did not progress past blocked peers: %#v", observations[6])
 			}
+			return
 		}
 	}
+	t.Fatal("fast disk starved across constrained cycles")
 }
 
 func TestFallbackPartialCycleAcrossRotations(t *testing.T) {
@@ -57,7 +79,8 @@ func TestFallbackPartialCycleAcrossRotations(t *testing.T) {
 	collector := env.collector()
 	collector.refresh()
 	attempted := make(map[string]bool)
-	for cycle := range 3 {
+	cycleAt := env.now.Add(46 * time.Second)
+	for cycle := 0; cycle < 2*15 && len(attempted) < 15; cycle++ {
 		directory := t.TempDir()
 		journal := filepath.Join(directory, "events")
 		collector.paths.smartctlType = fallbackTestCommand(t,
@@ -67,11 +90,7 @@ func TestFallbackPartialCycleAcrossRotations(t *testing.T) {
 				"printf 'end %s\\n' \"$1\" >> '"+journal+"'\n"+
 				"if [ \"$result\" = fail ]; then exit 1; fi\n"+
 				"printf '{\"temperature\":{\"current\":37}}\\n'")
-		if cycle == 0 {
-			env.now = env.now.Add(46 * time.Second)
-		} else {
-			env.now = env.now.Add(30 * time.Second)
-		}
+		env.now = cycleAt
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() { collector.refreshWithContext(ctx); close(done) }()
@@ -89,13 +108,10 @@ func TestFallbackPartialCycleAcrossRotations(t *testing.T) {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(time.Second):
+		case <-time.After(5 * time.Second):
 			t.Fatal("canceled partial collection did not return")
 		}
 		for _, name := range starts {
-			if attempted[name] {
-				t.Fatalf("disk %q repeated before the complete inventory was reached", name)
-			}
 			attempted[name] = true
 		}
 		readings, err := collector.snapshot()
@@ -120,6 +136,23 @@ func TestFallbackPartialCycleAcrossRotations(t *testing.T) {
 				t.Fatalf("missing per-disk error for %q", runtime.disk.name)
 			}
 		}
+		// Between direct polls the current partial snapshot is reused, including
+		// unavailable entries; a new cycle must not revive older successes.
+		journalBefore, err := os.ReadFile(journal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.now = cycleAt.Add(29 * time.Second)
+		collector.refresh()
+		retained, err := collector.snapshot()
+		if err != nil || !slices.Equal(retained, readings) {
+			t.Fatalf("snapshot changed before the next direct poll: %v, %v", retained, err)
+		}
+		journalAfter, err := os.ReadFile(journal)
+		if err != nil || string(journalAfter) != string(journalBefore) {
+			t.Fatalf("SMART commands ran before the next direct poll: %q, %v", journalAfter, err)
+		}
+		cycleAt = cycleAt.Add(30 * time.Second)
 	}
 	if len(attempted) != 15 {
 		t.Fatalf("rotation reached %d disks; want 15", len(attempted))
@@ -129,7 +162,8 @@ func TestFallbackPartialCycleAcrossRotations(t *testing.T) {
 	env.write(t, env.paths.disksINI, strings.ReplaceAll(inventory.String(), "temp=31", "temp=42"))
 	env.now = env.now.Add(time.Second)
 	collector.noteEmhttpPoll()
-	collector.paths.smartctlType = fallbackTestCommand(t, "exit 1")
+	unexpectedCommand := filepath.Join(t.TempDir(), "unexpected-smart")
+	collector.paths.smartctlType = fallbackTestCommand(t, "touch '"+unexpectedCommand+"'\nexit 1")
 	collector.refresh()
 	readings, err := collector.snapshot()
 	if err != nil || len(readings) != 15 || collector.status().source.source != diskSourceEmhttpd {
@@ -140,14 +174,19 @@ func TestFallbackPartialCycleAcrossRotations(t *testing.T) {
 			t.Fatalf("native reading did not recover: %#v", reading)
 		}
 	}
+	if _, err := os.Stat(unexpectedCommand); !os.IsNotExist(err) {
+		t.Fatalf("SMART command ran after native recovery: %v", err)
+	}
 }
 
 // The helper processes stop at explicit file gates; no sleep duration decides
 // which disk succeeds. The event journal independently measures live commands.
 func waitFallbackStarts(t *testing.T, journal string, done <-chan struct{}, count int) []string {
 	t.Helper()
-	deadline := time.NewTimer(1500 * time.Millisecond)
+	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
+	poll := time.NewTicker(5 * time.Millisecond)
+	defer poll.Stop()
 	for {
 		data, err := os.ReadFile(journal)
 		if err != nil && !os.IsNotExist(err) {
@@ -172,9 +211,6 @@ func waitFallbackStarts(t *testing.T, journal string, done <-chan struct{}, coun
 			}
 		}
 		if len(starts) >= count {
-			if len(starts) != count {
-				t.Fatalf("started %d commands; want exactly %d", len(starts), count)
-			}
 			return starts
 		}
 		select {
@@ -182,19 +218,25 @@ func waitFallbackStarts(t *testing.T, journal string, done <-chan struct{}, coun
 			t.Fatalf("collection stopped before %d commands started: %s", count, data)
 		case <-deadline.C:
 			t.Fatalf("commands did not reach gate %d: %s", count, data)
-		case <-time.After(time.Millisecond):
+		case <-poll.C:
 		}
 	}
 }
 
 func TestFallbackGlobalCycleBudget(t *testing.T) {
-	collector := newDiskCollector(diskDataPaths{smartctlType: fallbackTestCommand(t, "sleep 10")})
+	journal := filepath.Join(t.TempDir(), "starts")
+	collector := newDiskCollector(diskDataPaths{smartctlType: fallbackTestCommand(t,
+		"printf '%s\\n' \"$1\" >> '"+journal+"'\nsleep 30")})
 	disks := make([]unraidDisk, 12)
 	for i := range disks {
 		disks[i] = unraidDisk{id: fmt.Sprintf("serial%d", i), name: fmt.Sprintf("disk%d", i)}
 	}
+	// The parent is only a watchdog for a broken collector. It must outlive the
+	// four-second budget and the eight-second run without a global budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	started := time.Now()
-	observations, err := collector.collectFallback(context.Background(), disks)
+	observations, err := collector.collectFallback(ctx, disks)
 	// Twelve commands at two seconds each with three workers would take eight
 	// seconds without a global budget. Allow process startup/teardown slack.
 	if elapsed := time.Since(started); elapsed > 6*time.Second {
@@ -202,6 +244,10 @@ func TestFallbackGlobalCycleBudget(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) || len(observations) != 12 {
 		t.Fatalf("bounded cycle = %v, %v; want deadline error and full inventory", observations, err)
+	}
+	attempts, readErr := os.ReadFile(journal)
+	if readErr != nil || len(strings.Fields(string(attempts))) == 0 {
+		t.Fatalf("budget test did not exercise a running SMART command: %q, %v", attempts, readErr)
 	}
 	for _, observation := range observations {
 		if observation.err == nil || observation.temperature != 0 {

@@ -177,7 +177,7 @@ func TestParseMPT3Temperatures(t *testing.T) {
 // Use literal firmware bytes at the MPI IO Unit Page 7 offsets. The real
 // ioctl boundary remains outside this test; this exercises the parser and
 // the reading construction shared with the MPT3 collector.
-func TestMPT3TemperatureAvailabilityTransitionsCurrentBehavior(t *testing.T) {
+func TestMPT3TemperatureAvailabilityParsing(t *testing.T) {
 	metadata := hbaMetadata{id: "sas:0000000000000001", model: "SAS3008"}
 	for _, phase := range []struct {
 		name      string
