@@ -136,6 +136,18 @@ que possible l'implémentation de la conception des tests.
   d'un contrat externe, fixtures indépendantes, vrais composants aux frontières,
   propriétés observables et scénarios susceptibles de réfuter l'implémentation.
 - Un test doit pouvoir expliquer quel défaut plausible il détecte.
+- Distinguer les tests de contrat (comportement attendu) des tests de
+  caractérisation (comportement actuel). Le nom et les commentaires d'un test
+  de caractérisation doivent rendre cette portée explicite : un comportement
+  historique potentiellement défectueux ne devient pas une garantie métier ou
+  de sécurité parce qu'un test le décrit.
+- Un mock ou un faux système de fichiers ne prouve que les comportements
+  effectivement exercés. Les garanties qui nécessitent le vrai noyau,
+  configfs, hwmon ou AF_VSOCK relèvent des tests VM appropriés ; la logique
+  purement applicative peut rester testée en Go.
+- L'absence d'une dépendance ou d'un environnement obligatoire pour un test
+  doit provoquer un échec explicite dans la validation habituelle, sans mode
+  strict séparé. Les autres skips doivent rester visibles et justifiés.
 - Éviter les tests qui reconstruisent l'attendu avec les mêmes helpers,
   constantes, parsers ou algorithmes que le code testé.
 - Éviter de modifier le code de production uniquement pour faciliter un test,
